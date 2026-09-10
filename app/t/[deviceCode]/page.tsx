@@ -1,10 +1,12 @@
 import { redirect } from "next/navigation";
 
-export default async function ShortTapRedirect({
-  params,
-}: {
-  params: Promise<{ deviceCode: string }>;
+export default async function ShortTapRedirect(props: {
+  params: { deviceCode: string } | Promise<{ deviceCode: string }>;
 }) {
-  const { deviceCode } = await params;
-  redirect(`/tap/${deviceCode}`);
+  const resolvedParams = await Promise.resolve(props.params);
+  const deviceCode = resolvedParams?.deviceCode;
+  if (deviceCode) {
+    redirect(`/tap/${deviceCode}`);
+  }
+  redirect("/");
 }
