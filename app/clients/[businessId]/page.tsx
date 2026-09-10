@@ -84,6 +84,66 @@ type TabKey =
   | "devices"
   | "loyalty";
 
+const CATEGORY_ACCENTS: Record<
+  string,
+  { main: string; bgLight: string; borderLight: string; textOnAccent: string }
+> = {
+  restaurant: {
+    main: "#a31d1d",
+    bgLight: "rgba(163, 29, 29, 0.08)",
+    borderLight: "rgba(163, 29, 29, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  salon: {
+    main: "#c94e0c",
+    bgLight: "rgba(201, 78, 12, 0.08)",
+    borderLight: "rgba(201, 78, 12, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  hotel: {
+    main: "#1e3866",
+    bgLight: "rgba(30, 56, 102, 0.08)",
+    borderLight: "rgba(30, 56, 102, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  cafe: {
+    main: "#9c490a",
+    bgLight: "rgba(156, 73, 10, 0.08)",
+    borderLight: "rgba(156, 73, 10, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  retail: {
+    main: "#056e50",
+    bgLight: "rgba(5, 110, 80, 0.08)",
+    borderLight: "rgba(5, 110, 80, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  healthcare: {
+    main: "#04875f",
+    bgLight: "rgba(4, 135, 95, 0.08)",
+    borderLight: "rgba(4, 135, 95, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  real_estate: {
+    main: "#b53c0d",
+    bgLight: "rgba(181, 60, 13, 0.08)",
+    borderLight: "rgba(181, 60, 13, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  custom: {
+    main: "#4d5566",
+    bgLight: "rgba(77, 85, 102, 0.08)",
+    borderLight: "rgba(77, 85, 102, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+};
+
+function getCategoryAccent(category?: string | null) {
+  if (!category) return CATEGORY_ACCENTS.custom;
+  const normalized = category.toLowerCase().trim().replace(/[\s-]/g, "_");
+  return CATEGORY_ACCENTS[normalized] || CATEGORY_ACCENTS.custom;
+}
+
 export default function ClientPage() {
   const params = useParams();
   const router = useRouter();
@@ -113,6 +173,11 @@ export default function ClientPage() {
 
   const [loading, setLoading] =
     useState(true);
+
+  const categoryAccent = useMemo(
+    () => getCategoryAccent(business?.category),
+    [business?.category]
+  );
 
   const [error, setError] =
     useState("");
@@ -1031,7 +1096,13 @@ export default function ClientPage() {
           </button>
 
           <div style={businessHeader}>
-            <div style={businessAvatar}>
+            <div
+              style={{
+                ...businessAvatar,
+                background: categoryAccent.main,
+                color: categoryAccent.textOnAccent,
+              }}
+            >
               {business.logo_url ? (
                 <img
                   src={business.logo_url}
@@ -1046,13 +1117,24 @@ export default function ClientPage() {
             </div>
 
             <div>
-              <h1 style={title}>
+              <h1
+                style={{
+                  ...title,
+                  fontFamily: "var(--font-cabinet), -apple-system, sans-serif",
+                }}
+              >
                 {business.name}
               </h1>
 
               <div style={headerMeta}>
                 <span
-                  style={categoryBadge}
+                  style={{
+                    ...categoryBadge,
+                    background: categoryAccent.bgLight,
+                    color: categoryAccent.main,
+                    border: `1px solid ${categoryAccent.borderLight}`,
+                    fontFamily: "var(--font-satoshi), -apple-system, sans-serif",
+                  }}
                 >
                   {formatCategory(
                     business.category

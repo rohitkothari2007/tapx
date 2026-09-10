@@ -1173,7 +1173,7 @@ export default function ClientPortalPage() {
           <div>
             <div className="brand-name">TAPX</div>
             <div className="brand-sub">
-              BUSINESS PLATFORM
+              Business platform
             </div>
           </div>
         </div>
@@ -1199,7 +1199,7 @@ export default function ClientPortalPage() {
         </div>
 
         <div className="nav-label">
-          WORKSPACE
+          Workspace navigation
         </div>
 
         <nav className="nav">
