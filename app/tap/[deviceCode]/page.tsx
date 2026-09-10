@@ -570,28 +570,42 @@ export default function TapPage() {
           ? offersConfig.config.offers
           : [];
 
-      const validOffers =
-        configuredOffers.filter(
-          (item): item is OfferItem =>
-            Boolean(
-              item &&
-                typeof item ===
-                  "object" &&
-                "id" in item &&
-                "name" in item &&
-                String(
-                  (
-                    item as {
-                      name?: unknown;
-                    }
-                  ).name || ""
-                ).trim()
-            )
-        );
+      const now = new Date();
+      const todayYMD = now.toISOString().slice(0, 10);
+      const daysMap = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+      const currentDay = daysMap[now.getDay()];
+      const currentHHMM = now.toTimeString().slice(0, 5);
 
-      setOfferItems(
-        validOffers
-      );
+      const validOffers = configuredOffers.filter((item: any): item is OfferItem => {
+        if (!item || typeof item !== "object") return false;
+        const name = String(item.name || item.title || "").trim();
+        if (!name) return false;
+
+        if (item.start_date && String(item.start_date).trim()) {
+          if (todayYMD < String(item.start_date).trim()) return false;
+        }
+
+        if (item.end_date && String(item.end_date).trim()) {
+          if (todayYMD > String(item.end_date).trim()) return false;
+        }
+
+        if (Array.isArray(item.active_days) && item.active_days.length > 0) {
+          const normalizedDays = item.active_days.map((d: any) => String(d).toLowerCase().trim().slice(0, 3));
+          if (!normalizedDays.includes(currentDay)) return false;
+        }
+
+        if (item.active_time_start && String(item.active_time_start).trim()) {
+          if (currentHHMM < String(item.active_time_start).trim()) return false;
+        }
+
+        if (item.active_time_end && String(item.active_time_end).trim()) {
+          if (currentHHMM > String(item.active_time_end).trim()) return false;
+        }
+
+        return true;
+      });
+
+      setOfferItems(validOffers);
 
       // ====================================================
       // SERVICES CATALOGUE

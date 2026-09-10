@@ -217,7 +217,7 @@ export default function DevicesPage() {
           business_id: null,
           device_type: deviceType,
           location: location.trim() || null,
-          status: "unassigned",
+          status: "available",
         })
         .select()
         .single();
@@ -230,9 +230,14 @@ export default function DevicesPage() {
       setShowAddModal(false);
       setSuccess(`${code} registered in TAPX database inventory.`);
       loadDevicesPage();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Unable to add device:", err);
-      setError(err instanceof Error ? err.message : "Unable to add device.");
+      const msg =
+        err?.message ||
+        err?.error_description ||
+        err?.details ||
+        (typeof err === "string" ? err : "Unable to add device.");
+      setError(msg);
     } finally {
       setSaving(false);
     }
@@ -285,7 +290,7 @@ export default function DevicesPage() {
         device_code: code,
         business_id: null,
         device_type: deviceType,
-        status: "unassigned",
+        status: "available",
       }));
 
       const { error: insertError } = await supabase
@@ -401,7 +406,7 @@ export default function DevicesPage() {
         .from("devices")
         .update({
           business_id: null,
-          status: "unassigned",
+          status: "available",
           assigned_at: null,
           label: null,
           location: null,

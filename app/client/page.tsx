@@ -1419,21 +1419,7 @@ export default function ClientPortalPage() {
           )}
 
           {activePage === "offers" && hasOffers && (
-            <ModulePage
-              title="Offers & Promotions"
-              eyebrow="CUSTOMER ENGAGEMENT"
-              description="Manage promotions that appear inside your TAPX customer experience."
-              icon="✦"
-              items={[
-                "Active offers",
-                "Create offers",
-                "Edit promotions",
-                "Activate / deactivate",
-                "Offer visibility",
-              ]}
-              status="Connected"
-              emptyText="Your offers module is active and ready for campaign management."
-            />
+            <OffersPortalSection businessId={business.id} />
           )}
 
           {activePage === "loyalty" && hasLoyalty && (
@@ -6046,6 +6032,423 @@ function LoyaltyPortalSection({ businessId }: { businessId: string }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   OFFERS & PROMOTIONS MANAGEMENT SECTION
+========================================================= */
+
+function OffersPortalSection({ businessId }: { businessId: string }) {
+  const [offers, setOffers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [showModal, setShowModal] = useState(false);
+
+  // Form fields
+  const [editId, setEditId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [code, setCode] = useState("");
+  const [discount, setDiscount] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [activeDays, setActiveDays] = useState<string[]>([]);
+  const [activeTimeStart, setActiveTimeStart] = useState("");
+  const [activeTimeEnd, setActiveTimeEnd] = useState("");
+
+  const daysOfWeek = [
+    { key: "mon", label: "Mon" },
+    { key: "tue", label: "Tue" },
+    { key: "wed", label: "Wed" },
+    { key: "thu", label: "Thu" },
+    { key: "fri", label: "Fri" },
+    { key: "sat", label: "Sat" },
+    { key: "sun", label: "Sun" },
+  ];
+
+  useEffect(() => {
+    loadOffers();
+  }, [businessId]);
+
+  async function loadOffers() {
+    setLoading(true);
+    try {
+      const { data } = await supabase
+        .from("business_module_configs")
+        .select("config")
+        .eq("business_id", businessId)
+        .or("module_key.eq.offers,module_key.eq.offers_promotions")
+        .maybeSingle();
+
+      if (data?.config?.offers && Array.isArray(data.config.offers)) {
+        setOffers(data.config.offers);
+      } else {
+        setOffers([]);
+      }
+    } catch (err) {
+      console.error("Error loading offers:", err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function getStatusBadge(offer: any) {
+    const now = new Date();
+    const todayYMD = now.toISOString().slice(0, 10);
+    const daysMap = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+    const currentDay = daysMap[now.getDay()];
+    const currentHHMM = now.toTimeString().slice(0, 5);
+
+    if (offer.start_date && todayYMD < offer.start_date) {
+      return { label: "Scheduled", color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" };
+    }
+    if (offer.end_date && todayYMD > offer.end_date) {
+      return { label: "Expired", color: "#dc2626", bg: "#fef2f2", border: "#fecaca" };
+    }
+    if (Array.isArray(offer.active_days) && offer.active_days.length > 0) {
+      const normalizedDays = offer.active_days.map((d: any) => String(d).toLowerCase().trim().slice(0, 3));
+      if (!normalizedDays.includes(currentDay)) {
+        return { label: "Scheduled", color: "#d97706", bg: "#fffbeb", border: "#fde68a" };
+      }
+    }
+    if (offer.active_time_start && currentHHMM < offer.active_time_start) {
+      return { label: "Scheduled", color: "#d97706", bg: "#fffbeb", border: "#fde68a" };
+    }
+    if (offer.active_time_end && currentHHMM > offer.active_time_end) {
+      return { label: "Scheduled", color: "#d97706", bg: "#fffbeb", border: "#fde68a" };
+    }
+
+    return { label: "Live now", color: "#059669", bg: "#ecfdf5", border: "#a7f3d0" };
+  }
+
+  function openAddModal() {
+    setEditId(null);
+    setName("");
+    setDescription("");
+    setCode("");
+    setDiscount("");
+    setStartDate("");
+    setEndDate("");
+    setActiveDays([]);
+    setActiveTimeStart("");
+    setActiveTimeEnd("");
+    setShowModal(true);
+  }
+
+  function openEditModal(offer: any) {
+    setEditId(offer.id);
+    setName(offer.name || offer.title || "");
+    setDescription(offer.description || "");
+    setCode(offer.code || "");
+    setDiscount(offer.discount || "");
+    setStartDate(offer.start_date || "");
+    setEndDate(offer.end_date || "");
+    setActiveDays(Array.isArray(offer.active_days) ? offer.active_days : []);
+    setActiveTimeStart(offer.active_time_start || "");
+    setActiveTimeEnd(offer.active_time_end || "");
+    setShowModal(true);
+  }
+
+  function toggleDay(dayKey: string) {
+    if (activeDays.includes(dayKey)) {
+      setActiveDays(activeDays.filter((d) => d !== dayKey));
+    } else {
+      setActiveDays([...activeDays, dayKey]);
+    }
+  }
+
+  async function saveOffer(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+
+    setSaving(true);
+    setMessage("");
+
+    try {
+      const offerId = editId || `offer_${Date.now()}`;
+      const newOfferObj = {
+        id: offerId,
+        name: name.trim(),
+        title: name.trim(),
+        description: description.trim(),
+        code: code.trim() || undefined,
+        discount: discount.trim() || undefined,
+        start_date: startDate || null,
+        end_date: endDate || null,
+        active_days: activeDays,
+        active_time_start: activeTimeStart || null,
+        active_time_end: activeTimeEnd || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      let updatedOffers: any[];
+      if (editId) {
+        updatedOffers = offers.map((o) => (o.id === editId ? newOfferObj : o));
+      } else {
+        updatedOffers = [newOfferObj, ...offers];
+      }
+
+      const { data: existingRow } = await supabase
+        .from("business_module_configs")
+        .select("id, config")
+        .eq("business_id", businessId)
+        .or("module_key.eq.offers,module_key.eq.offers_promotions")
+        .maybeSingle();
+
+      const newConfig = {
+        ...(existingRow?.config || {}),
+        offers: updatedOffers,
+      };
+
+      if (existingRow) {
+        await supabase
+          .from("business_module_configs")
+          .update({ config: newConfig, updated_at: new Date().toISOString() })
+          .eq("id", existingRow.id);
+      } else {
+        await supabase.from("business_module_configs").insert({
+          business_id: businessId,
+          module_key: "offers_promotions",
+          feature_id: "568117e0-e67b-43d3-a0d9-fbf9b6b4132d",
+          config: newConfig,
+          status: "active",
+        });
+      }
+
+      setOffers(updatedOffers);
+      setShowModal(false);
+      setMessage("Offer saved successfully!");
+      setTimeout(() => setMessage(""), 3000);
+    } catch (err: any) {
+      console.error("Error saving offer:", err);
+      alert("Failed to save offer: " + (err.message || String(err)));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteOffer(id: string) {
+    if (!confirm("Are you sure you want to delete this offer?")) return;
+    try {
+      const updatedOffers = offers.filter((o) => o.id !== id);
+      const { data: existingRow } = await supabase
+        .from("business_module_configs")
+        .select("id, config")
+        .eq("business_id", businessId)
+        .or("module_key.eq.offers,module_key.eq.offers_promotions")
+        .maybeSingle();
+
+      if (existingRow) {
+        await supabase
+          .from("business_module_configs")
+          .update({ config: { ...existingRow.config, offers: updatedOffers } })
+          .eq("id", existingRow.id);
+      }
+
+      setOffers(updatedOffers);
+    } catch (err) {
+      console.error("Error deleting offer:", err);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "16px" }}>
+        <div>
+          <span style={{ fontSize: "11px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "1px", color: "#64748b" }}>CUSTOMER ENGAGEMENT</span>
+          <h1 style={{ margin: "4px 0 0", fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>Offers & Scheduled Promotions</h1>
+        </div>
+        <button
+          type="button"
+          onClick={openAddModal}
+          style={{ padding: "10px 18px", background: "#2563eb", color: "white", border: "none", borderRadius: "10px", fontWeight: 700, fontSize: "14px", cursor: "pointer" }}
+        >
+          + Create New Offer
+        </button>
+      </div>
+
+      {message && (
+        <div style={{ padding: "12px 16px", background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0", borderRadius: "8px", fontSize: "14px", fontWeight: 600 }}>
+          {message}
+        </div>
+      )}
+
+      {loading ? (
+        <p style={{ color: "#64748b" }}>Loading offers...</p>
+      ) : offers.length === 0 ? (
+        <div style={{ background: "white", borderRadius: "16px", border: "1px solid #e2e8f0", padding: "40px", textAlign: "center" }}>
+          <p style={{ color: "#64748b", margin: 0, fontSize: "15px" }}>No offers created yet. Create time-bound or recurring promotions to engage your customers.</p>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "16px" }}>
+          {offers.map((offer) => {
+            const badge = getStatusBadge(offer);
+            return (
+              <div key={offer.id} style={{ background: "white", borderRadius: "16px", border: "1px solid #e2e8f0", padding: "20px", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: "16px" }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
+                    <strong style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>{offer.name || offer.title || "Untitled Offer"}</strong>
+                    <span style={{ padding: "4px 10px", borderRadius: "20px", background: badge.bg, color: badge.color, border: `1px solid ${badge.border}`, fontSize: "12px", fontWeight: 700 }}>
+                      ● {badge.label}
+                    </span>
+                  </div>
+
+                  {offer.description && (
+                    <p style={{ fontSize: "14px", color: "#64748b", margin: "0 0 12px", lineHeight: "1.4" }}>{offer.description}</p>
+                  )}
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12px", color: "#475569", background: "#f8fafc", padding: "10px", borderRadius: "8px" }}>
+                    <div>📅 <strong>Dates:</strong> {offer.start_date || "Anytime"} → {offer.end_date || "No expiry"}</div>
+                    <div>🕒 <strong>Hours:</strong> {offer.active_time_start || "All day"} {offer.active_time_end ? `to ${offer.active_time_end}` : ""}</div>
+                    {Array.isArray(offer.active_days) && offer.active_days.length > 0 && (
+                      <div>🗓️ <strong>Days:</strong> {offer.active_days.join(", ").toUpperCase()}</div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", paddingTop: "12px", borderTop: "1px solid #f1f5f9" }}>
+                  <button
+                    type="button"
+                    onClick={() => openEditModal(offer)}
+                    style={{ padding: "6px 12px", background: "#f1f5f9", color: "#334155", border: "none", borderRadius: "6px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteOffer(offer.id)}
+                    style={{ padding: "6px 12px", background: "#fef2f2", color: "#dc2626", border: "none", borderRadius: "6px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+          <form onSubmit={saveOffer} style={{ background: "white", borderRadius: "20px", padding: "24px", maxWidth: "540px", width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>{editId ? "Edit Offer" : "Create New Offer"}</h3>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>Offer Title *</label>
+                <input
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Weekend Flash Sale 20% Off"
+                  style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>Description</label>
+                <textarea
+                  rows={2}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="e.g. Valid on all orders above ₹500"
+                  style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>Start Date (Optional)</label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>End Date (Optional)</label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "6px" }}>Active Days (Leave blank for all days)</label>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {daysOfWeek.map((day) => {
+                    const isSelected = activeDays.includes(day.key);
+                    return (
+                      <button
+                        key={day.key}
+                        type="button"
+                        onClick={() => toggleDay(day.key)}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: "6px",
+                          border: isSelected ? "1px solid #2563eb" : "1px solid #cbd5e1",
+                          background: isSelected ? "#eff6ff" : "white",
+                          color: isSelected ? "#2563eb" : "#475569",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {day.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>Time Start (Optional)</label>
+                  <input
+                    type="time"
+                    value={activeTimeStart}
+                    onChange={(e) => setActiveTimeStart(e.target.value)}
+                    style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>Time End (Optional)</label>
+                  <input
+                    type="time"
+                    value={activeTimeEnd}
+                    onChange={(e) => setActiveTimeEnd(e.target.value)}
+                    style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", marginTop: "20px" }}>
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
+                style={{ padding: "10px 16px", background: "#f1f5f9", color: "#334155", border: "none", borderRadius: "8px", fontSize: "14px", fontWeight: 600, cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                style={{ padding: "10px 18px", background: "#2563eb", color: "white", border: "none", borderRadius: "8px", fontSize: "14px", fontWeight: 700, cursor: saving ? "not-allowed" : "pointer" }}
+              >
+                {saving ? "Saving..." : "Save Offer"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

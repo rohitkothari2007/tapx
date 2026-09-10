@@ -10,7 +10,16 @@ CREATE TABLE IF NOT EXISTS public.tapx_admin_users (
 );
 
 ALTER TABLE public.tapx_admin_users ENABLE ROW LEVEL SECURITY;
+GRANT SELECT ON public.tapx_admin_users TO authenticated, service_role;
 DROP POLICY IF EXISTS "Public select tapx_admin_users" ON public.tapx_admin_users;
+DROP POLICY IF EXISTS "Users can check their own admin status" ON public.tapx_admin_users;
+CREATE POLICY "Users can check their own admin status" ON public.tapx_admin_users
+  FOR SELECT TO authenticated USING (auth.uid() = user_id);
+
+GRANT SELECT ON public.tapx_client_users TO authenticated, service_role;
+DROP POLICY IF EXISTS "Users can check their own client status" ON public.tapx_client_users;
+CREATE POLICY "Users can check their own client status" ON public.tapx_client_users
+  FOR SELECT TO authenticated USING (auth.uid() = user_id);
 
 -- =========================================================
 -- 2. COMPOSITE UNIQUE CONSTRAINT ON tapx_client_users
