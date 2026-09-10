@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import QRCode from "qrcode";
 import ModuleConfigurator from "./ModuleConfigurator";
 
 type Feature = {
@@ -48,6 +49,9 @@ type ActivatedClient = {
   category: string;
   deviceCode: string;
   customerUrl: string;
+  ownerEmail?: string;
+  ownerAccessCreated?: boolean;
+  qrDataUrl?: string;
 };
 
 const CATEGORIES = [
@@ -80,6 +84,12 @@ const CATEGORIES = [
     label: "Salon",
     icon: "💇",
     description: "Salons, spas and beauty businesses",
+  },
+  {
+    value: "custom",
+    label: "Custom",
+    icon: "✨",
+    description: "Custom business with flexible module selection",
   },
   {
     value: "general",
@@ -251,6 +261,12 @@ export default function AddClientPage() {
   }, [features]);
 
   const recommendedFeatures = useMemo(() => {
+    if (form.category === "custom") {
+      return features
+        .filter((feature) => feature.is_paid && !feature.is_core)
+        .sort((a, b) => a.sort_order - b.sort_order);
+    }
+
     const ids = recommendations[form.category] || [];
 
     const result: Feature[] = [];
@@ -273,6 +289,10 @@ export default function AddClientPage() {
   }, [features, recommendations, form.category]);
 
   const otherPaidFeatures = useMemo(() => {
+    if (form.category === "custom") {
+      return [];
+    }
+
     const recommendedIds = new Set(
       recommendations[form.category] || []
     );
@@ -627,11 +647,48 @@ export default function AddClientPage() {
       }
 
       // -----------------------------------------------------
-      // STEP 5: GENERATE CUSTOMER URL
+      // STEP 5: CREATE OWNER ACCESS & GENERATE QR
       // -----------------------------------------------------
 
-      const customerUrl =
-        `${window.location.origin}/tap/${device.device_code}`;
+      const customerUrl = `${window.location.origin}/tap/${device.device_code}`;
+
+      let qrDataUrl = "";
+      try {
+        qrDataUrl = await QRCode.toDataURL(customerUrl, { width: 300, margin: 2 });
+      } catch (qrErr) {
+        console.error("Failed to generate QR code:", qrErr);
+      }
+
+      let ownerAccessCreated = false;
+      const ownerEmail = form.email.trim();
+
+      if (ownerEmail) {
+        try {
+          const { data: sessionData } = await supabase.auth.getSession();
+          const token = sessionData.session?.access_token;
+
+          const ownerRes = await fetch("/api/admin/create-owner", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: token ? `Bearer ${token}` : "",
+            },
+            body: JSON.stringify({
+              businessId: business.id,
+              ownerEmail,
+            }),
+          });
+
+          if (ownerRes.ok) {
+            ownerAccessCreated = true;
+          } else {
+            const errJson = await ownerRes.json();
+            console.warn("Owner access creation notice:", errJson.error);
+          }
+        } catch (authErr) {
+          console.error("Owner access call failed:", authErr);
+        }
+      }
 
       const activated: ActivatedClient = {
         id: business.id,
@@ -639,6 +696,9 @@ export default function AddClientPage() {
         category: business.category,
         deviceCode: device.device_code,
         customerUrl,
+        ownerEmail: ownerEmail || undefined,
+        ownerAccessCreated,
+        qrDataUrl,
       };
 
       setActivatedClient(activated);
@@ -649,9 +709,7 @@ export default function AddClientPage() {
 
       // Remove assigned device from local available list.
       setDevices((current) =>
-        current.filter(
-          (item) => item.id !== device.id
-        )
+        current.filter((item) => item.id !== device.id)
       );
 
       setSelectedDeviceId("");
@@ -764,216 +822,378 @@ export default function AddClientPage() {
   // =========================================================
 
   if (activatedClient) {
+    const portalUrl = `${window.location.origin}/client`;
+
     return (
       <main style={pageStyle}>
-        <div style={successPageWrapperStyle}>
-          <div style={successHeroStyle}>
-            <div style={successCheckStyle}>
-              ✓
-            </div>
-
+        <div style={{ maxWidth: "1000px", margin: "0 auto", padding: "40px 20px" }}>
+          {/* Hero Header */}
+          <div style={{ textAlign: "center", marginBottom: "32px" }}>
+            <div style={successCheckStyle}>✓</div>
             <div
               style={{
                 fontSize: "12px",
                 fontWeight: 800,
                 letterSpacing: "0.08em",
                 color: "#15803d",
-                marginBottom: "7px",
+                marginBottom: "6px",
               }}
             >
-              TAPX ACTIVATION COMPLETE
+              TAPX CLIENT ONBOARDED
             </div>
-
-            <h1
-              style={{
-                margin: 0,
-                fontSize: "32px",
-                color: "#111827",
-              }}
-            >
+            <h1 style={{ margin: 0, fontSize: "32px", color: "#111827", fontWeight: 800 }}>
               Client Ready
             </h1>
-
-            <p
-              style={{
-                margin: "9px 0 0",
-                color: "#64748b",
-                fontSize: "15px",
-              }}
-            >
-              The business, modules and TAPX device
-              have been connected successfully.
+            <p style={{ margin: "8px 0 0", color: "#64748b", fontSize: "15px" }}>
+              Customer touchpoints and owner portal access generated for {activatedClient.name}
             </p>
           </div>
 
-          <div style={deploymentCardStyle}>
-            <div style={deploymentHeaderStyle}>
-              <div>
-                <div style={deploymentLabelStyle}>
-                  BUSINESS
-                </div>
-
-                <h2
-                  style={{
-                    margin: "5px 0 0",
-                    fontSize: "23px",
-                    color: "#111827",
-                  }}
-                >
-                  {activatedClient.name}
-                </h2>
-              </div>
-
-              <div style={categoryPillStyle}>
-                {selectedCategory.icon}{" "}
-                {selectedCategory.label}
-              </div>
-            </div>
-
-            <div style={deploymentGridStyle}>
-              <div style={deploymentItemStyle}>
-                <div style={deploymentItemLabelStyle}>
-                  DEVICE
-                </div>
-
-                <div
-                  style={{
-                    fontSize: "17px",
-                    fontWeight: 750,
-                    color: "#111827",
-                  }}
-                >
-                  {activatedClient.deviceCode}
-                </div>
-
-                <div
-                  style={{
-                    marginTop: "4px",
-                    fontSize: "12px",
-                    color: "#64748b",
-                  }}
-                >
-                  Assigned and active
-                </div>
-              </div>
-
-              <div style={deploymentItemStyle}>
-                <div style={deploymentItemLabelStyle}>
-                  CUSTOMER EXPERIENCE
-                </div>
-
-                <div
-                  style={{
-                    fontSize: "17px",
-                    fontWeight: 750,
-                    color: "#111827",
-                  }}
-                >
-                  Ready
-                </div>
-
-                <div
-                  style={{
-                    marginTop: "4px",
-                    fontSize: "12px",
-                    color: "#64748b",
-                  }}
-                >
-                  Dynamic TAPX page
-                </div>
-              </div>
-            </div>
-
-            <div style={urlBoxStyle}>
-              <div style={deploymentItemLabelStyle}>
-                CUSTOMER URL
-              </div>
-
-              <div style={urlRowStyle}>
-                <div style={urlTextStyle}>
-                  {activatedClient.customerUrl}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={copyCustomerUrl}
-                  style={copyButtonStyle}
-                >
-                  {copied ? "✓ Copied" : "Copy URL"}
-                </button>
-              </div>
-            </div>
-
-            <div style={successActionsStyle}>
-              <button
-                type="button"
-                onClick={() =>
-                  window.open(
-                    activatedClient.customerUrl,
-                    "_blank",
-                    "noopener,noreferrer"
-                  )
-                }
-                style={openCustomerButtonStyle}
-              >
-                ↗ Open Customer Experience
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  router.push(
-                    `/clients/${activatedClient.id}`
-                  )
-                }
-                style={manageClientButtonStyle}
-              >
-                Manage Client
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  router.push("/clients")
-                }
-                style={backClientsButtonStyle}
-              >
-                Back to Clients
-              </button>
-            </div>
-          </div>
-
-          <div style={nextStepCardStyle}>
+          {/* Side-by-Side Handoff Grid */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(440px, 1fr))",
+              gap: "24px",
+              marginBottom: "32px",
+            }}
+          >
+            {/* LEFT SIDE: CUSTOMER TOUCHPOINTS */}
             <div
               style={{
-                fontSize: "23px",
+                background: "white",
+                border: "1px solid #e5e7eb",
+                borderRadius: "16px",
+                padding: "28px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "20px",
               }}
             >
-              📡
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  borderBottom: "1px solid #f1f5f9",
+                  paddingBottom: "16px",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", letterSpacing: "0.05em" }}>
+                    HANDOFF ITEM 1
+                  </div>
+                  <h2 style={{ margin: "2px 0 0", fontSize: "20px", color: "#111827", fontWeight: 700 }}>
+                    Customer Experience
+                  </h2>
+                </div>
+                <span
+                  style={{
+                    background: "#eff6ff",
+                    color: "#1d4ed8",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    padding: "4px 10px",
+                    borderRadius: "20px",
+                  }}
+                >
+                  NFC / QR Live
+                </span>
+              </div>
+
+              {/* QR Preview & Download */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "20px",
+                  background: "#f8fafc",
+                  padding: "16px",
+                  borderRadius: "12px",
+                  border: "1px solid #e2e8f0",
+                }}
+              >
+                {activatedClient.qrDataUrl ? (
+                  <img
+                    src={activatedClient.qrDataUrl}
+                    alt="Customer QR Code"
+                    style={{
+                      width: "110px",
+                      height: "110px",
+                      borderRadius: "8px",
+                      background: "white",
+                      padding: "6px",
+                      border: "1px solid #cbd5e1",
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: "110px",
+                      height: "110px",
+                      background: "#e2e8f0",
+                      borderRadius: "8px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "24px",
+                    }}
+                  >
+                    📱
+                  </div>
+                )}
+
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: "12px", fontWeight: 600, color: "#64748b" }}>ASSIGNED DEVICE</div>
+                  <div style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a", marginTop: "2px" }}>
+                    {activatedClient.deviceCode}
+                  </div>
+                  <div style={{ fontSize: "13px", color: "#475569", marginTop: "4px" }}>
+                    Category: <strong>{activatedClient.category}</strong>
+                  </div>
+
+                  {activatedClient.qrDataUrl && (
+                    <a
+                      href={activatedClient.qrDataUrl}
+                      download={`TAPX_${activatedClient.name.replace(/\s+/g, "_")}_QR.png`}
+                      style={{
+                        display: "inline-block",
+                        marginTop: "10px",
+                        padding: "7px 14px",
+                        background: "#0f172a",
+                        color: "white",
+                        borderRadius: "6px",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        textDecoration: "none",
+                      }}
+                    >
+                      ↓ Download QR Code
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              {/* Customer Link Box */}
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", marginBottom: "6px" }}>
+                  CUSTOMER TAP URL (/tap/{activatedClient.deviceCode})
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    background: "#f1f5f9",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    border: "1px solid #cbd5e1",
+                  }}
+                >
+                  <span
+                    style={{
+                      flex: 1,
+                      fontSize: "13px",
+                      color: "#0f172a",
+                      fontWeight: 600,
+                      wordBreak: "break-all",
+                    }}
+                  >
+                    {activatedClient.customerUrl}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={copyCustomerUrl}
+                    style={{
+                      padding: "6px 12px",
+                      background: "#2563eb",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {copied ? "✓ Copied" : "Copy Link"}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => window.open(activatedClient.customerUrl, "_blank", "noopener,noreferrer")}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  background: "#f8fafc",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: "8px",
+                  color: "#0f172a",
+                  fontWeight: 700,
+                  fontSize: "13px",
+                  cursor: "pointer",
+                }}
+              >
+                ↗ Open Live Customer Touchpoint
+              </button>
             </div>
 
-            <div>
-              <strong
+            {/* RIGHT SIDE: OWNER PORTAL ACCESS */}
+            <div
+              style={{
+                background: "white",
+                border: "1px solid #e5e7eb",
+                borderRadius: "16px",
+                padding: "28px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "20px",
+              }}
+            >
+              <div
                 style={{
-                  color: "#111827",
-                  fontSize: "14px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  borderBottom: "1px solid #f1f5f9",
+                  paddingBottom: "16px",
                 }}
               >
-                Physical TAPX setup
-              </strong>
+                <div>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", letterSpacing: "0.05em" }}>
+                    HANDOFF ITEM 2
+                  </div>
+                  <h2 style={{ margin: "2px 0 0", fontSize: "20px", color: "#111827", fontWeight: 700 }}>
+                    Client Portal Access
+                  </h2>
+                </div>
+                <span
+                  style={{
+                    background: activatedClient.ownerAccessCreated ? "#f0fdf4" : "#fefce8",
+                    color: activatedClient.ownerAccessCreated ? "#15803d" : "#a16207",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    padding: "4px 10px",
+                    borderRadius: "20px",
+                  }}
+                >
+                  {activatedClient.ownerAccessCreated ? "✓ Credentials Created" : "Pending Setup"}
+                </span>
+              </div>
 
-              <p
+              {/* Owner Account Box */}
+              <div
                 style={{
-                  margin: "5px 0 0",
-                  color: "#64748b",
-                  fontSize: "13px",
-                  lineHeight: 1.5,
+                  background: "#f8fafc",
+                  padding: "16px",
+                  borderRadius: "12px",
+                  border: "1px solid #e2e8f0",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "12px",
                 }}
               >
-                Write the customer URL to the
-                physical NFC tag or use the same URL
-                for the client's QR code.
-              </p>
+                <div>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>REGISTERED OWNER EMAIL</div>
+                  <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a", marginTop: "2px" }}>
+                    {activatedClient.ownerEmail || "No email specified during setup"}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>SHARED DASHBOARD ROUTE</div>
+                  <div style={{ fontSize: "14px", fontWeight: 600, color: "#2563eb", marginTop: "2px" }}>
+                    /client
+                  </div>
+                  <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
+                    (Single shared URL — login automatically resolves owner's workspace)
+                  </div>
+                </div>
+              </div>
+
+              {/* Copy Portal Link */}
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", marginBottom: "6px" }}>
+                  OWNER DASHBOARD LINK
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    background: "#f1f5f9",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    border: "1px solid #cbd5e1",
+                  }}
+                >
+                  <span
+                    style={{
+                      flex: 1,
+                      fontSize: "13px",
+                      color: "#0f172a",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {portalUrl}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard.writeText(portalUrl)}
+                    style={{
+                      padding: "6px 12px",
+                      background: "#0f172a",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Copy Dashboard URL
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: "10px", marginTop: "auto" }}>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/clients/${activatedClient.id}`)}
+                  style={{
+                    flex: 1,
+                    padding: "12px",
+                    background: "#111827",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "8px",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Manage Client Workspace
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push("/clients")}
+                  style={{
+                    padding: "12px 18px",
+                    background: "white",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: "8px",
+                    color: "#334155",
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Back to Clients
+                </button>
+              </div>
             </div>
           </div>
         </div>

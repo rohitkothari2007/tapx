@@ -1,8 +1,10 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import QRCode from "qrcode";
+import JSZip from "jszip";
 import ModuleConfigurator, {
   type Feature as ConfigFeature,
 } from "../add/ModuleConfigurator";
@@ -62,6 +64,8 @@ type Device = {
   business_id: string | null;
   device_type: string | null;
   location: string | null;
+  label: string | null;
+  assigned_at: string | null;
   status: string | null;
   created_at?: string;
 };
@@ -135,8 +139,28 @@ export default function ClientPage() {
     customer: { name: string; phone: string } | null;
   };
 
+  type LoyaltyReward = {
+    id: string;
+    business_id: string;
+    customer_id: string;
+    membership_id: string | null;
+    visit_count_at_reward: number;
+    reward_description: string | null;
+    status: "pending" | "sent" | "redeemed";
+    created_at: string;
+    customer?: { name: string; phone: string } | null;
+  };
+
   const [loyaltyMembers, setLoyaltyMembers] =
     useState<LoyaltyMember[]>([]);
+  const [loyaltyRewards, setLoyaltyRewards] =
+    useState<LoyaltyReward[]>([]);
+  const [milestoneInterval, setMilestoneInterval] =
+    useState<number>(5);
+  const [milestoneReward, setMilestoneReward] =
+    useState<string>("10% off next visit");
+  const [savingMilestoneConfig, setSavingMilestoneConfig] =
+    useState(false);
   const [loyaltyLoading, setLoyaltyLoading] =
     useState(false);
   const [loyaltySearch, setLoyaltySearch] =
@@ -146,6 +170,162 @@ export default function ClientPage() {
   const [loyaltySavingCustomer, setLoyaltySavingCustomer] =
     useState<string | null>(null);
 
+  // Client Device Management State
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [availableInventory, setAvailableInventory] = useState<Device[]>([]);
+  const [selectedInventoryIds, setSelectedInventoryIds] = useState<string[]>([]);
+  const [assignLabelPattern, setAssignLabelPattern] = useState<"table" | "room" | "desk" | "custom">("table");
+  const [assignLabelStart, setAssignLabelStart] = useState(1);
+  const [assignCustomPrefix, setAssignCustomPrefix] = useState("Unit ");
+  const [assigningDevices, setAssigningDevices] = useState(false);
+  const [zippingQrCodes, setZippingQrCodes] = useState(false);
+
+  const [qrPreviewDevice, setQrPreviewDevice] = useState<Device | null>(null);
+  const [qrPreviewDataUrl, setQrPreviewDataUrl] = useState("");
+
+  const [editingLabelDevice, setEditingLabelDevice] = useState<Device | null>(null);
+  const [editLabelInput, setEditLabelInput] = useState("");
+
+  async function openAssignModal() {
+    setShowAssignModal(true);
+    try {
+      const { data, error } = await supabase
+        .from("devices")
+        .select("*")
+        .is("business_id", null)
+        .order("device_code", { ascending: true });
+      if (error) throw error;
+      setAvailableInventory((data || []) as Device[]);
+    } catch (err) {
+      console.error("Load unassigned devices error:", err);
+    }
+  }
+
+  async function executeAssignDevicesToClient() {
+    if (selectedInventoryIds.length === 0 || !businessId) return;
+    setAssigningDevices(true);
+    try {
+      const now = new Date().toISOString();
+      const updates = selectedInventoryIds.map((id, index) => {
+        let label = "";
+        const num = assignLabelStart + index;
+        if (assignLabelPattern === "table") label = `Table ${num}`;
+        else if (assignLabelPattern === "room") label = `Room ${num}`;
+        else if (assignLabelPattern === "desk") label = `Desk ${num}`;
+        else label = `${assignCustomPrefix}${num}`;
+
+        return supabase
+          .from("devices")
+          .update({
+            business_id: businessId,
+            status: "active",
+            label: label,
+            assigned_at: now,
+          })
+          .eq("id", id);
+      });
+
+      await Promise.all(updates);
+
+      // Refresh devices
+      const { data: updatedDevices } = await supabase
+        .from("devices")
+        .select("*")
+        .eq("business_id", businessId)
+        .order("created_at", { ascending: false });
+
+      setDevices((updatedDevices || []) as Device[]);
+      setShowAssignModal(false);
+      setSelectedInventoryIds([]);
+    } catch (err) {
+      console.error("Assign devices error:", err);
+    } finally {
+      setAssigningDevices(false);
+    }
+  }
+
+  async function handleUnassignDevice(device: Device) {
+    if (!window.confirm(`Unassign ${device.device_code} (${device.label || "No Label"}) from ${business?.name || "this client"}?`)) {
+      return;
+    }
+    try {
+      const { error: updateErr } = await supabase
+        .from("devices")
+        .update({ business_id: null, status: "unassigned" })
+        .eq("id", device.id);
+
+      if (updateErr) throw updateErr;
+
+      setDevices((curr) => curr.filter((d) => d.id !== device.id));
+    } catch (err) {
+      console.error("Unassign error:", err);
+    }
+  }
+
+  async function handleSaveDeviceLabel() {
+    if (!editingLabelDevice) return;
+    try {
+      const newLabel = editLabelInput.trim() || null;
+      const { error: updateErr } = await supabase
+        .from("devices")
+        .update({ label: newLabel })
+        .eq("id", editingLabelDevice.id);
+
+      if (updateErr) throw updateErr;
+
+      setDevices((curr) =>
+        curr.map((d) => (d.id === editingLabelDevice.id ? { ...d, label: newLabel } : d))
+      );
+      setEditingLabelDevice(null);
+    } catch (err) {
+      console.error("Save label error:", err);
+    }
+  }
+
+  async function openDeviceQrModal(device: Device) {
+    setQrPreviewDevice(device);
+    const customerUrl = `${window.location.origin}/tap/${device.device_code}`;
+    try {
+      const url = await QRCode.toDataURL(customerUrl, { width: 600, margin: 2 });
+      setQrPreviewDataUrl(url);
+    } catch (err) {
+      console.error("QR preview error:", err);
+    }
+  }
+
+  async function exportAllDevicesQrZip() {
+    if (devices.length === 0) return;
+    setZippingQrCodes(true);
+    try {
+      const zip = new JSZip();
+      const origin = window.location.origin;
+
+      for (const dev of devices) {
+        const customerUrl = `${origin}/tap/${dev.device_code}`;
+        const dataUrl = await QRCode.toDataURL(customerUrl, { width: 1000, margin: 2 });
+        const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
+
+        const labelName = dev.label
+          ? dev.label.toLowerCase().replace(/[\s/]+/g, "_")
+          : dev.device_code.toLowerCase();
+
+        const filename = `${labelName}_${dev.device_code}.png`;
+        zip.file(filename, base64Data, { base64: true });
+      }
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `${(business?.name || "TAPX").replace(/[\s/]+/g, "_")}_QR_Codes.zip`;
+      link.click();
+    } catch (err) {
+      console.error("ZIP export error:", err);
+    } finally {
+      setZippingQrCodes(false);
+    }
+  }
+
   useEffect(() => {
     if (!businessId) {
       return;
@@ -153,6 +333,125 @@ export default function ClientPage() {
 
     loadWorkspace();
   }, [businessId]);
+
+  async function loadLoyaltyRewards(targetBusinessId: string) {
+    try {
+      const { data, error } = await supabase
+        .from("loyalty_rewards")
+        .select(`
+          id,
+          business_id,
+          customer_id,
+          membership_id,
+          visit_count_at_reward,
+          reward_description,
+          status,
+          created_at,
+          customer:customers(name, phone)
+        `)
+        .eq("business_id", targetBusinessId)
+        .order("created_at", { ascending: false });
+
+      if (!error && data) {
+        setLoyaltyRewards(data as unknown as LoyaltyReward[]);
+      }
+    } catch (err) {
+      console.error("TAPX loyalty rewards load error:", err);
+    }
+  }
+
+  async function loadLoyaltyConfig(targetBusinessId: string) {
+    try {
+      const { data } = await supabase
+        .from("business_module_configs")
+        .select("config")
+        .eq("business_id", targetBusinessId)
+        .eq("module_key", "loyalty")
+        .maybeSingle();
+
+      if (data?.config) {
+        const cfg = data.config as any;
+        if (cfg.milestone_interval) {
+          setMilestoneInterval(Number(cfg.milestone_interval));
+        }
+        if (cfg.milestone_reward) {
+          setMilestoneReward(String(cfg.milestone_reward));
+        }
+      }
+    } catch (err) {
+      console.error("Error loading loyalty config:", err);
+    }
+  }
+
+  async function saveMilestoneConfig() {
+    if (!businessId) return;
+    setSavingMilestoneConfig(true);
+    setLoyaltyMessage("");
+    try {
+      const newConfig = {
+        milestone_interval: milestoneInterval,
+        milestone_reward: milestoneReward,
+      };
+
+      const { error } = await supabase
+        .from("business_module_configs")
+        .upsert(
+          {
+            business_id: businessId,
+            feature_id: "loyalty",
+            module_key: "loyalty",
+            config: newConfig,
+            status: "active",
+          },
+          { onConflict: "business_id,module_key" }
+        );
+
+      if (error) throw error;
+      setLoyaltyMessage("Loyalty milestone rules updated successfully!");
+    } catch (err: any) {
+      console.error("Error saving milestone config:", err);
+      setLoyaltyMessage(err?.message || "Failed to save milestone rules.");
+    } finally {
+      setSavingMilestoneConfig(false);
+    }
+  }
+
+  async function sendRewardWhatsApp(reward: LoyaltyReward) {
+    const rawPhone = reward.customer?.phone?.replace(/\D/g, "") || "";
+    const name = reward.customer?.name || "Valued Customer";
+    const rewardText = reward.reward_description || "Special Reward";
+    const visits = reward.visit_count_at_reward;
+
+    const message = `Hi ${name}! 🎉 Congratulations on visit #${visits}! You've unlocked a milestone reward: ${rewardText}. Show this message on your next visit to redeem!`;
+    const phone = rawPhone ? (rawPhone.startsWith("91") ? rawPhone : `91${rawPhone}`) : "";
+    const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+
+    window.open(waUrl, "_blank");
+
+    try {
+      await supabase
+        .from("loyalty_rewards")
+        .update({ status: "sent" })
+        .eq("id", reward.id);
+
+      if (businessId) await loadLoyaltyRewards(businessId);
+    } catch (err) {
+      console.error("Error updating reward status:", err);
+    }
+  }
+
+  async function markRewardRedeemed(rewardId: string) {
+    try {
+      await supabase
+        .from("loyalty_rewards")
+        .update({ status: "redeemed" })
+        .eq("id", rewardId);
+
+      if (businessId) await loadLoyaltyRewards(businessId);
+    } catch (err) {
+      console.error("Error marking reward redeemed:", err);
+    }
+  }
 
   async function loadLoyaltyMembers(targetBusinessId: string) {
     setLoyaltyLoading(true);
@@ -172,6 +471,8 @@ export default function ClientPage() {
 
       if (error) throw error;
       setLoyaltyMembers((data || []) as unknown as LoyaltyMember[]);
+      await loadLoyaltyRewards(targetBusinessId);
+      await loadLoyaltyConfig(targetBusinessId);
     } catch (err) {
       console.error("TAPX loyalty load error:", err);
       setLoyaltyMembers([]);
@@ -1683,7 +1984,163 @@ export default function ClientPage() {
             <div style={moduleMessageStyle}>{loyaltyMessage}</div>
           )}
 
+          {/* =========================================================
+              MILESTONE CONFIGURATION CARD
+          ========================================================= */}
+          <div style={{ ...card, marginBottom: "24px" }}>
+            <h3 style={{ margin: "0 0 12px", fontSize: "16px", fontWeight: 700, color: "#111827" }}>
+              ⚙ Loyalty Milestone Rules
+            </h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px", marginBottom: "16px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#4b5563", marginBottom: "6px" }}>
+                  Milestone Interval (Visits)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={milestoneInterval}
+                  onChange={(e) => setMilestoneInterval(Number(e.target.value) || 5)}
+                  style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "14px", boxSizing: "border-box" }}
+                />
+                <span style={{ fontSize: "12px", color: "#6b7280", marginTop: "4px", display: "block" }}>
+                  e.g., 5 = reward triggered every 5th visit
+                </span>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#4b5563", marginBottom: "6px" }}>
+                  Reward Description
+                </label>
+                <input
+                  type="text"
+                  value={milestoneReward}
+                  onChange={(e) => setMilestoneReward(e.target.value)}
+                  placeholder="e.g. 10% off next visit"
+                  style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "14px", boxSizing: "border-box" }}
+                />
+                <span style={{ fontSize: "12px", color: "#6b7280", marginTop: "4px", display: "block" }}>
+                  Description sent to customer upon reaching milestone
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={saveMilestoneConfig}
+              disabled={savingMilestoneConfig}
+              style={{ ...primaryButton, opacity: savingMilestoneConfig ? 0.6 : 1 }}
+            >
+              {savingMilestoneConfig ? "Saving Rules..." : "Save Milestone Rules"}
+            </button>
+          </div>
+
+          {/* =========================================================
+              MILESTONES & REWARDS WIDGET
+          ========================================================= */}
+          <div style={{ ...card, marginBottom: "24px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#111827" }}>
+                🎁 Triggered Milestone Rewards ({loyaltyRewards.filter(r => r.status !== 'redeemed').length} Active)
+              </h3>
+            </div>
+
+            {loyaltyRewards.length === 0 ? (
+              <p style={emptyText}>No milestone rewards generated yet. Rewards auto-trigger when visits hit the milestone interval.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                {loyaltyRewards.map((reward) => {
+                  const customerName = reward.customer?.name || "Customer";
+                  const phone = reward.customer?.phone || "";
+
+                  return (
+                    <div
+                      key={reward.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "14px 16px",
+                        background: reward.status === "pending" ? "#fefce8" : reward.status === "sent" ? "#eff6ff" : "#f8fafc",
+                        border: `1px solid ${reward.status === "pending" ? "#fef08a" : reward.status === "sent" ? "#bfdbfe" : "#e2e8f0"}`,
+                        borderRadius: "10px",
+                        gap: "16px",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <strong style={{ fontSize: "15px", color: "#0f172a" }}>{customerName}</strong>
+                          <span
+                            style={{
+                              fontSize: "11px",
+                              fontWeight: 700,
+                              textTransform: "uppercase",
+                              padding: "2px 8px",
+                              borderRadius: "12px",
+                              background: reward.status === "pending" ? "#fef08a" : reward.status === "sent" ? "#dbeafe" : "#e2e8f0",
+                              color: reward.status === "pending" ? "#854d0e" : reward.status === "sent" ? "#1e40af" : "#475569",
+                            }}
+                          >
+                            {reward.status === "pending" ? "● Reward Ready" : reward.status === "sent" ? "✓ Sent via WhatsApp" : "✓ Redeemed"}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: "13px", color: "#475569", marginTop: "3px" }}>
+                          Hit <strong>Visit #{reward.visit_count_at_reward}</strong> • Reward: <em>"{reward.reward_description}"</em>
+                        </div>
+                        {phone && <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>Mobile: {phone}</div>}
+                      </div>
+
+                      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        {reward.status !== "redeemed" && (
+                          <button
+                            type="button"
+                            onClick={() => sendRewardWhatsApp(reward)}
+                            style={{
+                              padding: "8px 14px",
+                              background: "#16a34a",
+                              color: "white",
+                              border: "none",
+                              borderRadius: "6px",
+                              fontSize: "12px",
+                              fontWeight: 700,
+                              cursor: "pointer",
+                            }}
+                          >
+                            📲 Send via WhatsApp
+                          </button>
+                        )}
+                        {reward.status !== "redeemed" && (
+                          <button
+                            type="button"
+                            onClick={() => markRewardRedeemed(reward.id)}
+                            style={{
+                              padding: "8px 14px",
+                              background: "#0f172a",
+                              color: "white",
+                              border: "none",
+                              borderRadius: "6px",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              cursor: "pointer",
+                            }}
+                          >
+                            ✓ Mark Redeemed
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <div style={card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#111827" }}>
+                👥 Loyalty Members & Visit Verification
+              </h3>
+            </div>
             <input
               value={loyaltySearch}
               onChange={(event) => setLoyaltySearch(event.target.value)}
@@ -1876,89 +2333,274 @@ export default function ClientPage() {
       {activeTab === "devices" && (
         <section>
           <Card>
-            <CardHeader
-              title="Assigned Devices"
-              description="NFC and QR devices belonging to this client"
-            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "20px", fontWeight: 800, color: "#0f172a" }}>
+                  Assigned Hardware Devices ({devices.length})
+                </h3>
+                <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#64748b" }}>
+                  NFC cards, standees, and QR codes assigned to {business?.name || "this business"}.
+                </p>
+              </div>
+
+              <div style={{ display: "flex", gap: "10px" }}>
+                {devices.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={zippingQrCodes}
+                    onClick={exportAllDevicesQrZip}
+                    style={secondaryButton}
+                  >
+                    {zippingQrCodes ? "Generating ZIP..." : "📦 Download All QR Codes (.zip)"}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={openAssignModal}
+                  style={primaryButton}
+                >
+                  + Assign Devices from Inventory
+                </button>
+              </div>
+            </div>
 
             {devices.length === 0 ? (
-              <EmptyState text="No devices assigned yet." />
+              <EmptyState text="No devices assigned to this client yet. Assign unassigned devices from inventory." />
             ) : (
-              <div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                 {devices.map((device) => (
-                  <div
-                    key={device.id}
-                    style={deviceRow}
-                  >
-                    <div
-                      style={
-                        deviceCodeBox
-                      }
-                    >
+                  <div key={device.id} style={deviceRow}>
+                    <div style={deviceCodeBox}>
                       {device.device_code}
                     </div>
 
-                    <div
-                      style={{
-                        flex: 1,
-                      }}
-                    >
-                      <strong>
-                        {device.device_type ||
-                          "NFC Device"}
-                      </strong>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <strong style={{ fontSize: "15px", color: "#0f172a" }}>
+                          {device.label || "No Label Assigned"}
+                        </strong>
+                        {device.label && (
+                          <span style={{ background: "#e0e7ff", color: "#3730a3", padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700 }}>
+                            {device.label}
+                          </span>
+                        )}
+                      </div>
 
-                      <div
-                        style={
-                          deviceLocation
-                        }
-                      >
-                        {device.location ||
-                          "No location specified"}
+                      <div style={deviceLocation}>
+                        {device.device_type || "NFC + QR"} • {device.location ? `Loc: ${device.location}` : "Standard Deployment"}
+                        {device.assigned_at && ` • Assigned ${new Date(device.assigned_at).toLocaleDateString()}`}
                       </div>
                     </div>
 
                     <span
                       style={{
                         ...statusBadge,
-                        background:
-                          device.status?.toLowerCase() ===
-                          "active"
-                            ? "#dcfce7"
-                            : "#f1f5f9",
-                        color:
-                          device.status?.toLowerCase() ===
-                          "active"
-                            ? "#15803d"
-                            : "#475569",
+                        background: device.status?.toLowerCase() === "active" ? "#dcfce7" : "#f1f5f9",
+                        color: device.status?.toLowerCase() === "active" ? "#15803d" : "#475569",
                       }}
                     >
-                      {device.status ||
-                        "unknown"}
+                      {device.status || "active"}
                     </span>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        window.open(
-                          getCustomerUrl(
-                            device.device_code
-                          ),
-                          "_blank"
-                        )
-                      }
-                      style={
-                        secondaryButton
-                      }
-                    >
-                      Open ↗
-                    </button>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <button
+                        type="button"
+                        onClick={() => openDeviceQrModal(device)}
+                        style={secondaryButton}
+                        title="View QR Code"
+                      >
+                        📷 QR
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingLabelDevice(device);
+                          setEditLabelInput(device.label || "");
+                        }}
+                        style={secondaryButton}
+                        title="Edit Label"
+                      >
+                        🏷️ Label
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => window.open(getCustomerUrl(device.device_code), "_blank")}
+                        style={secondaryButton}
+                      >
+                        Open ↗
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleUnassignDevice(device)}
+                        style={{ ...secondaryButton, borderColor: "#fecaca", color: "#dc2626", background: "#fef2f2" }}
+                      >
+                        Unassign
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
             )}
           </Card>
         </section>
+      )}
+
+      {/* ASSIGN DEVICES MODAL */}
+      {showAssignModal && (
+        <div style={modalBackdropStyle}>
+          <div style={modalContentStyle}>
+            <div style={modalHeaderStyle}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: "18px", fontWeight: 800 }}>Assign Devices to {business?.name}</h3>
+                <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#64748b" }}>Select unassigned hardware units from global inventory.</p>
+              </div>
+              <button type="button" onClick={() => setShowAssignModal(false)} style={closeBtnStyle}>×</button>
+            </div>
+
+            <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
+              {availableInventory.length === 0 ? (
+                <div style={{ padding: "20px", textAlign: "center", color: "#64748b" }}>
+                  No unassigned devices in inventory. Go to TAPX Devices page to provision new hardware.
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "6px" }}>
+                      Select Unassigned Devices ({selectedInventoryIds.length} selected)
+                    </label>
+                    <div style={{ maxHeight: "180px", overflowY: "auto", border: "1px solid #cbd5e1", borderRadius: "8px", padding: "8px" }}>
+                      {availableInventory.map((inv) => (
+                        <label key={inv.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "6px 8px", cursor: "pointer", borderBottom: "1px solid #f1f5f9" }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedInventoryIds.includes(inv.id)}
+                            onChange={() => {
+                              setSelectedInventoryIds((curr) =>
+                                curr.includes(inv.id) ? curr.filter((i) => i !== inv.id) : [...curr, inv.id]
+                              );
+                            }}
+                          />
+                          <span style={{ fontWeight: 700, fontFamily: "monospace", fontSize: "13px" }}>{inv.device_code}</span>
+                          <span style={{ fontSize: "12px", color: "#64748b" }}>({inv.device_type || "NFC + QR"})</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "6px" }}>Auto-Label Pattern</label>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                      <button
+                        type="button"
+                        onClick={() => setAssignLabelPattern("table")}
+                        style={{ padding: "8px", fontSize: "12px", fontWeight: 700, borderRadius: "6px", border: assignLabelPattern === "table" ? "2px solid #2563eb" : "1px solid #cbd5e1", background: assignLabelPattern === "table" ? "#eff6ff" : "white" }}
+                      >
+                        🍽️ Table 1, Table 2...
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setAssignLabelPattern("room")}
+                        style={{ padding: "8px", fontSize: "12px", fontWeight: 700, borderRadius: "6px", border: assignLabelPattern === "room" ? "2px solid #2563eb" : "1px solid #cbd5e1", background: assignLabelPattern === "room" ? "#eff6ff" : "white" }}
+                      >
+                        🏨 Room 101, Room 102...
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "4px" }}>Start Number</label>
+                      <input
+                        type="number"
+                        value={assignLabelStart}
+                        onChange={(e) => setAssignLabelStart(Number(e.target.value))}
+                        style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div style={modalFooterStyle}>
+              <button type="button" onClick={() => setShowAssignModal(false)} style={secondaryButton}>Cancel</button>
+              <button
+                type="button"
+                disabled={assigningDevices || selectedInventoryIds.length === 0}
+                onClick={executeAssignDevicesToClient}
+                style={primaryButton}
+              >
+                {assigningDevices ? "Assigning..." : `Assign ${selectedInventoryIds.length} Device(s)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT DEVICE LABEL MODAL */}
+      {editingLabelDevice && (
+        <div style={modalBackdropStyle}>
+          <div style={{ ...modalContentStyle, maxWidth: "420px" }}>
+            <div style={modalHeaderStyle}>
+              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 800 }}>Edit Label</h3>
+              <button type="button" onClick={() => setEditingLabelDevice(null)} style={closeBtnStyle}>×</button>
+            </div>
+            <div style={{ padding: "18px" }}>
+              <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "6px" }}>
+                Device Label for {editingLabelDevice.device_code}
+              </label>
+              <input
+                value={editLabelInput}
+                onChange={(e) => setEditLabelInput(e.target.value)}
+                placeholder="e.g. Table 4 or Room 204"
+                style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+              />
+            </div>
+            <div style={modalFooterStyle}>
+              <button type="button" onClick={() => setEditingLabelDevice(null)} style={secondaryButton}>Cancel</button>
+              <button type="button" onClick={handleSaveDeviceLabel} style={primaryButton}>Save Label</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DEVICE QR MODAL */}
+      {qrPreviewDevice && (
+        <div style={modalBackdropStyle}>
+          <div style={{ ...modalContentStyle, maxWidth: "440px", textAlign: "center" }}>
+            <div style={modalHeaderStyle}>
+              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 800 }}>
+                {qrPreviewDevice.label || qrPreviewDevice.device_code}
+              </h3>
+              <button type="button" onClick={() => setQrPreviewDevice(null)} style={closeBtnStyle}>×</button>
+            </div>
+            <div style={{ padding: "20px", display: "flex", flexDirection: "column", alignItems: "center", gap: "14px" }}>
+              {qrPreviewDataUrl && (
+                <img src={qrPreviewDataUrl} alt="QR Code" style={{ width: "220px", height: "220px", borderRadius: "10px", border: "1px solid #e2e8f0" }} />
+              )}
+              <div style={{ fontSize: "12px", fontFamily: "monospace", color: "#475569" }}>
+                /tap/{qrPreviewDevice.device_code}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const a = document.createElement("a");
+                  a.href = qrPreviewDataUrl;
+                  a.download = `${qrPreviewDevice.label || qrPreviewDevice.device_code}_QR.png`;
+                  a.click();
+                }}
+                style={primaryButton}
+              >
+                Download High-Res PNG
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );
@@ -2742,4 +3384,51 @@ const emptyState: React.CSSProperties = {
   color: "#64748b",
   background: "#f8fafc",
   borderRadius: 10,
+};
+
+const modalBackdropStyle: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(15, 23, 42, 0.55)",
+  backdropFilter: "blur(4px)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 1000,
+  padding: 20,
+};
+
+const modalContentStyle: React.CSSProperties = {
+  background: "white",
+  borderRadius: 18,
+  width: "100%",
+  maxWidth: 580,
+  boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+  overflow: "hidden",
+};
+
+const modalHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  padding: "20px 24px",
+  borderBottom: "1px solid #e2e8f0",
+};
+
+const modalFooterStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "flex-end",
+  gap: 10,
+  padding: "16px 24px",
+  borderTop: "1px solid #e2e8f0",
+  background: "#f8fafc",
+};
+
+const closeBtnStyle: React.CSSProperties = {
+  border: "none",
+  background: "transparent",
+  color: "#64748b",
+  fontSize: 24,
+  cursor: "pointer",
+  lineHeight: 1,
 };

@@ -1,7 +1,8 @@
-﻿"use client";
+"use client";
 
 import {
   useEffect,
+  useMemo,
   useState,
   type CSSProperties,
 } from "react";
@@ -44,6 +45,66 @@ type ProductItem = {
   description?: string;
 };
 
+const CATEGORY_ACCENTS: Record<
+  string,
+  { main: string; bgLight: string; borderLight: string; textOnAccent: string }
+> = {
+  restaurant: {
+    main: "#a31d1d",
+    bgLight: "rgba(163, 29, 29, 0.08)",
+    borderLight: "rgba(163, 29, 29, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  salon: {
+    main: "#c94e0c",
+    bgLight: "rgba(201, 78, 12, 0.08)",
+    borderLight: "rgba(201, 78, 12, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  hotel: {
+    main: "#1e3866",
+    bgLight: "rgba(30, 56, 102, 0.08)",
+    borderLight: "rgba(30, 56, 102, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  cafe: {
+    main: "#9c490a",
+    bgLight: "rgba(156, 73, 10, 0.08)",
+    borderLight: "rgba(156, 73, 10, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  retail: {
+    main: "#056e50",
+    bgLight: "rgba(5, 110, 80, 0.08)",
+    borderLight: "rgba(5, 110, 80, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  healthcare: {
+    main: "#04875f",
+    bgLight: "rgba(4, 135, 95, 0.08)",
+    borderLight: "rgba(4, 135, 95, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  real_estate: {
+    main: "#b53c0d",
+    bgLight: "rgba(181, 60, 13, 0.08)",
+    borderLight: "rgba(181, 60, 13, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+  custom: {
+    main: "#4d5566",
+    bgLight: "rgba(77, 85, 102, 0.08)",
+    borderLight: "rgba(77, 85, 102, 0.2)",
+    textOnAccent: "#ffffff",
+  },
+};
+
+function getCategoryAccent(category?: string | null) {
+  if (!category) return CATEGORY_ACCENTS.custom;
+  const normalized = category.toLowerCase().trim().replace(/[\s-]/g, "_");
+  return CATEGORY_ACCENTS[normalized] || CATEGORY_ACCENTS.custom;
+}
+
 type OfferItem = {
   id: string;
   name: string;
@@ -59,6 +120,41 @@ type ServiceItem = {
   duration?: string;
   description?: string;
   popular?: boolean;
+  available?: boolean;
+};
+
+type RoomServiceCategory = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+type RoomServiceItem = {
+  id: string;
+  name: string;
+  categoryId?: string;
+  category?: string;
+  price?: string;
+  priceType?: "fixed" | "starting_from";
+  description?: string;
+  deliveryTime?: string;
+  available?: boolean;
+};
+
+type HotelServiceCategory = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+type HotelServiceItem = {
+  id: string;
+  name: string;
+  categoryId?: string;
+  category?: string;
+  description?: string;
+  availability?: string;
+  action?: "info" | "request" | "contact";
   available?: boolean;
 };
 
@@ -119,6 +215,8 @@ type ActiveModule =
   | "table-ordering"
   | "feedback"
   | "appointment-booking"
+  | "room-service"
+  | "hotel-services"
   | null;
 
 export default function TapPage() {
@@ -164,6 +262,18 @@ export default function TapPage() {
   const [appointmentConfig, setAppointmentConfig] =
     useState<AppointmentConfig>({});
 
+  const [roomServiceCategories, setRoomServiceCategories] =
+    useState<RoomServiceCategory[]>([]);
+
+  const [roomServiceItems, setRoomServiceItems] =
+    useState<RoomServiceItem[]>([]);
+
+  const [hotelServiceCategories, setHotelServiceCategories] =
+    useState<HotelServiceCategory[]>([]);
+
+  const [hotelServiceItems, setHotelServiceItems] =
+    useState<HotelServiceItem[]>([]);
+
   useEffect(() => {
     if (deviceCode) {
       void loadTapExperience();
@@ -178,125 +288,48 @@ export default function TapPage() {
     setError("");
 
     try {
-      const deviceRequest = supabase
-        .from("devices")
-        .select("*")
-        .eq("device_code", deviceCode)
-        .single();
+      const tapRpcRequest = supabase.rpc("resolve_tap_device", {
+        p_device_code: deviceCode,
+      });
 
-      const deviceTimeout = new Promise<never>((_, reject) =>
+      const rpcTimeout = new Promise<never>((_, reject) =>
         setTimeout(
           () =>
             reject(
               new Error(
-                "Device request timed out. Please check your connection."
+                "TAPX experience request timed out. Please check your connection."
               )
             ),
           10000
         )
       );
 
-      const {
-        data: deviceData,
-        error: deviceError,
-      } = await Promise.race([
-        deviceRequest,
-        deviceTimeout,
+      const { data: tapData, error: tapError } = await Promise.race([
+        tapRpcRequest,
+        rpcTimeout,
       ]);
 
-      if (deviceError) throw deviceError;
+      if (tapError) throw tapError;
 
-      if (!deviceData) {
-        throw new Error("TAPX device not found.");
+      if (!tapData || !tapData.device || !tapData.business) {
+        setError(`TAPX device "${deviceCode}" was not found or is inactive.`);
+        setLoading(false);
+        return;
       }
+
+      const deviceData = tapData.device;
+      const businessData = tapData.business;
 
       setDevice(deviceData);
-
-      const businessRequest = supabase
-        .from("businesses")
-        .select("*")
-        .eq("id", deviceData.business_id)
-        .single();
-
-      const businessTimeout = new Promise<never>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(
-                "Business request timed out. Please check your connection."
-              )
-            ),
-          10000
-        )
-      );
-
-      const {
-        data: businessData,
-        error: businessError,
-      } = await Promise.race([
-        businessRequest,
-        businessTimeout,
-      ]);
-
-      if (businessError) throw businessError;
-
-      if (!businessData) {
-        throw new Error("Business not found.");
-      }
-
       setBusiness(businessData);
 
-      const [
-        featureResponse,
-        configResponse,
-      ] = await Promise.all([
-        supabase
-          .from("business_features")
-          .select(
-            "feature_id, enabled, status"
-          )
-          .eq(
-            "business_id",
-            deviceData.business_id
-          )
-          .eq("enabled", true),
-
-        supabase
-          .from("business_module_configs")
-          .select(
-            "feature_id, module_key, config, status"
-          )
-          .eq(
-            "business_id",
-            deviceData.business_id
-          ),
-      ]);
-
-      if (featureResponse.error) {
-        console.error(
-          "TAPX feature lookup:",
-          featureResponse.error
-        );
-      }
-
-      if (configResponse.error) {
-        console.error(
-          "TAPX module config lookup:",
-          configResponse.error
-        );
-      }
-
       const enabledFeatureIds = new Set(
-        (featureResponse.data || [])
+        (tapData.enabled_features || [])
           .filter(
-            (item: BusinessFeature) =>
-              item.enabled &&
-              item.status !== "inactive"
+            (item: any) =>
+              item.enabled && item.status !== "inactive"
           )
-          .map(
-            (item: BusinessFeature) =>
-              item.feature_id
-          )
+          .map((item: any) => item.feature_id)
       );
 
       const normalizeModuleKey = (
@@ -352,12 +385,30 @@ export default function TapPage() {
           return "customer_feedback";
         }
 
+        if (
+          key === "room_service" ||
+          key === "room-service" ||
+          key === "roomservice" ||
+          key === "in_room_dining"
+        ) {
+          return "room_service";
+        }
+
+        if (
+          key === "hotel_services" ||
+          key === "hotel-services" ||
+          key === "hotelservices" ||
+          key === "hotel_facilities"
+        ) {
+          return "hotel_services";
+        }
+
         return key;
       };
 
       const enabledConfigs =
-        (configResponse.data || []).filter(
-          (item: ModuleConfig) =>
+        (tapData.module_configs || []).filter(
+          (item: any) =>
             enabledFeatureIds.has(
               item.feature_id
             ) &&
@@ -563,80 +614,52 @@ export default function TapPage() {
           ? servicesConfig.config.services
           : [];
 
-      const validServices =
-        configuredServices
-          .filter(
-            (item): item is ServiceItem =>
-              Boolean(
-                item &&
-                  typeof item ===
-                    "object" &&
-                  "id" in item &&
-                  "name" in item &&
-                  String(
-                    (
-                      item as {
-                        name?: unknown;
-                      }
-                    ).name || ""
-                  ).trim()
-              )
-          )
-          .map((item) => ({
-            ...item,
+      const validServices: ServiceItem[] = configuredServices
+        .filter(
+          (item): item is Record<string, unknown> =>
+            Boolean(
+              item &&
+                typeof item === "object" &&
+                "id" in item &&
+                "name" in item &&
+                String((item as { name?: unknown }).name || "").trim()
+            )
+        )
+        .map((item) => {
+          const rawPriceType = String(item.priceType || "").toLowerCase().trim();
+          const priceType: "fixed" | "starting_from" =
+            rawPriceType === "starting_from" || rawPriceType === "starting"
+              ? "starting_from"
+              : "fixed";
+
+          return {
             id: String(item.id),
-            name: String(
-              item.name
-            ).trim(),
+            name: String(item.name).trim(),
             category:
-              item.category !==
-                undefined &&
+              item.category !== undefined &&
               item.category !== null &&
-              String(
-                item.category
-              ).trim()
-                ? String(
-                    item.category
-                  ).trim()
+              String(item.category).trim()
+                ? String(item.category).trim()
                 : "Services",
             price:
-              item.price !==
-                undefined &&
-              item.price !== null
-                ? String(
-                    item.price
-                  )
+              item.price !== undefined && item.price !== null
+                ? String(item.price)
                 : undefined,
-            priceType:
-              item.priceType ===
-              "starting_from"
-                ? "starting_from"
-                : "fixed",
+            priceType,
             duration:
-              item.duration !==
-                undefined &&
-              item.duration !== null
-                ? String(
-                    item.duration
-                  )
+              item.duration !== undefined && item.duration !== null
+                ? String(item.duration)
                 : undefined,
             description:
-              item.description !==
-                undefined &&
-              item.description !== null
-                ? String(
-                    item.description
-                  )
+              item.description !== undefined && item.description !== null
+                ? String(item.description)
                 : undefined,
-            popular:
-              item.popular === true,
-            available:
-              item.available !== false,
-          }));
+            popular: item.popular === true,
+            available: item.available !== false,
+          };
+        });
 
-      setServiceItems(
-        validServices
-      );
+      setServiceItems(validServices);
 
       // ====================================================
       // CUSTOMER LOYALTY
@@ -762,6 +785,109 @@ export default function TapPage() {
       });
 
       // ====================================================
+      // ROOM SERVICE
+      // ====================================================
+
+      const roomServiceConfig = enabledConfigs.find(
+        (item: ModuleConfig) =>
+          normalizeModuleKey(item.module_key) === "room_service"
+      );
+
+      const rawRoomConfig = roomServiceConfig?.config || {};
+      const roomCats: unknown[] = Array.isArray(rawRoomConfig.categories)
+        ? rawRoomConfig.categories
+        : [];
+      const roomItems: unknown[] = Array.isArray(rawRoomConfig.items)
+        ? rawRoomConfig.items
+        : [];
+
+      setRoomServiceCategories(
+        roomCats.filter(
+          (c): c is RoomServiceCategory =>
+            Boolean(c && typeof c === "object" && "id" in c && "name" in c)
+        )
+      );
+
+      const validRoomItems: RoomServiceItem[] = roomItems
+        .filter(
+          (i): i is Record<string, unknown> =>
+            Boolean(i && typeof i === "object" && "id" in i && "name" in i)
+        )
+        .map((i) => {
+          const rawPriceType = String(i.priceType || "").toLowerCase().trim();
+          const priceType: "fixed" | "starting_from" =
+            rawPriceType === "starting_from" || rawPriceType === "starting"
+              ? "starting_from"
+              : "fixed";
+
+          return {
+            id: String(i.id),
+            name: String(i.name).trim(),
+            categoryId: i.categoryId !== undefined && i.categoryId !== null ? String(i.categoryId) : undefined,
+            category: i.category !== undefined && i.category !== null ? String(i.category) : undefined,
+            price: i.price !== undefined && i.price !== null ? String(i.price) : undefined,
+            priceType,
+            description: i.description !== undefined && i.description !== null ? String(i.description) : undefined,
+            deliveryTime: i.deliveryTime !== undefined && i.deliveryTime !== null ? String(i.deliveryTime) : undefined,
+            available: i.available !== false,
+          };
+        });
+
+      setRoomServiceItems(validRoomItems);
+
+      // ====================================================
+      // HOTEL SERVICES
+      // ====================================================
+
+      const hotelServicesConfig = enabledConfigs.find(
+        (item: ModuleConfig) =>
+          normalizeModuleKey(item.module_key) === "hotel_services"
+      );
+
+      const rawHotelConfig = hotelServicesConfig?.config || {};
+      const hotelCats: unknown[] = Array.isArray(rawHotelConfig.categories)
+        ? rawHotelConfig.categories
+        : [];
+      const hotelServicesList: unknown[] = Array.isArray(rawHotelConfig.services)
+        ? rawHotelConfig.services
+        : [];
+
+      setHotelServiceCategories(
+        hotelCats.filter(
+          (c): c is HotelServiceCategory =>
+            Boolean(c && typeof c === "object" && "id" in c && "name" in c)
+        )
+      );
+
+      const validHotelServices: HotelServiceItem[] = hotelServicesList
+        .filter(
+          (s): s is Record<string, unknown> =>
+            Boolean(s && typeof s === "object" && "id" in s && "name" in s)
+        )
+        .map((s) => {
+          const rawAction = String(s.action || "").toLowerCase().trim();
+          const action: "info" | "request" | "contact" =
+            rawAction === "request"
+              ? "request"
+              : rawAction === "contact"
+              ? "contact"
+              : "info";
+
+          return {
+            id: String(s.id),
+            name: String(s.name).trim(),
+            categoryId: s.categoryId !== undefined && s.categoryId !== null ? String(s.categoryId) : undefined,
+            category: s.category !== undefined && s.category !== null ? String(s.category) : undefined,
+            description: s.description !== undefined && s.description !== null ? String(s.description) : undefined,
+            availability: s.availability !== undefined && s.availability !== null ? String(s.availability) : undefined,
+            action,
+            available: s.available !== false,
+          };
+        });
+
+      setHotelServiceItems(validHotelServices);
+
+      // ====================================================
       // TAP ANALYTICS
       // ====================================================
 
@@ -770,6 +896,8 @@ export default function TapPage() {
         .insert({
           device_id:
             deviceData.id,
+          device_code:
+            deviceData.device_code,
           business_id:
             deviceData.business_id,
           interaction_type:
@@ -1009,62 +1137,88 @@ export default function TapPage() {
     ) &&
     servicesEnabled;
 
+  const roomServiceEnabled =
+    enabledModuleKeys.some(
+      (key) =>
+        key === "room_service" ||
+        key === "room-service" ||
+        key === "roomservice" ||
+        key === "in_room_dining"
+    );
+
+  const hotelServicesEnabled =
+    enabledModuleKeys.some(
+      (key) =>
+        key === "hotel_services" ||
+        key === "hotel-services" ||
+        key === "hotelservices" ||
+        key === "hotel_facilities"
+    );
+
+  const categoryAccent = useMemo(
+    () => getCategoryAccent(business?.category),
+    [business?.category]
+  );
+
   return (
     <main style={styles.page}>
       <div style={styles.mobileContainer}>
         <header style={styles.header}>
-          <div
-            style={
-              styles.businessIdentity
-            }
-          >
+          <div style={styles.businessIdentity}>
             <div
-              style={
-                styles.businessLogo
-              }
+              style={{
+                ...styles.businessLogo,
+                background: categoryAccent.main,
+              }}
             >
               {business.logo_url ? (
                 <img
-                  src={
-                    business.logo_url
-                  }
-                  alt={
-                    business.name
-                  }
-                  style={
-                    styles.businessLogoImage
-                  }
+                  src={business.logo_url}
+                  alt={business.name}
+                  style={styles.businessLogoImage}
                 />
               ) : (
-                getInitials(
-                  business.name
-                )
+                getInitials(business.name)
               )}
             </div>
 
             <div>
-              <div
-                style={
-                  styles.businessName
-                }
-              >
-                {business.name}
-              </div>
+              <div style={styles.businessName}>{business.name}</div>
 
               {business.category && (
-                <div
-                  style={
-                    styles.businessCategory
-                  }
+                <span
+                  style={{
+                    display: "inline-block",
+                    marginTop: "3px",
+                    padding: "2px 8px",
+                    borderRadius: "999px",
+                    background: categoryAccent.bgLight,
+                    color: categoryAccent.main,
+                    border: `1px solid ${categoryAccent.borderLight}`,
+                    fontFamily: "var(--font-satoshi), sans-serif",
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    textTransform: "none",
+                  }}
                 >
                   {business.category}
-                </div>
+                </span>
               )}
             </div>
           </div>
 
           <div
-            style={styles.tapxBrand}
+            style={{
+              fontFamily: "var(--font-cabinet), sans-serif",
+              fontSize: "12px",
+              fontWeight: 900,
+              letterSpacing: "1px",
+              color: categoryAccent.main,
+              padding: "4px 10px",
+              borderRadius: "8px",
+              background: categoryAccent.bgLight,
+              border: `1px solid ${categoryAccent.borderLight}`,
+            }}
           >
             TAPX
           </div>
@@ -1072,16 +1226,18 @@ export default function TapPage() {
 
         {activeModule === null ? (
           <>
-            <section
-              style={styles.hero}
-            >
-              <h1
-                style={
-                  styles.heroTitle
-                }
-              >
-                Welcome to{" "}
-                {business.name}
+            <section style={styles.hero}>
+              <div
+                style={{
+                  width: "36px",
+                  height: "4px",
+                  borderRadius: "999px",
+                  background: categoryAccent.main,
+                  margin: "0 auto 12px",
+                }}
+              />
+              <h1 style={styles.heroTitle}>
+                Welcome to {business.name}
               </h1>
 
               <p
@@ -1218,6 +1374,7 @@ export default function TapPage() {
                     )}
                     title="Digital Menu"
                     subtitle="View menu"
+                    accentColor={categoryAccent.main}
                     onClick={() =>
                       openModule(
                         "digital-menu"
@@ -1233,6 +1390,7 @@ export default function TapPage() {
                     )}
                     title="Offers"
                     subtitle="View latest deals"
+                    accentColor={categoryAccent.main}
                     onClick={() =>
                       openModule(
                         "offers"
@@ -1249,6 +1407,7 @@ export default function TapPage() {
                     )}
                     title="Products"
                     subtitle="Browse catalogue"
+                    accentColor={categoryAccent.main}
                     onClick={() =>
                       openModule(
                         "product-catalogue"
@@ -1264,6 +1423,7 @@ export default function TapPage() {
                     )}
                     title="Services"
                     subtitle="View services"
+                    accentColor={categoryAccent.main}
                     onClick={() =>
                       openModule(
                         "services"
@@ -1279,6 +1439,7 @@ export default function TapPage() {
                     )}
                     title="Book Appointment"
                     subtitle="Choose your service & time"
+                    accentColor={categoryAccent.main}
                     onClick={() =>
                       openModule(
                         "appointment-booking"
@@ -1297,6 +1458,7 @@ export default function TapPage() {
                       loyaltyConfig.program_name ||
                       "Join rewards program"
                     }
+                    accentColor={categoryAccent.main}
                     onClick={() =>
                       openModule(
                         "loyalty"
@@ -1312,6 +1474,7 @@ export default function TapPage() {
                     )}
                     title="Order at Table"
                     subtitle="Browse menu & place order"
+                    accentColor={categoryAccent.main}
                     onClick={() =>
                       openModule(
                         "table-ordering"
@@ -1327,9 +1490,43 @@ export default function TapPage() {
                     )}
                     title="Feedback"
                     subtitle="Share your experience"
+                    accentColor={categoryAccent.main}
                     onClick={() =>
                       openModule(
                         "feedback"
+                      )
+                    }
+                  />
+                )}
+
+                {roomServiceEnabled && (
+                  <ModuleActionCard
+                    icon={String.fromCodePoint(
+                      0x1f6ce,
+                      0xfe0f
+                    )}
+                    title="Room Service"
+                    subtitle="In-room food, drinks & requests"
+                    accentColor={categoryAccent.main}
+                    onClick={() =>
+                      openModule(
+                        "room-service"
+                      )
+                    }
+                  />
+                )}
+
+                {hotelServicesEnabled && (
+                  <ModuleActionCard
+                    icon={String.fromCodePoint(
+                      0x1f3e8
+                    )}
+                    title="Hotel Services"
+                    subtitle="Amenities, spa & guest requests"
+                    accentColor={categoryAccent.main}
+                    onClick={() =>
+                      openModule(
+                        "hotel-services"
                       )
                     }
                   />
@@ -1628,6 +1825,62 @@ export default function TapPage() {
                   }
                   deviceCode={
                     device.device_code
+                  }
+                />
+              )}
+
+            {activeModule ===
+              "room-service" &&
+              roomServiceEnabled && (
+                <RoomServiceSection
+                  businessId={
+                    business.id
+                  }
+                  businessName={
+                    business.name
+                  }
+                  deviceCode={
+                    device.device_code
+                  }
+                  location={
+                    device.location
+                  }
+                  categories={
+                    roomServiceCategories
+                  }
+                  items={
+                    roomServiceItems
+                  }
+                />
+              )}
+
+            {activeModule ===
+              "hotel-services" &&
+              hotelServicesEnabled && (
+                <HotelServicesSection
+                  businessId={
+                    business.id
+                  }
+                  businessName={
+                    business.name
+                  }
+                  deviceCode={
+                    device.device_code
+                  }
+                  location={
+                    device.location
+                  }
+                  whatsappLink={
+                    whatsappLink
+                  }
+                  phone={
+                    business.phone
+                  }
+                  categories={
+                    hotelServiceCategories
+                  }
+                  services={
+                    hotelServiceItems
                   }
                 />
               )}
@@ -2246,7 +2499,7 @@ function TableOrderingSection({
         )
         .eq("id", savedOrderId)
         .eq("business_id", businessId)
-        .single();
+        .maybeSingle();
 
       if (orderError || !order) {
         if (typeof window !== "undefined") {
@@ -2961,15 +3214,24 @@ function AppointmentBookingSection({
     return slots;
   })();
 
+  type BookedInterval = {
+    startMin: number;
+    endMin: number;
+    timeStr: string;
+  };
+
+  const [bookedIntervals, setBookedIntervals] = useState<BookedInterval[]>([]);
+
   async function loadBookedTimes(selectedDate: string) {
     if (!selectedDate) {
       setBookedTimes([]);
+      setBookedIntervals([]);
       return;
     }
 
     const { data, error: queryError } = await supabase
       .from("tapx_appointments")
-      .select("appointment_time")
+      .select("appointment_time, duration_minutes")
       .eq("business_id", businessId)
       .eq("appointment_date", selectedDate)
       .in("status", ["pending", "confirmed"]);
@@ -2979,11 +3241,25 @@ function AppointmentBookingSection({
       return;
     }
 
-    setBookedTimes(
-      (data || []).map(
-        (row: { appointment_time: string }) =>
-          String(row.appointment_time).slice(0, 5)
-      )
+    const intervals: BookedInterval[] = (data || []).map((row: any) => {
+      const timeStr = String(row.appointment_time).slice(0, 5);
+      const [h, m] = timeStr.split(":").map(Number);
+      const startMin = (h || 0) * 60 + (m || 0);
+      const duration = Number(row.duration_minutes || 30);
+      return { startMin, endMin: startMin + duration, timeStr };
+    });
+
+    setBookedIntervals(intervals);
+    setBookedTimes(intervals.map((i) => i.timeStr));
+  }
+
+  function isSlotOverlapping(slotTimeStr: string, durationMinutes: number = 30) {
+    const [sh, sm] = slotTimeStr.split(":").map(Number);
+    const slotStart = sh * 60 + sm;
+    const slotEnd = slotStart + durationMinutes;
+
+    return bookedIntervals.some(
+      (existing) => slotStart < existing.endMin && slotEnd > existing.startMin
     );
   }
 
@@ -3056,8 +3332,9 @@ function AppointmentBookingSection({
       return;
     }
 
-    if (bookedTimes.includes(time)) {
-      setError("That time has already been booked. Please select another time.");
+    const serviceDuration = selectedService?.duration ? parseInt(selectedService.duration) || 30 : 30;
+    if (isSlotOverlapping(time, serviceDuration)) {
+      setError("That time slot overlaps with an existing booking. Please select another time.");
       await loadBookedTimes(date);
       return;
     }
@@ -3376,7 +3653,8 @@ function AppointmentBookingSection({
               }}
             >
               {availableTimes.map((slot) => {
-                const unavailable = bookedTimes.includes(slot);
+                const serviceDuration = selectedService?.duration ? parseInt(selectedService.duration) || 30 : 30;
+                const unavailable = isSlotOverlapping(slot, serviceDuration);
                 const selected = time === slot;
 
                 return (
@@ -5113,31 +5391,13 @@ function ActionCard({
   subtitle: string;
   href?: string | null;
 }) {
+  const [isPressed, setIsPressed] = useState(false);
+
   const content = (
     <>
-      <div
-        style={
-          styles.actionIcon
-        }
-      >
-        {icon}
-      </div>
-
-      <div
-        style={
-          styles.actionTitle
-        }
-      >
-        {title}
-      </div>
-
-      <div
-        style={
-          styles.actionSubtitle
-        }
-      >
-        {subtitle}
-      </div>
+      <div style={styles.actionIcon}>{icon}</div>
+      <div style={styles.actionTitle}>{title}</div>
+      <div style={styles.actionSubtitle}>{subtitle}</div>
     </>
   );
 
@@ -5147,9 +5407,18 @@ function ActionCard({
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        style={
-          styles.actionCard
-        }
+        onTouchStart={() => setIsPressed(true)}
+        onTouchEnd={() => setIsPressed(false)}
+        onTouchCancel={() => setIsPressed(false)}
+        onMouseDown={() => setIsPressed(true)}
+        onMouseUp={() => setIsPressed(false)}
+        onMouseLeave={() => setIsPressed(false)}
+        style={{
+          ...styles.actionCard,
+          transform: isPressed ? "scale(0.97)" : "scale(1.0)",
+          transition:
+            "transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms ease",
+        }}
       >
         {content}
       </a>
@@ -5174,44 +5443,55 @@ function ModuleActionCard({
   title,
   subtitle,
   onClick,
+  accentColor,
 }: {
   icon: string;
   title: string;
   subtitle: string;
   onClick: () => void;
+  accentColor?: string;
 }) {
+  const [isPressed, setIsPressed] = useState(false);
+
   return (
     <button
       type="button"
       onClick={onClick}
-      style={
-        styles.actionButton
-      }
+      onTouchStart={() => setIsPressed(true)}
+      onTouchEnd={() => setIsPressed(false)}
+      onTouchCancel={() => setIsPressed(false)}
+      onMouseDown={() => setIsPressed(true)}
+      onMouseUp={() => setIsPressed(false)}
+      onMouseLeave={() => setIsPressed(false)}
+      style={{
+        ...styles.actionButton,
+        transform: isPressed ? "scale(0.97)" : "scale(1.0)",
+        transition:
+          "transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms ease",
+        ...(accentColor
+          ? {
+              borderColor: `${accentColor}33`,
+            }
+          : {}),
+      }}
       aria-label={`${title}: ${subtitle}`}
     >
       <div
-        style={
-          styles.actionIcon
-        }
+        style={{
+          ...styles.actionIcon,
+          ...(accentColor
+            ? {
+                color: accentColor,
+                background: `${accentColor}14`,
+              }
+            : {}),
+        }}
       >
         {icon}
       </div>
 
-      <div
-        style={
-          styles.actionTitle
-        }
-      >
-        {title}
-      </div>
-
-      <div
-        style={
-          styles.actionSubtitle
-        }
-      >
-        {subtitle}
-      </div>
+      <div style={styles.actionTitle}>{title}</div>
+      <div style={styles.actionSubtitle}>{subtitle}</div>
     </button>
   );
 }
@@ -5231,6 +5511,755 @@ function getInitials(
 }
 
 /* =========================================================
+   ROOM SERVICE SECTION
+   ========================================================= */
+
+function RoomServiceSection({
+  businessId,
+  businessName,
+  deviceCode,
+  location,
+  categories,
+  items,
+}: {
+  businessId: string;
+  businessName: string;
+  deviceCode: string;
+  location: string | null;
+  categories: RoomServiceCategory[];
+  items: RoomServiceItem[];
+}) {
+  type ActiveOrder = {
+    id: string;
+    table_number: number;
+    customer_name: string;
+    customer_phone: string | null;
+    status: string;
+    subtotal: number;
+    total: number;
+    created_at: string;
+  };
+
+  type ActiveOrderItem = {
+    id: string;
+    item_name: string;
+    unit_price: number;
+    quantity: number;
+    line_total: number;
+  };
+
+  const storageKey = `tapx_active_room_order_${businessId}_${deviceCode}`;
+
+  const [roomNumber, setRoomNumber] = useState(
+    location ? location.replace(/\D/g, "") || "101" : "101"
+  );
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [placing, setPlacing] = useState(false);
+  const [error, setError] = useState("");
+  const [currentOrder, setCurrentOrder] = useState<ActiveOrder | null>(null);
+  const [currentOrderItems, setCurrentOrderItems] = useState<ActiveOrderItem[]>([]);
+  const [loadingOrder, setLoadingOrder] = useState(true);
+  const [showOrderModal, setShowOrderModal] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+
+  const availableItems = items.filter((item) => item.available !== false);
+
+  const activeStatuses = [
+    "pending",
+    "accepted",
+    "preparing",
+    "ready",
+    "served",
+  ];
+
+  const isActiveOrder = (status?: string | null) =>
+    Boolean(status && activeStatuses.includes(status));
+
+  async function loadCurrentRoomOrder(orderIdOverride?: string) {
+    setLoadingOrder(true);
+    try {
+      const savedOrderId =
+        orderIdOverride ||
+        (typeof window !== "undefined"
+          ? window.localStorage.getItem(storageKey)
+          : null);
+
+      if (!savedOrderId) {
+        setCurrentOrder(null);
+        setCurrentOrderItems([]);
+        return;
+      }
+
+      const { data: order, error: orderError } = await supabase
+        .from("tapx_orders")
+        .select(
+          "id, table_number, customer_name, customer_phone, status, subtotal, total, created_at"
+        )
+        .eq("id", savedOrderId)
+        .eq("business_id", businessId)
+        .maybeSingle();
+
+      if (orderError || !order) {
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(storageKey);
+        }
+        setCurrentOrder(null);
+        setCurrentOrderItems([]);
+        return;
+      }
+
+      const typedOrder = order as ActiveOrder;
+      setCurrentOrder(typedOrder);
+      if (typedOrder.table_number) {
+        setRoomNumber(String(typedOrder.table_number));
+      }
+      setCustomerName(typedOrder.customer_name || "");
+      setCustomerPhone(typedOrder.customer_phone || "");
+
+      if (!isActiveOrder(typedOrder.status)) {
+        setCurrentOrderItems([]);
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(storageKey);
+        }
+        return;
+      }
+
+      const { data: orderItems, error: itemsError } = await supabase
+        .from("tapx_order_items")
+        .select("id, item_name, unit_price, quantity, line_total")
+        .eq("order_id", typedOrder.id)
+        .order("created_at", { ascending: true });
+
+      if (!itemsError) {
+        setCurrentOrderItems((orderItems || []) as ActiveOrderItem[]);
+      }
+    } catch (err) {
+      console.error("TAPX room order restore error:", err);
+    } finally {
+      setLoadingOrder(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadCurrentRoomOrder();
+    const timer = window.setInterval(() => {
+      void loadCurrentRoomOrder();
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const cartList = useMemo(() => {
+    return Object.entries(cart)
+      .filter(([, qty]) => qty > 0)
+      .map(([id, qty]) => {
+        const item = items.find((i) => i.id === id);
+        const price = Number(item?.price || 0);
+        return {
+          id,
+          item,
+          quantity: qty,
+          unitPrice: price,
+          lineTotal: price * qty,
+        };
+      })
+      .filter((i) => Boolean(i.item));
+  }, [cart, items]);
+
+  const cartTotal = cartList.reduce((sum, item) => sum + item.lineTotal, 0);
+  const cartQuantity = cartList.reduce((sum, item) => sum + item.quantity, 0);
+
+  function addToCart(id: string) {
+    setCart((prev) => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
+  }
+
+  function removeFromCart(id: string) {
+    setCart((prev) => {
+      const next = { ...prev };
+      if (next[id] > 1) {
+        next[id] -= 1;
+      } else {
+        delete next[id];
+      }
+      return next;
+    });
+  }
+
+  async function placeRoomOrder() {
+    setError("");
+    if (!roomNumber.trim()) {
+      setError("Please enter your room number.");
+      return;
+    }
+    if (!customerName.trim()) {
+      setError("Please enter guest name.");
+      return;
+    }
+    if (!cartList.length) {
+      setError("Please select at least one item or request.");
+      return;
+    }
+
+    setPlacing(true);
+    try {
+      const cleanPhone = customerPhone.replace(/\D/g, "");
+      const numericRoom = parseInt(roomNumber.replace(/\D/g, ""), 10) || 101;
+
+      const { data, error: rpcError } = await supabase.rpc(
+        "create_tapx_table_order",
+        {
+          p_business_id: businessId,
+          p_table_number: numericRoom,
+          p_customer_name: `${customerName.trim()} (Room ${roomNumber})`,
+          p_customer_phone: cleanPhone || null,
+          p_source_device_code: deviceCode,
+          p_items: cartList.map((item) => ({
+            item_id: item.id,
+            quantity: item.quantity,
+          })),
+        }
+      );
+
+      if (rpcError) throw rpcError;
+
+      const newOrderId = String(data || "");
+      if (!newOrderId) throw new Error("Order ID was not generated.");
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(storageKey, newOrderId);
+      }
+
+      setCart({});
+      await loadCurrentRoomOrder(newOrderId);
+      setShowOrderModal(true);
+    } catch (err) {
+      console.error("Room service order error:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to send room service request."
+      );
+    } finally {
+      setPlacing(false);
+    }
+  }
+
+  const filteredItems = availableItems.filter((item) => {
+    if (selectedCategory === "all") return true;
+    return item.categoryId === selectedCategory || item.category === selectedCategory;
+  });
+
+  return (
+    <div style={styles.roomServiceContainer}>
+      <header style={styles.roomHeader}>
+        <div>
+          <span style={styles.roomBadge}>IN-ROOM DINING & SERVICES</span>
+          <h2 style={styles.roomTitle}>Room Service</h2>
+          <p style={styles.roomSubtitle}>
+            Food, drinks, extra towels, water & room essentials delivered to your door.
+          </p>
+        </div>
+      </header>
+
+      {/* ACTIVE ORDER BANNER */}
+      {currentOrder && isActiveOrder(currentOrder.status) && (
+        <div style={styles.roomActiveBanner}>
+          <div>
+            <div style={styles.roomActiveTag}>LIVE ROOM REQUEST</div>
+            <div style={styles.roomActiveTitle}>
+              Room {currentOrder.table_number} · Status: <strong>{currentOrder.status.toUpperCase()}</strong>
+            </div>
+            <div style={styles.roomActiveSub}>
+              {currentOrderItems.map((i) => `${i.quantity}x ${i.item_name}`).join(", ")}
+            </div>
+          </div>
+          <button
+            type="button"
+            style={styles.roomTrackButton}
+            onClick={() => setShowOrderModal(true)}
+          >
+            Track Status
+          </button>
+        </div>
+      )}
+
+      {/* CATEGORY TABS */}
+      {categories.length > 0 && (
+        <div style={styles.roomCategoryBar}>
+          <button
+            type="button"
+            style={{
+              ...styles.roomCategoryChip,
+              ...(selectedCategory === "all" ? styles.roomCategoryChipActive : {}),
+            }}
+            onClick={() => setSelectedCategory("all")}
+          >
+            All Items ({availableItems.length})
+          </button>
+          {categories.map((cat) => {
+            const count = availableItems.filter(
+              (i) => i.categoryId === cat.id || i.category === cat.name
+            ).length;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                style={{
+                  ...styles.roomCategoryChip,
+                  ...(selectedCategory === cat.id ? styles.roomCategoryChipActive : {}),
+                }}
+                onClick={() => setSelectedCategory(cat.id)}
+              >
+                {cat.name} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ITEMS LIST */}
+      <div style={styles.roomItemsGrid}>
+        {filteredItems.length === 0 ? (
+          <div style={styles.roomEmptyState}>No items available in this category.</div>
+        ) : (
+          filteredItems.map((item) => {
+            const qty = cart[item.id] || 0;
+            return (
+              <div key={item.id} style={styles.roomItemCard}>
+                <div style={styles.roomItemMain}>
+                  <div style={styles.roomItemName}>{item.name}</div>
+                  {item.description && (
+                    <div style={styles.roomItemDesc}>{item.description}</div>
+                  )}
+                  <div style={styles.roomItemMeta}>
+                    {item.price && (
+                      <span style={styles.roomItemPrice}>
+                        {item.priceType === "starting_from" ? "From " : ""}₹{item.price}
+                      </span>
+                    )}
+                    {item.deliveryTime && (
+                      <span style={styles.roomItemTime}>⏱ {item.deliveryTime}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div style={styles.roomItemQtyControls}>
+                  {qty > 0 ? (
+                    <div style={styles.roomQtyGroup}>
+                      <button
+                        type="button"
+                        style={styles.roomQtyBtn}
+                        onClick={() => removeFromCart(item.id)}
+                      >
+                        -
+                      </button>
+                      <span style={styles.roomQtyVal}>{qty}</span>
+                      <button
+                        type="button"
+                        style={styles.roomQtyBtn}
+                        onClick={() => addToCart(item.id)}
+                      >
+                        +
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      style={styles.roomAddBtn}
+                      onClick={() => addToCart(item.id)}
+                    >
+                      + Add
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* CHECKOUT BOTTOM BAR */}
+      {cartQuantity > 0 && (
+        <div style={styles.roomCheckoutBar}>
+          <div style={styles.roomCheckoutSummary}>
+            <div style={styles.roomCheckoutQty}>{cartQuantity} item{cartQuantity > 1 ? "s" : ""} selected</div>
+            <div style={styles.roomCheckoutTotal}>₹{cartTotal}</div>
+          </div>
+
+          <button
+            type="button"
+            style={styles.roomSendBtn}
+            onClick={() => setShowOrderModal(true)}
+          >
+            Review Room Request →
+          </button>
+        </div>
+      )}
+
+      {/* REQUEST FORM MODAL */}
+      {showOrderModal && (
+        <div style={styles.roomModalOverlay}>
+          <div style={styles.roomModalContent}>
+            <button
+              type="button"
+              style={styles.roomModalClose}
+              onClick={() => setShowOrderModal(false)}
+            >
+              ✕
+            </button>
+            <h3 style={styles.roomModalTitle}>Confirm Room Service Request</h3>
+            <p style={styles.roomModalSub}>Enter your room details to send request directly to hotel staff.</p>
+
+            {error && <div style={styles.roomErrorBox}>{error}</div>}
+
+            <div style={styles.roomFormGroup}>
+              <label style={styles.roomFormLabel}>Room Number / Suite *</label>
+              <input
+                type="text"
+                placeholder="e.g. 302"
+                value={roomNumber}
+                onChange={(e) => setRoomNumber(e.target.value)}
+                style={styles.roomInput}
+              />
+            </div>
+
+            <div style={styles.roomFormGroup}>
+              <label style={styles.roomFormLabel}>Guest Name *</label>
+              <input
+                type="text"
+                placeholder="e.g. Rahul Sharma"
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                style={styles.roomInput}
+              />
+            </div>
+
+            <div style={styles.roomFormGroup}>
+              <label style={styles.roomFormLabel}>Mobile Number (Optional)</label>
+              <input
+                type="tel"
+                placeholder="e.g. 9876543210"
+                value={customerPhone}
+                onChange={(e) => setCustomerPhone(e.target.value)}
+                style={styles.roomInput}
+              />
+            </div>
+
+            {/* ORDER ITEMS REVIEW */}
+            <div style={styles.roomReviewSection}>
+              <div style={styles.roomReviewHeading}>Request Summary</div>
+              {cartList.map((c) => (
+                <div key={c.id} style={styles.roomReviewRow}>
+                  <span>{c.quantity}x {c.item?.name}</span>
+                  <strong>{c.lineTotal ? `₹${c.lineTotal}` : "Included"}</strong>
+                </div>
+              ))}
+              {cartTotal > 0 && (
+                <div style={styles.roomReviewTotalRow}>
+                  <span>Total Amount</span>
+                  <strong>₹{cartTotal}</strong>
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              disabled={placing}
+              style={{
+                ...styles.roomSubmitBtn,
+                opacity: placing ? 0.6 : 1,
+              }}
+              onClick={() => void placeRoomOrder()}
+            >
+              {placing ? "Sending Request..." : "Send Request to Staff"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =========================================================
+   HOTEL SERVICES SECTION
+   ========================================================= */
+
+function HotelServicesSection({
+  businessId,
+  businessName,
+  deviceCode,
+  location,
+  whatsappLink,
+  phone,
+  categories,
+  services,
+}: {
+  businessId: string;
+  businessName: string;
+  deviceCode: string;
+  location: string | null;
+  whatsappLink: string | null;
+  phone: string | null;
+  categories: HotelServiceCategory[];
+  services: HotelServiceItem[];
+}) {
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [requestModalService, setRequestModalService] = useState<HotelServiceItem | null>(null);
+  const [roomNumber, setRoomNumber] = useState(location ? location.replace(/\D/g, "") || "101" : "101");
+  const [guestName, setGuestName] = useState("");
+  const [guestPhone, setGuestPhone] = useState("");
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const availableServices = services.filter((s) => s.available !== false);
+
+  const filteredServices = availableServices.filter((s) => {
+    if (selectedCategory === "all") return true;
+    return s.categoryId === selectedCategory || s.category === selectedCategory;
+  });
+
+  async function submitServiceRequest() {
+    if (!requestModalService) return;
+    setError("");
+    if (!roomNumber.trim()) {
+      setError("Please enter your room number.");
+      return;
+    }
+    if (!guestName.trim()) {
+      setError("Please enter your name.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const cleanPhone = guestPhone.replace(/\D/g, "");
+      const numericRoom = parseInt(roomNumber.replace(/\D/g, ""), 10) || 101;
+
+      const { error: rpcError } = await supabase.rpc("create_tapx_table_order", {
+        p_business_id: businessId,
+        p_table_number: numericRoom,
+        p_customer_name: `${guestName.trim()} (Room ${roomNumber}) - ${requestModalService.name}`,
+        p_customer_phone: cleanPhone || null,
+        p_source_device_code: deviceCode,
+        p_items: [
+          {
+            item_id: requestModalService.id,
+            quantity: 1,
+          },
+        ],
+      });
+
+      if (rpcError) throw rpcError;
+
+      setSuccessMessage(`Your request for "${requestModalService.name}" has been sent to hotel staff!`);
+      setRequestModalService(null);
+      setNotes("");
+    } catch (err) {
+      console.error("Hotel service request error:", err);
+      setError(err instanceof Error ? err.message : "Unable to submit request.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div style={styles.hotelServicesContainer}>
+      <header style={styles.hotelHeader}>
+        <div>
+          <span style={styles.hotelBadge}>HOTEL AMENITIES & FACILITIES</span>
+          <h2 style={styles.hotelTitle}>Hotel Services</h2>
+          <p style={styles.hotelSubtitle}>
+            Explore facilities, spa, fitness, housekeeping, transport and front desk assistance.
+          </p>
+        </div>
+      </header>
+
+      {successMessage && (
+        <div style={styles.hotelSuccessAlert}>
+          <span>✓</span> {successMessage}
+        </div>
+      )}
+
+      {/* CATEGORIES TABS */}
+      {categories.length > 0 && (
+        <div style={styles.hotelCatBar}>
+          <button
+            type="button"
+            style={{
+              ...styles.hotelCatChip,
+              ...(selectedCategory === "all" ? styles.hotelCatChipActive : {}),
+            }}
+            onClick={() => setSelectedCategory("all")}
+          >
+            All Facilities ({availableServices.length})
+          </button>
+          {categories.map((cat) => {
+            const count = availableServices.filter(
+              (s) => s.categoryId === cat.id || s.category === cat.name
+            ).length;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                style={{
+                  ...styles.hotelCatChip,
+                  ...(selectedCategory === cat.id ? styles.hotelCatChipActive : {}),
+                }}
+                onClick={() => setSelectedCategory(cat.id)}
+              >
+                {cat.name} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* SERVICES CARDS GRID */}
+      <div style={styles.hotelGrid}>
+        {filteredServices.length === 0 ? (
+          <div style={styles.hotelEmpty}>No services found in this section.</div>
+        ) : (
+          filteredServices.map((service) => (
+            <div key={service.id} style={styles.hotelCard}>
+              <div style={styles.hotelCardHead}>
+                <h3 style={styles.hotelCardTitle}>{service.name}</h3>
+                {service.action === "request" && (
+                  <span style={styles.hotelActionBadge}>Request Enabled</span>
+                )}
+                {service.action === "contact" && (
+                  <span style={styles.hotelContactBadge}>Direct Contact</span>
+                )}
+              </div>
+
+              {service.description && (
+                <p style={styles.hotelCardDesc}>{service.description}</p>
+              )}
+
+              {service.availability && (
+                <div style={styles.hotelCardMeta}>
+                  <span>🕒 Hours:</span> <strong>{service.availability}</strong>
+                </div>
+              )}
+
+              <div style={styles.hotelCardFooter}>
+                {service.action === "request" ? (
+                  <button
+                    type="button"
+                    style={styles.hotelPrimaryAction}
+                    onClick={() => {
+                      setSuccessMessage("");
+                      setRequestModalService(service);
+                    }}
+                  >
+                    Request Service
+                  </button>
+                ) : service.action === "contact" ? (
+                  whatsappLink ? (
+                    <a
+                      href={whatsappLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={styles.hotelSecondaryAction}
+                    >
+                      💬 WhatsApp Staff
+                    </a>
+                  ) : phone ? (
+                    <a href={`tel:${phone}`} style={styles.hotelSecondaryAction}>
+                      📞 Call Front Desk
+                    </a>
+                  ) : (
+                    <span style={styles.hotelInfoBadge}>Available at Desk</span>
+                  )
+                ) : (
+                  <span style={styles.hotelInfoBadge}>Facility Information</span>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* SERVICE REQUEST MODAL */}
+      {requestModalService && (
+        <div style={styles.hotelModalOverlay}>
+          <div style={styles.hotelModalContent}>
+            <button
+              type="button"
+              style={styles.hotelModalClose}
+              onClick={() => setRequestModalService(null)}
+            >
+              ✕
+            </button>
+            <h3 style={styles.hotelModalTitle}>Request {requestModalService.name}</h3>
+            <p style={styles.hotelModalSub}>Staff will receive your room request immediately.</p>
+
+            {error && <div style={styles.hotelErrorBox}>{error}</div>}
+
+            <div style={styles.hotelFormGroup}>
+              <label style={styles.hotelFormLabel}>Room Number / Suite *</label>
+              <input
+                type="text"
+                placeholder="e.g. 204"
+                value={roomNumber}
+                onChange={(e) => setRoomNumber(e.target.value)}
+                style={styles.hotelInput}
+              />
+            </div>
+
+            <div style={styles.hotelFormGroup}>
+              <label style={styles.hotelFormLabel}>Guest Name *</label>
+              <input
+                type="text"
+                placeholder="e.g. Priya Patel"
+                value={guestName}
+                onChange={(e) => setGuestName(e.target.value)}
+                style={styles.hotelInput}
+              />
+            </div>
+
+            <div style={styles.hotelFormGroup}>
+              <label style={styles.hotelFormLabel}>Mobile Number (Optional)</label>
+              <input
+                type="tel"
+                placeholder="e.g. 9876543210"
+                value={guestPhone}
+                onChange={(e) => setGuestPhone(e.target.value)}
+                style={styles.hotelInput}
+              />
+            </div>
+
+            <div style={styles.hotelFormGroup}>
+              <label style={styles.hotelFormLabel}>Notes / Request details</label>
+              <textarea
+                placeholder="e.g. Please bring at 4:00 PM"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                style={styles.hotelTextarea}
+              />
+            </div>
+
+            <button
+              type="button"
+              disabled={submitting}
+              style={{
+                ...styles.hotelSubmitBtn,
+                opacity: submitting ? 0.6 : 1,
+              }}
+              onClick={() => void submitServiceRequest()}
+            >
+              {submitting ? "Sending..." : "Submit Request"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =========================================================
    STYLES
    ========================================================= */
 
@@ -5238,6 +6267,160 @@ const styles: Record<
   string,
   CSSProperties
 > = {
+  /* ROOM SERVICE STYLES */
+  roomServiceContainer: { padding: "18px" },
+  roomHeader: { marginBottom: "16px" },
+  roomBadge: {
+    display: "inline-block",
+    fontSize: "9px",
+    fontWeight: 900,
+    letterSpacing: "1px",
+    color: "#2563eb",
+    background: "#eff6ff",
+    padding: "3px 8px",
+    borderRadius: "6px",
+    marginBottom: "6px",
+  },
+  roomTitle: { fontSize: "22px", fontWeight: 850, color: "#111827", margin: 0 },
+  roomSubtitle: { fontSize: "12px", color: "#6b7280", margin: "4px 0 0" },
+  roomActiveBanner: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    background: "#f0fdf4",
+    border: "1px solid #bbf7d0",
+    padding: "12px 14px",
+    borderRadius: "12px",
+    marginBottom: "16px",
+  },
+  roomActiveTag: { fontSize: "9px", fontWeight: 800, color: "#166534", letterSpacing: "0.5px" },
+  roomActiveTitle: { fontSize: "12px", color: "#14532d", margin: "2px 0" },
+  roomActiveSub: { fontSize: "11px", color: "#15803d" },
+  roomTrackButton: {
+    background: "#166534",
+    color: "#ffffff",
+    border: "none",
+    padding: "8px 12px",
+    borderRadius: "8px",
+    fontSize: "11px",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  roomCategoryBar: { display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "8px", marginBottom: "16px" },
+  roomCategoryChip: {
+    whiteSpace: "nowrap",
+    padding: "7px 13px",
+    borderRadius: "20px",
+    fontSize: "11px",
+    fontWeight: 650,
+    border: "1px solid #e5e7eb",
+    background: "#ffffff",
+    color: "#4b5563",
+    cursor: "pointer",
+  },
+  roomCategoryChipActive: { background: "#111827", color: "#ffffff", borderColor: "#111827" },
+  roomItemsGrid: { display: "flex", flexDirection: "column", gap: "10px" },
+  roomEmptyState: { padding: "30px", textAlign: "center", color: "#9ca3af", fontSize: "13px" },
+  roomItemCard: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "14px",
+    background: "#ffffff",
+    borderRadius: "12px",
+    border: "1px solid #f3f4f6",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+  },
+  roomItemMain: { flex: 1, paddingRight: "12px" },
+  roomItemName: { fontSize: "14px", fontWeight: 700, color: "#111827" },
+  roomItemDesc: { fontSize: "11px", color: "#6b7280", marginTop: "3px" },
+  roomItemMeta: { display: "flex", gap: "10px", marginTop: "6px", fontSize: "12px" },
+  roomItemPrice: { fontWeight: 800, color: "#059669" },
+  roomItemTime: { color: "#6b7280", fontSize: "11px" },
+  roomItemQtyControls: { flexShrink: 0 },
+  roomAddBtn: {
+    background: "#f3f4f6",
+    color: "#111827",
+    border: "none",
+    padding: "8px 14px",
+    borderRadius: "8px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  roomQtyGroup: { display: "flex", alignItems: "center", gap: "8px", background: "#f3f4f6", borderRadius: "8px", padding: "3px 6px" },
+  roomQtyBtn: { border: "none", background: "none", fontSize: "14px", fontWeight: 800, color: "#111827", width: "24px", height: "24px", cursor: "pointer" },
+  roomQtyVal: { fontSize: "12px", fontWeight: 800, color: "#111827" },
+  roomCheckoutBar: {
+    position: "fixed",
+    bottom: "16px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    width: "calc(100% - 32px)",
+    maxWidth: "520px",
+    background: "#111827",
+    color: "#ffffff",
+    borderRadius: "14px",
+    padding: "12px 18px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    boxShadow: "0 10px 25px rgba(0,0,0,0.25)",
+    zIndex: 90,
+  },
+  roomCheckoutSummary: { display: "flex", flexDirection: "column" },
+  roomCheckoutQty: { fontSize: "10px", color: "#9ca3af" },
+  roomCheckoutTotal: { fontSize: "16px", fontWeight: 850 },
+  roomSendBtn: { background: "#2563eb", color: "#ffffff", border: "none", padding: "10px 16px", borderRadius: "10px", fontSize: "12px", fontWeight: 800, cursor: "pointer" },
+  roomModalOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 100 },
+  roomModalContent: { width: "100%", maxWidth: "540px", background: "#ffffff", borderTopLeftRadius: "20px", borderTopRightRadius: "20px", padding: "24px", maxHeight: "85vh", overflowY: "auto", position: "relative" },
+  roomModalClose: { position: "absolute", top: "18px", right: "18px", border: "none", background: "#f3f4f6", borderRadius: "50%", width: "30px", height: "30px", fontSize: "14px", cursor: "pointer" },
+  roomModalTitle: { fontSize: "18px", fontWeight: 800, color: "#111827", margin: 0 },
+  roomModalSub: { fontSize: "12px", color: "#6b7280", margin: "4px 0 16px" },
+  roomErrorBox: { background: "#fef2f2", color: "#991b1b", padding: "10px", borderRadius: "8px", fontSize: "12px", marginBottom: "14px" },
+  roomFormGroup: { marginBottom: "14px" },
+  roomFormLabel: { display: "block", fontSize: "11px", fontWeight: 700, color: "#374151", marginBottom: "4px" },
+  roomInput: { width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "13px", outline: "none" },
+  roomReviewSection: { background: "#f9fafb", borderRadius: "10px", padding: "12px", margin: "16px 0" },
+  roomReviewHeading: { fontSize: "11px", fontWeight: 800, color: "#4b5563", textTransform: "uppercase", marginBottom: "8px" },
+  roomReviewRow: { display: "flex", justifyContent: "space-between", fontSize: "12px", margin: "4px 0" },
+  roomReviewTotalRow: { display: "flex", justifyContent: "space-between", fontSize: "14px", fontWeight: 800, borderTop: "1px solid #e5e7eb", paddingTop: "8px", marginTop: "8px" },
+  roomSubmitBtn: { width: "100%", padding: "14px", background: "#111827", color: "#ffffff", border: "none", borderRadius: "10px", fontSize: "14px", fontWeight: 800, cursor: "pointer" },
+
+  /* HOTEL SERVICES STYLES */
+  hotelServicesContainer: { padding: "18px" },
+  hotelHeader: { marginBottom: "16px" },
+  hotelBadge: { display: "inline-block", fontSize: "9px", fontWeight: 900, letterSpacing: "1px", color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: "6px", marginBottom: "6px" },
+  hotelTitle: { fontSize: "22px", fontWeight: 850, color: "#111827", margin: 0 },
+  hotelSubtitle: { fontSize: "12px", color: "#6b7280", margin: "4px 0 0" },
+  hotelSuccessAlert: { background: "#ecfdf5", color: "#065f46", border: "1px solid #a7f3d0", padding: "12px", borderRadius: "10px", fontSize: "12px", fontWeight: 700, marginBottom: "16px" },
+  hotelCatBar: { display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "8px", marginBottom: "16px" },
+  hotelCatChip: { whiteSpace: "nowrap", padding: "7px 13px", borderRadius: "20px", fontSize: "11px", fontWeight: 650, border: "1px solid #e5e7eb", background: "#ffffff", color: "#4b5563", cursor: "pointer" },
+  hotelCatChipActive: { background: "#111827", color: "#ffffff", borderColor: "#111827" },
+  hotelGrid: { display: "flex", flexDirection: "column", gap: "12px" },
+  hotelEmpty: { padding: "30px", textAlign: "center", color: "#9ca3af", fontSize: "13px" },
+  hotelCard: { background: "#ffffff", borderRadius: "14px", border: "1px solid #f3f4f6", padding: "16px", boxShadow: "0 1px 3px rgba(0,0,0,0.03)" },
+  hotelCardHead: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" },
+  hotelCardTitle: { fontSize: "15px", fontWeight: 800, color: "#111827", margin: 0 },
+  hotelActionBadge: { fontSize: "9px", fontWeight: 800, color: "#2563eb", background: "#eff6ff", padding: "3px 7px", borderRadius: "6px" },
+  hotelContactBadge: { fontSize: "9px", fontWeight: 800, color: "#059669", background: "#ecfdf5", padding: "3px 7px", borderRadius: "6px" },
+  hotelCardDesc: { fontSize: "12px", color: "#6b7280", margin: "6px 0" },
+  hotelCardMeta: { fontSize: "11px", color: "#4b5563", marginTop: "6px" },
+  hotelCardFooter: { marginTop: "14px", borderTop: "1px solid #f9fafb", paddingTop: "12px", display: "flex", justifyContent: "flex-end" },
+  hotelPrimaryAction: { background: "#111827", color: "#ffffff", border: "none", padding: "9px 16px", borderRadius: "9px", fontSize: "12px", fontWeight: 700, cursor: "pointer" },
+  hotelSecondaryAction: { display: "inline-block", background: "#ecfdf5", color: "#065f46", textDecoration: "none", padding: "9px 16px", borderRadius: "9px", fontSize: "12px", fontWeight: 700 },
+  hotelInfoBadge: { fontSize: "11px", color: "#9ca3af" },
+  hotelModalOverlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 100 },
+  hotelModalContent: { width: "100%", maxWidth: "540px", background: "#ffffff", borderTopLeftRadius: "20px", borderTopRightRadius: "20px", padding: "24px", maxHeight: "85vh", overflowY: "auto", position: "relative" },
+  hotelModalClose: { position: "absolute", top: "18px", right: "18px", border: "none", background: "#f3f4f6", borderRadius: "50%", width: "30px", height: "30px", fontSize: "14px", cursor: "pointer" },
+  hotelModalTitle: { fontSize: "18px", fontWeight: 800, color: "#111827", margin: 0 },
+  hotelModalSub: { fontSize: "12px", color: "#6b7280", margin: "4px 0 16px" },
+  hotelErrorBox: { background: "#fef2f2", color: "#991b1b", padding: "10px", borderRadius: "8px", fontSize: "12px", marginBottom: "14px" },
+  hotelFormGroup: { marginBottom: "14px" },
+  hotelFormLabel: { display: "block", fontSize: "11px", fontWeight: 700, color: "#374151", marginBottom: "4px" },
+  hotelInput: { width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "13px", outline: "none" },
+  hotelTextarea: { width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "13px", minHeight: "60px", outline: "none" },
+  hotelSubmitBtn: { width: "100%", padding: "14px", background: "#111827", color: "#ffffff", border: "none", borderRadius: "10px", fontSize: "14px", fontWeight: 800, cursor: "pointer" },
   page: {
     minHeight: "100vh",
     background:

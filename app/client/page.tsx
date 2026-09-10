@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
+import QRCode from "qrcode";
 
 type Business = {
   id: string;
@@ -95,8 +96,21 @@ type Appointment = {
   updated_at: string;
 };
 
+type ClientDevice = {
+  id: string;
+  device_code: string;
+  device_type: string | null;
+  location: string | null;
+  label: string | null;
+  assigned_at: string | null;
+  status: string | null;
+  created_at?: string;
+};
+
 type PageKey =
   | "overview"
+  | "devices"
+  | "hotel_requests"
   | "orders"
   | "appointments"
   | "menu"
@@ -105,6 +119,33 @@ type PageKey =
   | "feedback"
   | "analytics"
   | "settings";
+
+type HotelRequestItem = {
+  id: string;
+  business_id: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  request_type: string;
+  status: string;
+  created_at: string;
+  payload: {
+    room_number?: string;
+    notes?: string;
+    items?: Array<{ name: string; quantity: number; price?: number }>;
+    service_name?: string;
+    total?: number;
+  } | null;
+};
+
+type FeedbackItem = {
+  id: string;
+  business_id: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  rating: number;
+  comment: string | null;
+  created_at: string;
+};
 
 const ORDER_STATUSES = [
   "pending",
@@ -246,6 +287,64 @@ export default function ClientPortalPage() {
 
   const [activePage, setActivePage] =
     useState<PageKey>("overview");
+
+  const [clientDevices, setClientDevices] = useState<ClientDevice[]>([]);
+  const [deviceInteractions, setDeviceInteractions] = useState<Record<string, number>>({});
+  const [hotelRequests, setHotelRequests] = useState<HotelRequestItem[]>([]);
+  const [customerFeedbackList, setCustomerFeedbackList] = useState<FeedbackItem[]>([]);
+  const [showRequestDeviceModal, setShowRequestDeviceModal] = useState(false);
+  const [requestNotes, setRequestNotes] = useState("");
+  const [requestSending, setRequestSending] = useState(false);
+  const [requestSuccess, setRequestSuccess] = useState("");
+
+  async function handleSendHardwareRequest() {
+    if (!business) return;
+    setRequestSending(true);
+    try {
+      const { error: err } = await supabase
+        .from("customer_requests")
+        .insert({
+          business_id: business.id,
+          customer_name: business.name,
+          customer_phone: business.phone || business.email || null,
+          request_type: "hardware_request",
+          status: "pending",
+          payload: {
+            quantity: 1,
+            device_type: "NFC + QR",
+            notes: requestNotes.trim(),
+            requested_at: new Date().toISOString(),
+          },
+        });
+
+      if (err) throw err;
+
+      setRequestSuccess("Hardware request submitted successfully! TAPX Admin team will review and process your request.");
+      setRequestNotes("");
+    } catch (err: any) {
+      console.error("Hardware request error:", err);
+      alert("Unable to submit hardware request: " + (err.message || err));
+    } finally {
+      setRequestSending(false);
+    }
+  }
+
+  async function handleUpdateHotelRequestStatus(requestId: string, nextStatus: string) {
+    try {
+      const { error: updateErr } = await supabase
+        .from("customer_requests")
+        .update({ status: nextStatus })
+        .eq("id", requestId);
+
+      if (updateErr) throw updateErr;
+
+      setHotelRequests((curr) =>
+        curr.map((r) => (r.id === requestId ? { ...r, status: nextStatus } : r))
+      );
+    } catch (err: any) {
+      alert("Unable to update request status: " + (err.message || err));
+    }
+  }
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -403,6 +502,17 @@ export default function ClientPortalPage() {
           .order("appointment_date", { ascending: true })
           .order("appointment_time", { ascending: true })
           .limit(200),
+
+        supabase
+          .from("devices")
+          .select("*")
+          .eq("business_id", businessId)
+          .order("created_at", { ascending: false }),
+
+        supabase
+          .from("interactions")
+          .select("device_code")
+          .eq("business_id", businessId),
       ]);
 
       if (businessResult.error) {
@@ -445,6 +555,26 @@ export default function ClientPortalPage() {
       );
       setOrders(loadedOrders);
       setAppointments((appointmentsResult.data || []) as Appointment[]);
+
+      // Process devices, hotel requests & feedback
+      const [devicesRes, hotelReqsRes, feedbackRes] = await Promise.all([
+        supabase.from("devices").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
+        supabase.from("customer_requests").select("*").eq("business_id", businessId).in("request_type", ["hotel_room_service", "hotel_service", "custom_guest_request"]).order("created_at", { ascending: false }),
+        supabase.from("customer_feedback").select("*").eq("business_id", businessId).order("created_at", { ascending: false })
+      ]);
+
+      setClientDevices((devicesRes.data || []) as ClientDevice[]);
+      setHotelRequests((hotelReqsRes.data || []) as HotelRequestItem[]);
+      setCustomerFeedbackList((feedbackRes.data || []) as FeedbackItem[]);
+
+      const interactionsData = (await (supabase.from("interactions").select("device_code").eq("business_id", businessId))).data;
+      const counts: Record<string, number> = {};
+      (interactionsData || []).forEach((t: { device_code: string | null }) => {
+        if (t.device_code) {
+          counts[t.device_code] = (counts[t.device_code] || 0) + 1;
+        }
+      });
+      setDeviceInteractions(counts);
 
       if (loadedOrders.length > 0) {
         const orderIds = loadedOrders.map(
@@ -536,7 +666,13 @@ export default function ClientPortalPage() {
     "table_ordering",
     "table-ordering",
     "orders",
-    "table ordering"
+    "table ordering",
+    "room_service",
+    "room-service",
+    "room service",
+    "hotel_services",
+    "hotel-services",
+    "hotel services"
   );
 
   const hasMenu = hasModule(
@@ -735,6 +871,22 @@ export default function ClientPortalPage() {
       label: "Overview",
       icon: "⌂",
       show: true,
+    },
+    {
+      key: "devices" as PageKey,
+      label: "My Devices",
+      icon: "📱",
+      show: true,
+      badge: clientDevices.length > 0 ? clientDevices.length : undefined,
+    },
+    {
+      key: "hotel_requests" as PageKey,
+      label: "Hotel Requests",
+      icon: "🏨",
+      show:
+        normalizeKey(business?.category).includes("hotel") ||
+        hasModule("hotel_services", "room_service", "hotel_requests"),
+      badge: hotelRequests.filter((r) => r.status === "pending").length || undefined,
     },
     {
       key: "orders" as PageKey,
@@ -1195,6 +1347,24 @@ export default function ClientPortalPage() {
             />
           )}
 
+          {activePage === "devices" && (
+            <ClientDevicesSection
+              devices={clientDevices}
+              interactions={deviceInteractions}
+              onRequestDevice={() => {
+                setShowRequestDeviceModal(true);
+                setRequestSuccess("");
+              }}
+            />
+          )}
+
+          {activePage === "hotel_requests" && (
+            <HotelRequestsSection
+              requests={hotelRequests}
+              onUpdateStatus={handleUpdateHotelRequestStatus}
+            />
+          )}
+
           {activePage === "orders" && hasOrders && (
             <OrdersPage
               orders={orders}
@@ -1266,24 +1436,13 @@ export default function ClientPortalPage() {
             />
           )}
 
-          {activePage === "loyalty" &&
-            hasLoyalty && (
-              <ModulePage
-                title="Customer Loyalty"
-                eyebrow="CUSTOMER GROWTH"
-                description="Build repeat visits and customer relationships through your TAPX loyalty program."
-                icon="♡"
-                items={[
-                  "Members",
-                  "Visits",
-                  "Rewards",
-                  "Progress",
-                  "Loyalty configuration",
-                ]}
-                status="Connected"
-                emptyText="Your loyalty module is active. Customer loyalty activity will appear here as your customers use TAPX."
-              />
-            )}
+          {activePage === "loyalty" && hasLoyalty && (
+            <LoyaltyPortalSection businessId={business.id} />
+          )}
+
+          {activePage === "feedback" && hasFeedback && (
+            <FeedbackSection feedback={customerFeedbackList} />
+          )}
 
           {activePage === "feedback" &&
             hasFeedback && (
@@ -4990,6 +5149,903 @@ function SettingRow({
           }
         }
       `}</style>
+    </div>
+  );
+}
+
+/* =========================================================
+   CLIENT DEVICES PORTAL COMPONENTS
+========================================================= */
+
+function ClientDevicesSection({
+  devices,
+  interactions,
+  onRequestDevice,
+}: {
+  devices: ClientDevice[];
+  interactions: Record<string, number>;
+  onRequestDevice: () => void;
+}) {
+  const activeCount = devices.filter((d) => d.status !== "inactive" && d.status !== "faulty").length;
+  const totalTaps = Object.values(interactions).reduce((a, b) => a + b, 0);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      {/* HEADER CARD */}
+      <div
+        style={{
+          background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+          color: "white",
+          borderRadius: "20px",
+          padding: "28px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "20px",
+          boxShadow: "0 10px 30px rgba(15, 23, 42, 0.15)",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: "11px", fontWeight: 800, letterSpacing: "0.1em", color: "#60a5fa", marginBottom: "6px" }}>
+            TAPX HARDWARE PORTAL
+          </div>
+          <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 800 }}>My Assigned Devices ({devices.length})</h2>
+          <p style={{ margin: "6px 0 0", color: "#94a3b8", fontSize: "14px" }}>
+            Physical NFC cards, standees, and QR points configured for your business.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onRequestDevice}
+          style={{
+            background: "#2563eb",
+            color: "white",
+            border: "none",
+            borderRadius: "12px",
+            padding: "12px 20px",
+            fontSize: "14px",
+            fontWeight: 700,
+            cursor: "pointer",
+            boxShadow: "0 4px 14px rgba(37, 99, 235, 0.4)",
+          }}
+        >
+          + Request Additional Devices
+        </button>
+      </div>
+
+      {/* STATS METRICS */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
+        <div style={clientMetricCard}>
+          <div style={clientMetricLabel}>Total Devices</div>
+          <div style={clientMetricValue}>{devices.length}</div>
+          <div style={clientMetricSub}>Configured NFC/QR endpoints</div>
+        </div>
+
+        <div style={clientMetricCard}>
+          <div style={clientMetricLabel}>Active Devices</div>
+          <div style={{ ...clientMetricValue, color: "#16a34a" }}>{activeCount}</div>
+          <div style={clientMetricSub}>Live & accepting taps</div>
+        </div>
+
+        <div style={clientMetricCard}>
+          <div style={clientMetricLabel}>Total Customer Taps</div>
+          <div style={{ ...clientMetricValue, color: "#2563eb" }}>{totalTaps}</div>
+          <div style={clientMetricSub}>Recorded NFC & QR interactions</div>
+        </div>
+      </div>
+
+      {/* DEVICES LIST */}
+      {devices.length === 0 ? (
+        <div style={{ background: "white", borderRadius: "16px", padding: "40px 20px", textAlign: "center", border: "1px solid #e2e8f0" }}>
+          <div style={{ fontSize: "40px", marginBottom: "12px" }}>📡</div>
+          <h3 style={{ margin: "0 0 6px", fontSize: "18px", fontWeight: 700, color: "#0f172a" }}>No Devices Assigned</h3>
+          <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: "13px" }}>
+            You do not have any physical TAPX devices assigned yet. Contact your admin or click below to request hardware.
+          </p>
+          <button
+            type="button"
+            onClick={onRequestDevice}
+            style={{ background: "#0f172a", color: "white", border: "none", borderRadius: "10px", padding: "10px 18px", fontWeight: 700, cursor: "pointer" }}
+          >
+            Request TAPX Hardware
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "20px" }}>
+          {devices.map((device) => (
+            <DeviceCardItem key={device.id} device={device} tapCount={interactions[device.device_code] || 0} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeviceCardItem({ device, tapCount }: { device: ClientDevice; tapCount: number }) {
+  const [qrUrl, setQrUrl] = useState<string>("");
+  const [copied, setCopied] = useState(false);
+  const customerUrl = typeof window !== "undefined" ? `${window.location.origin}/tap/${device.device_code}` : `/tap/${device.device_code}`;
+
+  useEffect(() => {
+    QRCode.toDataURL(customerUrl, { width: 400, margin: 2 })
+      .then(setQrUrl)
+      .catch(console.error);
+  }, [customerUrl]);
+
+  function copyUrl() {
+    navigator.clipboard.writeText(customerUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  function downloadQr() {
+    if (!qrUrl) return;
+    const link = document.createElement("a");
+    link.href = qrUrl;
+    link.download = `${device.label || device.device_code}_QR.png`.toLowerCase().replace(/[\s/]+/g, "_");
+    link.click();
+  }
+
+  return (
+    <div
+      style={{
+        background: "white",
+        borderRadius: "16px",
+        border: "1px solid #e2e8f0",
+        padding: "20px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "16px",
+        boxShadow: "0 4px 15px rgba(0, 0, 0, 0.02)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontSize: "16px", fontWeight: 800, color: "#0f172a" }}>
+              {device.label || device.device_code}
+            </span>
+            {device.label && (
+              <span style={{ background: "#e0e7ff", color: "#3730a3", padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700 }}>
+                {device.label}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: "12px", fontFamily: "monospace", color: "#64748b", marginTop: "4px" }}>
+            Code: {device.device_code} • {device.device_type || "NFC + QR"}
+          </div>
+        </div>
+
+        <span
+          style={{
+            background: device.status === "inactive" ? "#f1f5f9" : "#dcfce7",
+            color: device.status === "inactive" ? "#64748b" : "#15803d",
+            padding: "4px 10px",
+            borderRadius: "999px",
+            fontSize: "11px",
+            fontWeight: 800,
+          }}
+        >
+          {device.status || "Active"}
+        </span>
+      </div>
+
+      {/* QR PREVIEW & TAPS */}
+      <div style={{ display: "flex", alignItems: "center", gap: "16px", background: "#f8fafc", padding: "14px", borderRadius: "12px" }}>
+        {qrUrl ? (
+          <img src={qrUrl} alt="QR Code" style={{ width: "90px", height: "90px", borderRadius: "8px", border: "1px solid #cbd5e1" }} />
+        ) : (
+          <div style={{ width: "90px", height: "90px", background: "#e2e8f0", borderRadius: "8px" }} />
+        )}
+
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: "12px", color: "#64748b", fontWeight: 600 }}>Recorded Customer Taps</div>
+          <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", margin: "2px 0 4px" }}>{tapCount}</div>
+          <button
+            type="button"
+            onClick={downloadQr}
+            style={{
+              background: "white",
+              border: "1px solid #cbd5e1",
+              borderRadius: "6px",
+              padding: "4px 10px",
+              fontSize: "11px",
+              fontWeight: 700,
+              color: "#334155",
+              cursor: "pointer",
+            }}
+          >
+            📥 Download QR PNG
+          </button>
+        </div>
+      </div>
+
+      {/* URL BOX */}
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", background: "#f1f5f9", padding: "8px 12px", borderRadius: "8px" }}>
+        <span style={{ fontSize: "11px", fontFamily: "monospace", color: "#334155", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {customerUrl}
+        </span>
+        <button
+          type="button"
+          onClick={copyUrl}
+          style={{
+            background: copied ? "#16a34a" : "#0f172a",
+            color: "white",
+            border: "none",
+            borderRadius: "6px",
+            padding: "4px 10px",
+            fontSize: "11px",
+            fontWeight: 700,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {copied ? "Copied!" : "Copy Link"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const clientMetricCard: React.CSSProperties = {
+  background: "white",
+  border: "1px solid #e2e8f0",
+  borderRadius: "14px",
+  padding: "20px",
+};
+const clientMetricLabel: React.CSSProperties = {
+  fontSize: "12px",
+  fontWeight: 700,
+  color: "#64748b",
+};
+const clientMetricValue: React.CSSProperties = {
+  fontSize: "30px",
+  fontWeight: 800,
+  color: "#0f172a",
+  marginTop: "4px",
+  lineHeight: 1,
+};
+const clientMetricSub: React.CSSProperties = {
+  fontSize: "11px",
+  color: "#94a3b8",
+  marginTop: "6px",
+};
+
+/* =========================================================
+   HOTEL REQUESTS PORTAL COMPONENT
+========================================================= */
+
+function HotelRequestsSection({
+  requests,
+  onUpdateStatus,
+}: {
+  requests: HotelRequestItem[];
+  onUpdateStatus: (id: string, status: string) => void;
+}) {
+  const [filter, setFilter] = useState("all");
+  const pendingCount = requests.filter((r) => r.status === "pending").length;
+  const inProgressCount = requests.filter((r) => r.status === "in_progress" || r.status === "accepted").length;
+
+  const filtered = requests.filter((r) => {
+    if (filter === "all") return true;
+    if (filter === "pending") return r.status === "pending";
+    if (filter === "in_progress") return r.status === "in_progress" || r.status === "accepted";
+    if (filter === "completed") return r.status === "completed";
+    if (filter === "cancelled") return r.status === "cancelled";
+    return true;
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      {/* HEADER CARD */}
+      <div
+        style={{
+          background: "linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)",
+          color: "white",
+          borderRadius: "20px",
+          padding: "28px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "20px",
+          boxShadow: "0 10px 30px rgba(49, 46, 129, 0.2)",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: "11px", fontWeight: 800, letterSpacing: "0.12em", color: "#a5b4fc", marginBottom: "6px" }}>
+            HOTEL GUEST DESK
+          </div>
+          <h2 style={{ margin: 0, fontSize: "26px", fontWeight: 800 }}>Room Service & Guest Requests ({requests.length})</h2>
+          <p style={{ margin: "6px 0 0", color: "#c7d2fe", fontSize: "14px" }}>
+            Live in-room requests submitted by hotel guests via TAPX NFC/QR devices.
+          </p>
+        </div>
+
+        <div style={{ display: "flex", gap: "12px" }}>
+          <div style={{ background: "rgba(255,255,255,0.1)", padding: "10px 16px", borderRadius: "12px", textAlign: "center" }}>
+            <div style={{ fontSize: "20px", fontWeight: 800 }}>{pendingCount}</div>
+            <div style={{ fontSize: "11px", color: "#c7d2fe" }}>Pending Action</div>
+          </div>
+          <div style={{ background: "rgba(255,255,255,0.1)", padding: "10px 16px", borderRadius: "12px", textAlign: "center" }}>
+            <div style={{ fontSize: "20px", fontWeight: 800, color: "#60a5fa" }}>{inProgressCount}</div>
+            <div style={{ fontSize: "11px", color: "#c7d2fe" }}>In Progress</div>
+          </div>
+        </div>
+      </div>
+
+      {/* FILTER TABS */}
+      <div style={{ display: "flex", gap: "8px", borderBottom: "1px solid #e2e8f0", paddingBottom: "12px" }}>
+        {["all", "pending", "in_progress", "completed", "cancelled"].map((f) => (
+          <button
+            key={f}
+            type="button"
+            onClick={() => setFilter(f)}
+            style={{
+              padding: "8px 16px",
+              borderRadius: "8px",
+              border: filter === f ? "2px solid #4f46e5" : "1px solid #cbd5e1",
+              background: filter === f ? "#e0e7ff" : "white",
+              color: filter === f ? "#3730a3" : "#475569",
+              fontWeight: 700,
+              fontSize: "13px",
+              cursor: "pointer",
+              textTransform: "capitalize",
+            }}
+          >
+            {f.replace("_", " ")}
+          </button>
+        ))}
+      </div>
+
+      {/* REQUESTS LIST */}
+      {filtered.length === 0 ? (
+        <div style={{ background: "white", borderRadius: "16px", padding: "40px 20px", textAlign: "center", border: "1px solid #e2e8f0" }}>
+          <div style={{ fontSize: "36px", marginBottom: "8px" }}>🛎️</div>
+          <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>No Requests Found</h3>
+          <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#64748b" }}>No guest service requests matching "{filter}".</p>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+          {filtered.map((req) => {
+            const roomNum = req.payload?.room_number || "Guest Room";
+            const items = req.payload?.items || [];
+            const notes = req.payload?.notes || "";
+            const total = req.payload?.total || 0;
+
+            return (
+              <div
+                key={req.id}
+                style={{
+                  background: "white",
+                  borderRadius: "16px",
+                  border: "1px solid #e2e8f0",
+                  padding: "20px",
+                  boxShadow: "0 4px 14px rgba(0,0,0,0.02)",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  flexWrap: "wrap",
+                  gap: "16px",
+                }}
+              >
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <span style={{ background: "#4f46e5", color: "white", padding: "4px 12px", borderRadius: "8px", fontWeight: 800, fontSize: "14px" }}>
+                      Room {roomNum}
+                    </span>
+                    <span style={{ fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>
+                      {req.customer_name || "Guest"} {req.customer_phone ? `(${req.customer_phone})` : ""}
+                    </span>
+                  </div>
+
+                  <div style={{ fontSize: "12px", color: "#64748b", marginTop: "8px" }}>
+                    Requested {new Date(req.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })} • {new Date(req.created_at).toLocaleDateString()}
+                  </div>
+
+                  {items.length > 0 && (
+                    <div style={{ marginTop: "12px", background: "#f8fafc", padding: "10px 14px", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontSize: "12px", fontWeight: 700, color: "#334155", marginBottom: "4px" }}>Requested Items:</div>
+                      {items.map((it, idx) => (
+                        <div key={idx} style={{ fontSize: "13px", color: "#0f172a" }}>
+                          • {it.name} × {it.quantity} {it.price ? `(₹${it.price * it.quantity})` : ""}
+                        </div>
+                      ))}
+                      {total > 0 && (
+                        <div style={{ marginTop: "6px", fontSize: "13px", fontWeight: 800, color: "#16a34a" }}>
+                          Total: ₹{total}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {notes && (
+                    <div style={{ marginTop: "8px", fontSize: "13px", color: "#475569", fontStyle: "italic", background: "#fffbeb", padding: "8px 12px", borderRadius: "8px", border: "1px solid #fef3c7" }}>
+                      Note: "{notes}"
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "10px" }}>
+                  <span
+                    style={{
+                      background:
+                        req.status === "completed" ? "#dcfce7" : req.status === "in_progress" || req.status === "accepted" ? "#dbeafe" : req.status === "cancelled" ? "#fee2e2" : "#fef3c7",
+                      color:
+                        req.status === "completed" ? "#15803d" : req.status === "in_progress" || req.status === "accepted" ? "#1d4ed8" : req.status === "cancelled" ? "#991b1b" : "#b45309",
+                      padding: "4px 12px",
+                      borderRadius: "999px",
+                      fontSize: "12px",
+                      fontWeight: 800,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {req.status.replace("_", " ")}
+                  </span>
+
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    {req.status === "pending" && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateStatus(req.id, "accepted")}
+                        style={{ background: "#2563eb", color: "white", border: "none", borderRadius: "8px", padding: "6px 12px", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}
+                      >
+                        Accept Request
+                      </button>
+                    )}
+
+                    {(req.status === "pending" || req.status === "accepted") && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateStatus(req.id, "in_progress")}
+                        style={{ background: "#0284c7", color: "white", border: "none", borderRadius: "8px", padding: "6px 12px", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}
+                      >
+                        In Progress
+                      </button>
+                    )}
+
+                    {req.status !== "completed" && req.status !== "cancelled" && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateStatus(req.id, "completed")}
+                        style={{ background: "#16a34a", color: "white", border: "none", borderRadius: "8px", padding: "6px 12px", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}
+                      >
+                        ✓ Complete
+                      </button>
+                    )}
+
+                    {req.status !== "completed" && req.status !== "cancelled" && (
+                      <button
+                        type="button"
+                        onClick={() => onUpdateStatus(req.id, "cancelled")}
+                        style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "8px", padding: "6px 12px", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =========================================================
+   FEEDBACK DASHBOARD COMPONENT
+========================================================= */
+
+function FeedbackSection({ feedback }: { feedback: FeedbackItem[] }) {
+  const total = feedback.length;
+  const avgRating = total > 0 ? (feedback.reduce((sum, f) => sum + f.rating, 0) / total).toFixed(1) : "N/A";
+
+  const ratingCounts = {
+    5: feedback.filter((f) => f.rating === 5).length,
+    4: feedback.filter((f) => f.rating === 4).length,
+    3: feedback.filter((f) => f.rating === 3).length,
+    2: feedback.filter((f) => f.rating === 2).length,
+    1: feedback.filter((f) => f.rating === 1).length,
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      {/* HEADER CARD */}
+      <div style={{ background: "white", borderRadius: "20px", border: "1px solid #e2e8f0", padding: "24px" }}>
+        <h2 style={{ margin: "0 0 16px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>Customer Feedback Dashboard</h2>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "20px", alignItems: "center" }}>
+          <div style={{ textAlign: "center", background: "#f8fafc", padding: "20px", borderRadius: "14px", border: "1px solid #e2e8f0" }}>
+            <div style={{ fontSize: "40px", fontWeight: 800, color: "#f59e0b", lineHeight: 1 }}>{avgRating} ★</div>
+            <div style={{ fontSize: "12px", color: "#64748b", fontWeight: 700, marginTop: "6px" }}>Average Customer Rating</div>
+            <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "2px" }}>Based on {total} response(s)</div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {[5, 4, 3, 2, 1].map((stars) => {
+              const count = ratingCounts[stars as keyof typeof ratingCounts];
+              const pct = total > 0 ? (count / total) * 100 : 0;
+              return (
+                <div key={stars} style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "12px" }}>
+                  <span style={{ width: "40px", fontWeight: 700, color: "#475569" }}>{stars} ★</span>
+                  <div style={{ flex: 1, background: "#f1f5f9", height: "8px", borderRadius: "999px", overflow: "hidden" }}>
+                    <div style={{ width: `${pct}%`, background: "#f59e0b", height: "100%", borderRadius: "999px" }} />
+                  </div>
+                  <span style={{ width: "30px", textAlign: "right", color: "#64748b", fontWeight: 700 }}>{count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* FEEDBACK LIST */}
+      {total === 0 ? (
+        <div style={{ background: "white", borderRadius: "16px", padding: "40px 20px", textAlign: "center", border: "1px solid #e2e8f0" }}>
+          <div style={{ fontSize: "36px", marginBottom: "8px" }}>💬</div>
+          <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>No Customer Feedback Yet</h3>
+          <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#64748b" }}>Feedback submitted by customers via TAPX will appear here.</p>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          {feedback.map((item) => (
+            <div key={item.id} style={{ background: "white", borderRadius: "14px", border: "1px solid #e2e8f0", padding: "18px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontWeight: 700, color: "#0f172a", fontSize: "14px" }}>
+                  {item.customer_name || "Anonymous Customer"} {item.customer_phone ? `(${item.customer_phone})` : ""}
+                </div>
+                <div style={{ color: "#f59e0b", fontWeight: 800, fontSize: "14px" }}>
+                  {"★".repeat(item.rating)}{"☆".repeat(5 - item.rating)}
+                </div>
+              </div>
+              {item.comment && (
+                <div style={{ marginTop: "8px", fontSize: "13px", color: "#334155", background: "#f8fafc", padding: "10px", borderRadius: "8px" }}>
+                  "{item.comment}"
+                </div>
+              )}
+              <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "8px", textAlign: "right" }}>
+                {new Date(item.created_at).toLocaleString()}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =========================================================
+   LOYALTY PORTAL COMPONENT WITH MILESTONES & REWARDS
+========================================================= */
+
+function LoyaltyPortalSection({ businessId }: { businessId: string }) {
+  const [members, setMembers] = useState<any[]>([]);
+  const [rewards, setRewards] = useState<any[]>([]);
+  const [interval, setInterval] = useState<number>(5);
+  const [rewardDesc, setRewardDesc] = useState<string>("10% off next visit");
+  const [loading, setLoading] = useState(true);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [recordingId, setRecordingId] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    loadLoyaltyData();
+  }, [businessId]);
+
+  async function loadLoyaltyData() {
+    setLoading(true);
+    try {
+      // 1. Fetch Members
+      const { data: memberData } = await supabase
+        .from("loyalty_memberships")
+        .select("id, customer_id, visits, reward_claimed, updated_at, customer:customers(name, phone)")
+        .eq("business_id", businessId)
+        .order("updated_at", { ascending: false });
+
+      if (memberData) setMembers(memberData);
+
+      // 2. Fetch Rewards
+      const { data: rewardData } = await supabase
+        .from("loyalty_rewards")
+        .select("id, business_id, customer_id, membership_id, visit_count_at_reward, reward_description, status, created_at, customer:customers(name, phone)")
+        .eq("business_id", businessId)
+        .order("created_at", { ascending: false });
+
+      if (rewardData) setRewards(rewardData);
+
+      // 3. Fetch Config
+      const { data: cfgData } = await supabase
+        .from("business_module_configs")
+        .select("config")
+        .eq("business_id", businessId)
+        .eq("module_key", "loyalty")
+        .maybeSingle();
+
+      if (cfgData?.config) {
+        const cfg = cfgData.config as any;
+        if (cfg.milestone_interval) setInterval(Number(cfg.milestone_interval));
+        if (cfg.milestone_reward) setRewardDesc(String(cfg.milestone_reward));
+      }
+    } catch (err) {
+      console.error("Error loading loyalty data:", err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveConfig() {
+    setSavingConfig(true);
+    setMessage("");
+    try {
+      const { error } = await supabase
+        .from("business_module_configs")
+        .upsert(
+          {
+            business_id: businessId,
+            feature_id: "loyalty",
+            module_key: "loyalty",
+            config: { milestone_interval: interval, milestone_reward: rewardDesc },
+            status: "active",
+          },
+          { onConflict: "business_id,module_key" }
+        );
+
+      if (error) throw error;
+      setMessage("✓ Loyalty milestone rules saved!");
+    } catch (err: any) {
+      setMessage(err?.message || "Failed to save config.");
+    } finally {
+      setSavingConfig(false);
+    }
+  }
+
+  async function recordVisit(member: any) {
+    setRecordingId(member.id);
+    setMessage("");
+    try {
+      const { data, error } = await supabase.rpc("record_tapx_loyalty_visit", {
+        p_business_id: businessId,
+        p_customer_id: member.customer_id,
+        p_membership_id: member.id,
+        p_source: "owner_verified",
+      });
+
+      if (error) throw error;
+
+      if (data?.reward_triggered) {
+        setMessage(`🎉 Visit recorded for ${member.customer?.name || 'Customer'}! Milestone reward triggered!`);
+      } else {
+        setMessage(`✓ 1 Visit recorded for ${member.customer?.name || 'Customer'}.`);
+      }
+
+      await loadLoyaltyData();
+    } catch (err: any) {
+      setMessage(err?.message || "Failed to record visit.");
+    } finally {
+      setRecordingId(null);
+    }
+  }
+
+  async function sendWhatsApp(reward: any) {
+    const rawPhone = reward.customer?.phone?.replace(/\D/g, "") || "";
+    const name = reward.customer?.name || "Valued Customer";
+    const desc = reward.reward_description || "Special Reward";
+    const visits = reward.visit_count_at_reward;
+
+    const msg = `Hi ${name}! 🎉 Congratulations on visit #${visits}! You've unlocked a milestone reward: ${desc}. Show this message on your next visit to redeem!`;
+    const phone = rawPhone ? (rawPhone.startsWith("91") ? rawPhone : `91${rawPhone}`) : "";
+    const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
+
+    window.open(waUrl, "_blank");
+
+    try {
+      await supabase.from("loyalty_rewards").update({ status: "sent" }).eq("id", reward.id);
+      await loadLoyaltyData();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function markRedeemed(rewardId: string) {
+    try {
+      await supabase.from("loyalty_rewards").update({ status: "redeemed" }).eq("id", rewardId);
+      await loadLoyaltyData();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      {/* HEADER CARD */}
+      <div style={{ background: "white", borderRadius: "20px", border: "1px solid #e2e8f0", padding: "24px" }}>
+        <h2 style={{ margin: "0 0 6px", fontSize: "22px", fontWeight: 800, color: "#0f172a" }}>Customer Loyalty & Rewards</h2>
+        <p style={{ margin: 0, fontSize: "14px", color: "#64748b" }}>
+          Track customer visits, configure automatic milestone rewards, and issue WhatsApp notifications.
+        </p>
+      </div>
+
+      {message && (
+        <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#166534", padding: "12px 16px", borderRadius: "10px", fontWeight: 600 }}>
+          {message}
+        </div>
+      )}
+
+      {/* MILESTONE CONFIG CARD */}
+      <div style={{ background: "white", borderRadius: "20px", border: "1px solid #e2e8f0", padding: "24px" }}>
+        <h3 style={{ margin: "0 0 14px", fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>⚙ Loyalty Milestone Rules</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px", marginBottom: "16px" }}>
+          <div>
+            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>
+              Milestone Interval (Visits)
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={interval}
+              onChange={(e) => setInterval(Number(e.target.value) || 5)}
+              style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
+            />
+            <span style={{ fontSize: "12px", color: "#94a3b8", marginTop: "4px", display: "block" }}>e.g. 5 = reward triggered every 5th visit</span>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>
+              Reward Description
+            </label>
+            <input
+              type="text"
+              value={rewardDesc}
+              onChange={(e) => setRewardDesc(e.target.value)}
+              placeholder="e.g. 10% off next visit"
+              style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
+            />
+            <span style={{ fontSize: "12px", color: "#94a3b8", marginTop: "4px", display: "block" }}>Text sent to customer upon reaching milestone</span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={saveConfig}
+          disabled={savingConfig}
+          style={{ padding: "10px 18px", background: "#0f172a", color: "white", border: "none", borderRadius: "8px", fontWeight: 700, cursor: savingConfig ? "not-allowed" : "pointer" }}
+        >
+          {savingConfig ? "Saving..." : "Save Milestone Rules"}
+        </button>
+      </div>
+
+      {/* MILESTONES & REWARDS WIDGET */}
+      <div style={{ background: "white", borderRadius: "20px", border: "1px solid #e2e8f0", padding: "24px" }}>
+        <h3 style={{ margin: "0 0 16px", fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>
+          🎁 Triggered Milestone Rewards ({rewards.filter((r) => r.status !== "redeemed").length} Active)
+        </h3>
+
+        {rewards.length === 0 ? (
+          <p style={{ color: "#64748b", fontSize: "14px", fontStyle: "italic" }}>
+            No milestone rewards generated yet. Rewards auto-trigger when visit count reaches the milestone interval.
+          </p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            {rewards.map((reward) => (
+              <div
+                key={reward.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "14px 16px",
+                  background: reward.status === "pending" ? "#fefce8" : reward.status === "sent" ? "#eff6ff" : "#f8fafc",
+                  border: `1px solid ${reward.status === "pending" ? "#fef08a" : reward.status === "sent" ? "#bfdbfe" : "#e2e8f0"}`,
+                  borderRadius: "12px",
+                  gap: "16px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <strong style={{ fontSize: "15px", color: "#0f172a" }}>{reward.customer?.name || "Customer"}</strong>
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        padding: "2px 8px",
+                        borderRadius: "12px",
+                        background: reward.status === "pending" ? "#fef08a" : reward.status === "sent" ? "#dbeafe" : "#e2e8f0",
+                        color: reward.status === "pending" ? "#854d0e" : reward.status === "sent" ? "#1e40af" : "#475569",
+                      }}
+                    >
+                      {reward.status === "pending" ? "● Reward Ready" : reward.status === "sent" ? "✓ Sent via WhatsApp" : "✓ Redeemed"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "13px", color: "#475569", marginTop: "3px" }}>
+                    Hit <strong>Visit #{reward.visit_count_at_reward}</strong> • Reward: <em>"{reward.reward_description}"</em>
+                  </div>
+                  {reward.customer?.phone && <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>Mobile: {reward.customer.phone}</div>}
+                </div>
+
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  {reward.status !== "redeemed" && (
+                    <button
+                      type="button"
+                      onClick={() => sendWhatsApp(reward)}
+                      style={{ padding: "8px 14px", background: "#16a34a", color: "white", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}
+                    >
+                      📲 Send via WhatsApp
+                    </button>
+                  )}
+                  {reward.status !== "redeemed" && (
+                    <button
+                      type="button"
+                      onClick={() => markRedeemed(reward.id)}
+                      style={{ padding: "8px 14px", background: "#0f172a", color: "white", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
+                    >
+                      ✓ Mark Redeemed
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* MEMBERS & VISITS LIST */}
+      <div style={{ background: "white", borderRadius: "20px", border: "1px solid #e2e8f0", padding: "24px" }}>
+        <h3 style={{ margin: "0 0 12px", fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>👥 Loyalty Members & Visit Verification</h3>
+
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search customer by name or mobile..."
+          style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", marginBottom: "16px", boxSizing: "border-box" }}
+        />
+
+        {loading ? (
+          <p style={{ color: "#64748b", fontSize: "14px" }}>Loading loyalty members...</p>
+        ) : members.filter((m) => {
+            const q = search.trim().toLowerCase();
+            if (!q) return true;
+            return m.customer?.name?.toLowerCase().includes(q) || m.customer?.phone?.toLowerCase().includes(q);
+          }).length === 0 ? (
+          <p style={{ color: "#64748b", fontSize: "14px" }}>No loyalty members found.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {members
+              .filter((m) => {
+                const q = search.trim().toLowerCase();
+                if (!q) return true;
+                return m.customer?.name?.toLowerCase().includes(q) || m.customer?.phone?.toLowerCase().includes(q);
+              })
+              .map((member) => (
+                <div key={member.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                  <div>
+                    <strong style={{ fontSize: "14px", color: "#0f172a", display: "block" }}>{member.customer?.name || "Customer"}</strong>
+                    <span style={{ fontSize: "12px", color: "#64748b" }}>{member.customer?.phone || "No phone"}</span>
+                    <div style={{ fontSize: "12px", color: "#2563eb", fontWeight: 700, marginTop: "2px" }}>
+                      {member.visits} verified visit{member.visits === 1 ? "" : "s"}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => recordVisit(member)}
+                    disabled={recordingId === member.id}
+                    style={{ padding: "8px 14px", background: "#2563eb", color: "white", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: 700, cursor: recordingId === member.id ? "not-allowed" : "pointer", opacity: recordingId === member.id ? 0.6 : 1 }}
+                  >
+                    {recordingId === member.id ? "Recording..." : "+ Record Visit"}
+                  </button>
+                </div>
+              ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
