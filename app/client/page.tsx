@@ -5153,8 +5153,11 @@ function SettingsPage({
               type="url"
               value={googleReviewUrl}
               onChange={(e) => setGoogleReviewUrl(e.target.value)}
-              placeholder="https://g.page/r/.../review"
+              placeholder="https://g.page/r/CXrdGmw-RmMwEBM/review"
             />
+            <span style={{ fontSize: "11px", color: "#64748b", marginTop: "4px", display: "block" }}>
+              Paste your Google Business review link, not your Maps location link
+            </span>
           </div>
 
           <div className="input-group">

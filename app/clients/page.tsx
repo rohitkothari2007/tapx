@@ -1268,11 +1268,11 @@ export default function ClientsPage() {
                 <SettingField
                   icon="⭐"
                   title="Google Review"
-                  description="Send customers directly to the business Google review page."
+                  description="Send customers directly to the business Google review page. Paste your Google Business review link, not your Maps location link."
                   value={
                     settings.google_review_url
                   }
-                  placeholder="https://g.page/your-business/review"
+                  placeholder="https://g.page/r/CXrdGmw-RmMwEBM/review"
                   onChange={(value) =>
                     setSettings(
                       (current) => ({

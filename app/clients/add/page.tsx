@@ -144,6 +144,7 @@ export default function AddClientPage() {
   const [activatedClient, setActivatedClient] =
     useState<ActivatedClient | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedPortal, setCopiedPortal] = useState(false);
 
   // =========================================================
   // LOAD TAPX ONBOARDING DATA
@@ -750,6 +751,35 @@ export default function AddClientPage() {
   // COPY CUSTOMER URL
   // =========================================================
 
+  async function copyToClipboard(text: string, type: "customer" | "portal") {
+    if (!text) return;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+
+      if (type === "customer") {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2500);
+      } else {
+        setCopiedPortal(true);
+        setTimeout(() => setCopiedPortal(false), 2500);
+      }
+    } catch (err) {
+      console.error("Clipboard copy error:", err);
+    }
+  }
+
   async function copyCustomerUrl() {
     if (!activatedClient?.customerUrl) {
       return;
@@ -1141,7 +1171,7 @@ export default function AddClientPage() {
                   </span>
                   <button
                     type="button"
-                    onClick={() => navigator.clipboard.writeText(portalUrl)}
+                    onClick={() => copyToClipboard(portalUrl, "portal")}
                     style={{
                       padding: "6px 12px",
                       background: "#0f172a",
@@ -1154,7 +1184,7 @@ export default function AddClientPage() {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    Copy Dashboard URL
+                    {copiedPortal ? "✓ Copied Dashboard URL" : "Copy Dashboard URL"}
                   </button>
                 </div>
               </div>
@@ -1329,7 +1359,7 @@ export default function AddClientPage() {
 
           <InputField
             label="Google Review URL"
-            placeholder="https://g.page/business/review"
+            placeholder="https://g.page/r/CXrdGmw-RmMwEBM/review"
             value={form.google_review_url}
             onChange={(value) =>
               updateField(
