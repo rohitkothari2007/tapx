@@ -407,6 +407,8 @@ export default function ClientPortalPage() {
         configsResult,
         ordersResult,
         appointmentsResult,
+        devicesResult,
+        interactionsResult,
       ] = await Promise.all([
         supabase
           .from("businesses")
@@ -513,7 +515,7 @@ export default function ClientPortalPage() {
 
         supabase
           .from("interactions")
-          .select("device_code")
+          .select("device_code, device_id")
           .eq("business_id", businessId),
       ]);
 
@@ -539,10 +541,6 @@ export default function ClientPortalPage() {
         throw new Error(ordersResult.error.message);
       }
 
-      if (appointmentsResult.error) {
-        throw new Error(appointmentsResult.error.message);
-      }
-
       const loadedOrders =
         (ordersResult.data || []) as Order[];
 
@@ -558,25 +556,38 @@ export default function ClientPortalPage() {
       setOrders(loadedOrders);
       setAppointments((appointmentsResult.data || []) as Appointment[]);
 
-      // Process devices, hotel requests & feedback
-      const [devicesRes, hotelReqsRes, feedbackRes] = await Promise.all([
-        supabase.from("devices").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
-        supabase.from("customer_requests").select("*").eq("business_id", businessId).in("request_type", ["hotel_room_service", "hotel_service", "custom_guest_request"]).order("created_at", { ascending: false }),
-        supabase.from("customer_feedback").select("*").eq("business_id", businessId).order("created_at", { ascending: false })
-      ]);
+      // Process devices & interaction counts
+      const loadedDevices = (devicesResult?.data || []) as ClientDevice[];
+      setClientDevices(loadedDevices);
 
-      setClientDevices((devicesRes.data || []) as ClientDevice[]);
-      setHotelRequests((hotelReqsRes.data || []) as HotelRequestItem[]);
-      setCustomerFeedbackList((feedbackRes.data || []) as FeedbackItem[]);
+      const deviceIdToCodeMap: Record<string, string> = {};
+      loadedDevices.forEach((dev) => {
+        if (dev.id && dev.device_code) {
+          deviceIdToCodeMap[dev.id] = dev.device_code;
+        }
+      });
 
-      const interactionsData = (await (supabase.from("interactions").select("device_code").eq("business_id", businessId))).data;
       const counts: Record<string, number> = {};
-      (interactionsData || []).forEach((t: { device_code: string | null }) => {
-        if (t.device_code) {
-          counts[t.device_code] = (counts[t.device_code] || 0) + 1;
+      ((interactionsResult?.data || []) as { device_code: string | null; device_id: string | null }[]).forEach((t) => {
+        const code = t.device_code || (t.device_id ? deviceIdToCodeMap[t.device_id] : null);
+        if (code) {
+          counts[code] = (counts[code] || 0) + 1;
         }
       });
       setDeviceInteractions(counts);
+
+      // Safely fetch optional hotel requests & feedback
+      try {
+        const [hotelReqsRes, feedbackRes] = await Promise.all([
+          supabase.from("customer_requests").select("*").eq("business_id", businessId).in("request_type", ["hotel_room_service", "hotel_service", "custom_guest_request"]).order("created_at", { ascending: false }),
+          supabase.from("customer_feedback").select("*").eq("business_id", businessId).order("created_at", { ascending: false })
+        ]);
+        setHotelRequests((hotelReqsRes.data || []) as HotelRequestItem[]);
+        setCustomerFeedbackList((feedbackRes.data || []) as FeedbackItem[]);
+      } catch (err) {
+        setHotelRequests([]);
+        setCustomerFeedbackList([]);
+      }
 
       if (loadedOrders.length > 0) {
         const orderIds = loadedOrders.map(
