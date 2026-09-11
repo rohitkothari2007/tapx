@@ -6,9 +6,17 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export async function POST(req: NextRequest) {
   try {
+    // 1. STRICT ENVIRONMENT CHECK: SUPABASE_SERVICE_ROLE_KEY MUST be present
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseServiceKey) {
+      console.error("FATAL: SUPABASE_SERVICE_ROLE_KEY is missing from environment variables.");
+      return NextResponse.json(
+        { error: "Server Configuration Error: SUPABASE_SERVICE_ROLE_KEY is missing from environment variables." },
+        { status: 500 }
+      );
+    }
 
-    // 1. AUTHENTICATION CHECK: Caller must provide bearer token
+    // 2. AUTHENTICATION CHECK: Caller must provide valid session token
     const authHeader = req.headers.get("authorization");
     const token = authHeader?.replace("Bearer ", "");
 
@@ -19,10 +27,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const supabaseAuthClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-
+    const supabaseAuthClient = createClient(supabaseUrl, supabaseAnonKey);
     const {
       data: { user: caller },
       error: authError,
@@ -35,13 +40,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Determine database client: prefer service key if available, fallback to caller's authenticated client
-    const supabaseDb = supabaseServiceKey
-      ? createClient(supabaseUrl, supabaseServiceKey)
-      : supabaseAuthClient;
+    // 3. ADMIN CHECK: Service Role Client checks membership in tapx_admin_users
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 2. ADMIN CHECK: Caller must be in tapx_admin_users
-    const { data: adminRow, error: adminLookupError } = await supabaseDb
+    const { data: adminRow, error: adminLookupError } = await supabaseAdmin
       .from("tapx_admin_users")
       .select("id")
       .eq("user_id", caller.id)
@@ -62,7 +64,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. PARSE & VALIDATE REQUEST BODY
+    // 4. PARSE & VALIDATE REQUEST BODY
     const body = await req.json();
     const { businessId, ownerEmail } = body;
 
@@ -83,7 +85,7 @@ export async function POST(req: NextRequest) {
     const cleanEmail = ownerEmail.trim().toLowerCase();
 
     // Verify target business exists
-    const { data: business, error: businessError } = await supabaseDb
+    const { data: business, error: businessError } = await supabaseAdmin
       .from("businesses")
       .select("id, name")
       .eq("id", businessId)
@@ -96,69 +98,55 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let targetUserId: string | null = null;
-    let isNewUser = false;
+    // 5. EXISTING USER VS NEW USER INVITATION
+    const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
 
-    // Special Case: Caller is assigning themselves (e.g. Admin is also the Business Owner)
-    if (caller.email?.toLowerCase() === cleanEmail) {
-      targetUserId = caller.id;
-    } else if (supabaseServiceKey) {
-      // Use Admin API to lookup existing user or invite new user
-      const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-      const { data: listData } = await supabaseAdmin.auth.admin.listUsers({
-        page: 1,
-        perPage: 1000,
-      });
-
-      const existingUser = (listData?.users || []).find(
-        (u: any) => u.email?.toLowerCase() === cleanEmail
-      );
-
-      if (existingUser) {
-        targetUserId = existingUser.id;
-      } else {
-        isNewUser = true;
-        const origin =
-          req.headers.get("origin") ||
-          req.headers.get("referer") ||
-          process.env.NEXT_PUBLIC_SITE_URL ||
-          "http://localhost:3000";
-
-        const { data: inviteData, error: inviteError } =
-          await supabaseAdmin.auth.admin.inviteUserByEmail(cleanEmail, {
-            redirectTo: `${origin}/client/set-password`,
-          });
-
-        if (inviteError || !inviteData.user) {
-          console.error("Invite error:", inviteError);
-          return NextResponse.json(
-            { error: `Failed to send invite: ${inviteError?.message}` },
-            { status: 500 }
-          );
-        }
-
-        targetUserId = inviteData.user.id;
-      }
-    } else {
-      // Service key not present: check if user is caller or return instructions
+    if (listError) {
+      console.error("Error listing auth users:", listError);
       return NextResponse.json(
-        {
-          error:
-            "Admin service key missing. To invite a new user, SUPABASE_SERVICE_ROLE_KEY must be configured in environment variables.",
-        },
+        { error: "Failed to query authentication directory." },
         { status: 500 }
       );
     }
 
-    if (!targetUserId) {
-      return NextResponse.json(
-        { error: "Unable to resolve target user ID for owner email." },
-        { status: 400 }
-      );
+    const existingUser = (listData?.users || []).find(
+      (u: any) => u.email?.toLowerCase() === cleanEmail
+    );
+
+    let targetUserId: string;
+    let isNewUser = false;
+
+    if (existingUser) {
+      targetUserId = existingUser.id;
+    } else {
+      isNewUser = true;
+      const origin =
+        req.headers.get("origin") ||
+        req.headers.get("referer") ||
+        process.env.NEXT_PUBLIC_SITE_URL ||
+        "http://localhost:3000";
+
+      const { data: inviteData, error: inviteError } =
+        await supabaseAdmin.auth.admin.inviteUserByEmail(cleanEmail, {
+          redirectTo: origin + "/client/set-password",
+        });
+
+      if (inviteError || !inviteData.user) {
+        console.error("Invite error:", inviteError);
+        return NextResponse.json(
+          { error: "Failed to send invite: " + (inviteError?.message || "Unknown error") },
+          { status: 500 }
+        );
+      }
+
+      targetUserId = inviteData.user.id;
     }
 
-    // 4. LINK USER TO BUSINESS IN tapx_client_users (UPSERT)
-    const { error: mapError } = await supabaseDb
+    // 6. LINK USER TO BUSINESS IN tapx_client_users (UPSERT)
+    const { error: mapError } = await supabaseAdmin
       .from("tapx_client_users")
       .upsert(
         {
@@ -172,7 +160,7 @@ export async function POST(req: NextRequest) {
     if (mapError) {
       console.error("Error mapping client user:", mapError);
       return NextResponse.json(
-        { error: `Failed to link owner access: ${mapError.message}` },
+        { error: "Failed to link owner access: " + mapError.message },
         { status: 500 }
       );
     }
@@ -180,8 +168,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: isNewUser
-        ? `Owner invitation sent to ${cleanEmail}.`
-        : `User ${cleanEmail} linked to business ${business.name}.`,
+        ? "Owner invitation sent to " + cleanEmail + "."
+        : "User " + cleanEmail + " linked to business " + business.name + ".",
       userId: targetUserId,
       isNewUser,
       businessId,
