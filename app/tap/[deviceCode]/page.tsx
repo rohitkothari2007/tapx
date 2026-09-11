@@ -219,12 +219,32 @@ type ActiveModule =
   | "hotel-services"
   | null;
 
-export default function TapPage() {
-  const params = useParams();
+export default function TapPage({
+  params: propsParams,
+}: {
+  params?: { deviceCode?: string } | Promise<{ deviceCode?: string }>;
+}) {
+  const routeParams = useParams();
 
-  const deviceCode = Array.isArray(params.deviceCode)
-    ? params.deviceCode[0]
-    : params.deviceCode;
+  const [deviceCode, setDeviceCode] = useState<string>("");
+
+  useEffect(() => {
+    async function resolveParams() {
+      let code = "";
+      if (routeParams && typeof routeParams === "object" && routeParams.deviceCode) {
+        code = Array.isArray(routeParams.deviceCode) ? routeParams.deviceCode[0] : routeParams.deviceCode;
+      } else if (propsParams) {
+        const resolved = await Promise.resolve(propsParams);
+        if (resolved && resolved.deviceCode) {
+          code = Array.isArray(resolved.deviceCode) ? resolved.deviceCode[0] : resolved.deviceCode;
+        }
+      }
+      if (code) {
+        setDeviceCode(code);
+      }
+    }
+    void resolveParams();
+  }, [routeParams, propsParams]);
 
   const [device, setDevice] = useState<Device | null>(null);
   const [business, setBusiness] = useState<Business | null>(null);
