@@ -2087,7 +2087,7 @@ function Overview({
           </div>
 
           <h1>
-            Good afternoon,{" "}
+            Greetings,{" "}
             <span>{business.name}.</span>
           </h1>
 
