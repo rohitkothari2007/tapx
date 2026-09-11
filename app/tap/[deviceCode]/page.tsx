@@ -294,6 +294,11 @@ export default function TapPage({
   const [hotelServiceItems, setHotelServiceItems] =
     useState<HotelServiceItem[]>([]);
 
+  const categoryAccent = useMemo(
+    () => getCategoryAccent(business?.category),
+    [business?.category]
+  );
+
   useEffect(() => {
     if (deviceCode) {
       void loadTapExperience();
@@ -943,8 +948,6 @@ export default function TapPage({
         .insert({
           device_id:
             deviceData.id,
-          device_code:
-            deviceData.device_code,
           business_id:
             deviceData.business_id,
           interaction_type:
@@ -1201,11 +1204,6 @@ export default function TapPage({
         key === "hotelservices" ||
         key === "hotel_facilities"
     );
-
-  const categoryAccent = useMemo(
-    () => getCategoryAccent(business?.category),
-    [business?.category]
-  );
 
   return (
     <main style={styles.page}>
