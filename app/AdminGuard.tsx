@@ -19,6 +19,8 @@ export default function AdminGuard({ children }: { children: React.ReactNode }) 
     pathname.startsWith("/admin/login/") ||
     pathname.startsWith("/client") ||
     pathname.startsWith("/tap") ||
+    pathname.startsWith("/t/") ||
+    pathname.startsWith("/t") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api/public") ||
     pathname === "/favicon.ico";

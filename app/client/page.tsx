@@ -2145,23 +2145,25 @@ function Overview({
         />
       </section>
 
-      <section className="appointment-overview-card">
-        <div className="appointment-overview-top">
-          <div>
-            <div className="eyebrow">TODAY'S SCHEDULE</div>
-            <h2>{todayAppointments.length} appointments today</h2>
-            <p>Stay ahead of every booking and keep your customer schedule organized.</p>
+      {hasAppointment && (
+        <section className="appointment-overview-card">
+          <div className="appointment-overview-top">
+            <div>
+              <div className="eyebrow">TODAY'S SCHEDULE</div>
+              <h2>{todayAppointments.length} appointments today</h2>
+              <p>Stay ahead of every booking and keep your customer schedule organized.</p>
+            </div>
+            <button type="button" onClick={() => navigate("appointments")}>
+              Open appointments →
+            </button>
           </div>
-          <button type="button" onClick={() => navigate("appointments")}>
-            Open appointments →
-          </button>
-        </div>
-        <div className="appointment-overview-stats">
-          <div><strong>{todayAppointments.length}</strong><span>Today</span></div>
-          <div><strong>{pendingAppointments.length}</strong><span>Pending</span></div>
-          <div><strong>{appointments.length}</strong><span>Total bookings</span></div>
-        </div>
-      </section>
+          <div className="appointment-overview-stats">
+            <div><strong>{todayAppointments.length}</strong><span>Today</span></div>
+            <div><strong>{pendingAppointments.length}</strong><span>Pending</span></div>
+            <div><strong>{appointments.length}</strong><span>Total bookings</span></div>
+          </div>
+        </section>
+      )}
 
       <section className="section">
         <div className="section-heading">

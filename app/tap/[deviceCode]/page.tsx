@@ -943,31 +943,25 @@ export default function TapPage({
       // TAP ANALYTICS
       // ====================================================
 
-      void supabase
-        .from("interactions")
-        .insert({
-          device_id:
-            deviceData.id,
-          business_id:
-            deviceData.business_id,
-          interaction_type:
-            "nfc_tap",
-        })
-        .then(
-          ({
-            error:
-              interactionError,
-          }) => {
-            if (
-              interactionError
-            ) {
-              console.error(
-                "Unable to record interaction:",
-                interactionError
-              );
-            }
+      void (async () => {
+        try {
+          const { error: interactionError } = await supabase
+            .from("interactions")
+            .insert({
+              device_id: deviceData.id,
+              business_id: deviceData.business_id,
+              interaction_type: "nfc_tap",
+            });
+
+          if (interactionError) {
+            console.error("[TAPX Analytics] Unable to record interaction:", interactionError);
+          } else {
+            console.log("[TAPX Analytics] Interaction successfully recorded.");
           }
-        );
+        } catch (err) {
+          console.error("[TAPX Analytics] Interaction recording exception:", err);
+        }
+      })();
     } catch (err) {
       console.error(
         "TAPX customer experience error:",
