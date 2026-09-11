@@ -576,34 +576,47 @@ export default function TapPage() {
       const currentDay = daysMap[now.getDay()];
       const currentHHMM = now.toTimeString().slice(0, 5);
 
-      const validOffers = configuredOffers.filter((item: any): item is OfferItem => {
-        if (!item || typeof item !== "object") return false;
-        const name = String(item.name || item.title || "").trim();
-        if (!name) return false;
+      const validOffers: OfferItem[] = configuredOffers
+        .filter((item: any) => {
+          if (!item || typeof item !== "object") return false;
+          const nameStr = String(item.name || item.title || "").trim();
+          if (!nameStr) return false;
 
-        if (item.start_date && String(item.start_date).trim()) {
-          if (todayYMD < String(item.start_date).trim()) return false;
-        }
+          if (item.start_date && String(item.start_date).trim()) {
+            if (todayYMD < String(item.start_date).trim()) return false;
+          }
 
-        if (item.end_date && String(item.end_date).trim()) {
-          if (todayYMD > String(item.end_date).trim()) return false;
-        }
+          if (item.end_date && String(item.end_date).trim()) {
+            if (todayYMD > String(item.end_date).trim()) return false;
+          }
 
-        if (Array.isArray(item.active_days) && item.active_days.length > 0) {
-          const normalizedDays = item.active_days.map((d: any) => String(d).toLowerCase().trim().slice(0, 3));
-          if (!normalizedDays.includes(currentDay)) return false;
-        }
+          if (Array.isArray(item.active_days) && item.active_days.length > 0) {
+            const normalizedDays = item.active_days.map((d: any) => String(d).toLowerCase().trim().slice(0, 3));
+            if (!normalizedDays.includes(currentDay)) return false;
+          }
 
-        if (item.active_time_start && String(item.active_time_start).trim()) {
-          if (currentHHMM < String(item.active_time_start).trim()) return false;
-        }
+          if (item.active_time_start && String(item.active_time_start).trim()) {
+            if (currentHHMM < String(item.active_time_start).trim()) return false;
+          }
 
-        if (item.active_time_end && String(item.active_time_end).trim()) {
-          if (currentHHMM > String(item.active_time_end).trim()) return false;
-        }
+          if (item.active_time_end && String(item.active_time_end).trim()) {
+            if (currentHHMM > String(item.active_time_end).trim()) return false;
+          }
 
-        return true;
-      });
+          return true;
+        })
+        .map((item: any) => ({
+          id: String(item.id || `offer_${Math.random()}`),
+          name: String(item.name || item.title || "Special Offer").trim(),
+          description: item.description ? String(item.description).trim() : undefined,
+          code: item.code ? String(item.code).trim() : undefined,
+          discount: item.discount ? String(item.discount).trim() : undefined,
+          start_date: item.start_date || undefined,
+          end_date: item.end_date || undefined,
+          active_days: Array.isArray(item.active_days) ? item.active_days : undefined,
+          active_time_start: item.active_time_start || undefined,
+          active_time_end: item.active_time_end || undefined,
+        }));
 
       setOfferItems(validOffers);
 
