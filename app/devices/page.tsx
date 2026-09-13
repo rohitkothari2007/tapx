@@ -536,7 +536,7 @@ export default function DevicesPage() {
   const pendingRequestsCount = hardwareRequests.filter((r) => r.status === "pending").length;
 
   return (
-    <main style={styles.page} className="tapx-page-enter">
+    <main style={styles.page}>
       <div style={styles.container}>
         {/* HEADER */}
         <div style={styles.header}>
@@ -552,7 +552,6 @@ export default function DevicesPage() {
             <button
               type="button"
               onClick={() => setShowRequestsDrawer(true)}
-              className="tapx-focusable active:scale-[0.98] transition"
               style={{ ...styles.secondaryButton, position: "relative" }}
             >
               📥 Hardware Requests
@@ -578,7 +577,6 @@ export default function DevicesPage() {
                 <button
                   type="button"
                   onClick={() => setShowBulkAssignModal(true)}
-                  className="tapx-focusable active:scale-[0.98] transition"
                   style={{ ...styles.primaryButton, background: "#2563eb" }}
                 >
                   ⚡ Bulk Assign ({selectedDeviceIds.length})
@@ -592,7 +590,6 @@ export default function DevicesPage() {
                       devices.filter((d) => selectedDeviceIds.includes(d.id))
                     )
                   }
-                  className="tapx-focusable active:scale-[0.98] transition"
                   style={styles.secondaryButton}
                 >
                   {bulkExporting ? "Zipping..." : `📦 Export QR ZIP (${selectedDeviceIds.length})`}
@@ -607,7 +604,6 @@ export default function DevicesPage() {
                 setError("");
                 setSuccess("");
               }}
-              className="tapx-focusable active:scale-[0.98] transition"
               style={styles.primaryButton}
             >
               + Provision Devices
@@ -617,12 +613,12 @@ export default function DevicesPage() {
 
         {/* MESSAGES */}
         {error && (
-          <div style={styles.errorBox} className="tapx-toast-enter">
+          <div style={styles.errorBox}>
             <strong>Notice:</strong> {error}
           </div>
         )}
 
-        {success && <div style={styles.successBox} className="tapx-toast-enter">✓ {success}</div>}
+        {success && <div style={styles.successBox}>✓ {success}</div>}
 
         {/* INVENTORY CARD */}
         <section style={styles.card}>
@@ -635,7 +631,6 @@ export default function DevicesPage() {
                 setPage(1);
               }}
               placeholder="Search code, label, location..."
-              className="tapx-focusable"
               style={styles.searchInput}
             />
 
@@ -645,7 +640,6 @@ export default function DevicesPage() {
                 setStatusFilter(e.target.value);
                 setPage(1);
               }}
-              className="tapx-focusable"
               style={styles.filterSelect}
             >
               <option value="all">All Devices ({totalCount})</option>
@@ -659,7 +653,6 @@ export default function DevicesPage() {
               type="button"
               disabled={bulkExporting || devices.length === 0}
               onClick={() => exportQrBatch(devices)}
-              className="tapx-focusable active:scale-[0.98] transition"
               style={styles.secondaryButton}
               title="Download QR codes for currently loaded devices"
             >
@@ -668,10 +661,9 @@ export default function DevicesPage() {
           </div>
 
           {loading ? (
-            <div style={{ padding: "24px" }} className="space-y-3">
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <div key={i} className="h-14 w-full tapx-skeleton" />
-              ))}
+            <div style={styles.emptyState}>
+              <div style={styles.loadingSpinner}>⟳</div>
+              <div>Loading TAPX Device Inventory...</div>
             </div>
           ) : devices.length === 0 ? (
             <div style={styles.emptyState}>
@@ -708,7 +700,7 @@ export default function DevicesPage() {
                 </thead>
 
                 <tbody>
-                  {devices.map((device, index) => {
+                  {devices.map((device) => {
                     const isSelected = selectedDeviceIds.includes(device.id);
                     const businessName = getBusinessName(device.business_id);
                     const isAssigned = Boolean(device.business_id);
@@ -716,11 +708,9 @@ export default function DevicesPage() {
                     return (
                       <tr
                         key={device.id}
-                        className="tapx-stagger-item transition"
                         style={{
                           background: isSelected ? "#eff6ff" : "transparent",
-                          "--stagger-index": index,
-                        } as React.CSSProperties}
+                        }}
                       >
                         <td style={styles.td}>
                           <input

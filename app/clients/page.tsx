@@ -356,7 +356,6 @@ export default function ClientsPage() {
 
   return (
     <main
-      className="tapx-page-enter"
       style={{
         minHeight: "100vh",
         background: "#f5f7fb",
@@ -381,7 +380,6 @@ export default function ClientsPage() {
           <button
             type="button"
             onClick={() => router.push("/")}
-            className="tapx-focusable"
             style={{
               border: "none",
               background: "transparent",
@@ -402,7 +400,6 @@ export default function ClientsPage() {
               fontWeight: 700,
               margin: 0,
               color: "#111827",
-              letterSpacing: "-0.02em",
             }}
           >
             Clients
@@ -431,7 +428,6 @@ export default function ClientsPage() {
           <button
             type="button"
             onClick={() => router.push("/")}
-            className="tapx-focusable active:scale-[0.98] transition"
             style={{
               border: "1px solid #d1d5db",
               background: "white",
@@ -449,7 +445,6 @@ export default function ClientsPage() {
           <button
             type="button"
             onClick={() => router.push("/clients/add")}
-            className="tapx-focusable active:scale-[0.98] transition"
             style={{
               border: "none",
               background: "#111827",
@@ -468,7 +463,6 @@ export default function ClientsPage() {
             type="button"
             onClick={loadClients}
             disabled={loading}
-            className="tapx-focusable active:scale-[0.98] transition"
             style={{
               border: "1px solid #d1d5db",
               background: "#f8fafc",
@@ -602,10 +596,30 @@ export default function ClientsPage() {
 
         {/* Loading */}
         {loading ? (
-          <div style={{ padding: "24px" }} className="space-y-3">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="h-16 w-full tapx-skeleton" />
-            ))}
+          <div
+            style={{
+              padding: "60px 30px",
+              textAlign: "center",
+              color: "#64748b",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "30px",
+                marginBottom: "10px",
+              }}
+            >
+              ⚡
+            </div>
+
+            <div
+              style={{
+                fontWeight: 600,
+                color: "#334155",
+              }}
+            >
+              Loading clients...
+            </div>
           </div>
         ) : businesses.length === 0 ? (
           /* Empty */
@@ -694,7 +708,7 @@ export default function ClientsPage() {
               </thead>
 
               <tbody>
-                {businesses.map((business, index) => {
+                {businesses.map((business) => {
                   const deviceCount =
                     getDeviceCount(business.id);
 
@@ -717,12 +731,10 @@ export default function ClientsPage() {
                   return (
                     <tr
                       key={business.id}
-                      className="tapx-stagger-item hover:bg-gray-50/70 transition"
                       style={{
                         borderTop:
                           "1px solid #e5e7eb",
-                        "--stagger-index": index,
-                      } as React.CSSProperties}
+                      }}
                     >
                       {/* =================================================
                           BUSINESS
@@ -1472,32 +1484,8 @@ function StatCard({
   title: string;
   value: number;
 }) {
-  const [displayValue, setDisplayValue] = useState(0);
-
-  useEffect(() => {
-    let startTimestamp: number | null = null;
-    const duration = 650;
-
-    const step = (timestamp: number) => {
-      if (!startTimestamp) startTimestamp = timestamp;
-      const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-      const easeOutQuad = 1 - (1 - progress) * (1 - progress);
-      setDisplayValue(Math.floor(easeOutQuad * value));
-
-      if (progress < 1) {
-        window.requestAnimationFrame(step);
-      } else {
-        setDisplayValue(value);
-      }
-    };
-
-    const handle = window.requestAnimationFrame(step);
-    return () => window.cancelAnimationFrame(handle);
-  }, [value]);
-
   return (
     <div
-      className="tapx-card-hover"
       style={{
         background: "white",
         border: "1px solid #e5e7eb",
@@ -1510,7 +1498,6 @@ function StatCard({
           color: "#64748b",
           margin: 0,
           fontSize: "14px",
-          fontWeight: 500,
         }}
       >
         {title}
@@ -1521,10 +1508,9 @@ function StatCard({
           fontSize: "30px",
           margin: "10px 0 0",
           color: "#111827",
-          fontWeight: 700,
         }}
       >
-        {displayValue.toLocaleString()}
+        {value}
       </h2>
     </div>
   );

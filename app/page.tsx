@@ -439,7 +439,7 @@ export default function Home() {
             MAIN
         ====================================================== */}
 
-        <main className="flex-1 min-w-0 tapx-page-enter">
+        <main className="flex-1 min-w-0">
 
           {/* ===================================================
               TOP BAR
@@ -495,7 +495,7 @@ export default function Home() {
 
               <div>
 
-                <h1 className="text-3xl font-bold tracking-tight">
+                <h1 className="text-3xl font-bold">
                   Dashboard
                 </h1>
 
@@ -514,7 +514,7 @@ export default function Home() {
                   onClick={() =>
                     router.push("/clients/add")
                   }
-                  className="px-4 py-3 rounded-lg bg-gray-900 text-white text-sm font-semibold hover:bg-gray-800 tapx-focusable active:scale-[0.98] transition"
+                  className="px-4 py-3 rounded-lg bg-gray-900 text-white text-sm font-semibold hover:bg-gray-800 transition"
                 >
                   + Add Client
                 </button>
@@ -524,7 +524,7 @@ export default function Home() {
                   onClick={() =>
                     router.push("/devices")
                   }
-                  className="px-4 py-3 rounded-lg bg-white border border-gray-200 text-gray-800 text-sm font-semibold hover:bg-gray-50 tapx-focusable active:scale-[0.98] transition"
+                  className="px-4 py-3 rounded-lg bg-white border border-gray-200 text-gray-800 text-sm font-semibold hover:bg-gray-50 transition"
                 >
                   + Manage Devices
                 </button>
@@ -644,7 +644,7 @@ export default function Home() {
                     onClick={() =>
                       router.push("/clients")
                     }
-                    className="text-sm text-blue-600 font-medium hover:text-blue-800 tapx-focusable"
+                    className="text-sm text-blue-600 font-medium hover:text-blue-800"
                   >
                     View all →
                   </button>
@@ -655,10 +655,8 @@ export default function Home() {
 
                   {loadingClients ? (
 
-                    <div className="space-y-3">
-                      {[1, 2, 3, 4].map((i) => (
-                        <div key={i} className="h-14 w-full tapx-skeleton" />
-                      ))}
+                    <div className="text-sm text-gray-500">
+                      Loading clients...
                     </div>
 
                   ) : clients.length === 0 ? (
@@ -684,7 +682,7 @@ export default function Home() {
                             "/clients/add"
                           )
                         }
-                        className="px-4 py-2.5 rounded-lg bg-gray-900 text-white text-sm font-semibold hover:bg-gray-800 tapx-focusable active:scale-[0.98] transition"
+                        className="px-4 py-2.5 rounded-lg bg-gray-900 text-white text-sm font-semibold"
                       >
                         + Add Client
                       </button>
@@ -697,7 +695,7 @@ export default function Home() {
 
                       {clients
                         .slice(0, 8)
-                        .map((client, index) => (
+                        .map((client) => (
 
                           <button
                             key={client.id}
@@ -707,8 +705,7 @@ export default function Home() {
                                 `/clients/${client.id}`
                               )
                             }
-                            className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 tapx-focusable tapx-stagger-item text-left transition"
-                            style={{ "--stagger-index": index } as React.CSSProperties}
+                            className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50 transition text-left"
                           >
 
                             <div className="flex items-center gap-4">
@@ -791,7 +788,7 @@ export default function Home() {
                       onClick={() =>
                         router.push("/devices")
                       }
-                      className="text-sm text-blue-600 font-medium hover:text-blue-800 tapx-focusable"
+                      className="text-sm text-blue-600 font-medium"
                     >
                       Manage
                     </button>
@@ -872,7 +869,7 @@ export default function Home() {
                                   Boolean(
                                     device.business_id
                                   )
-                                ).length /
+                              ).length /
                                 devices.length) *
                                 100
                             )}%`
@@ -885,7 +882,7 @@ export default function Home() {
                     <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden">
 
                       <div
-                        className="h-full rounded-full bg-blue-500 transition-all duration-700 ease-out"
+                        className="h-full rounded-full bg-blue-500"
                         style={{
                           width:
                             devices.length > 0
@@ -938,7 +935,7 @@ export default function Home() {
                   onClick={() =>
                     router.push("/devices")
                   }
-                  className="text-sm text-blue-600 font-medium hover:text-blue-800 tapx-focusable"
+                  className="text-sm text-blue-600 font-medium"
                 >
                   Open Device Inventory →
                 </button>
@@ -949,10 +946,8 @@ export default function Home() {
 
                 {loadingDevices ? (
 
-                  <div className="p-6 space-y-3">
-                    {[1, 2, 3, 4].map((i) => (
-                      <div key={i} className="h-12 w-full tapx-skeleton" />
-                    ))}
+                  <div className="p-6 text-sm text-gray-500">
+                    Loading devices...
                   </div>
 
                 ) : devices.length === 0 ? (
@@ -972,7 +967,7 @@ export default function Home() {
                       onClick={() =>
                         router.push("/devices")
                       }
-                      className="mt-4 px-4 py-2 rounded-lg bg-gray-900 text-white text-sm font-semibold hover:bg-gray-800 tapx-focusable active:scale-[0.98] transition"
+                      className="mt-4 px-4 py-2 rounded-lg bg-gray-900 text-white text-sm font-semibold"
                     >
                       Add Device
                     </button>
@@ -987,27 +982,27 @@ export default function Home() {
 
                       <tr>
 
-                        <th className="text-left px-6 py-4 text-xs text-gray-500 font-semibold">
+                        <th className="text-left px-6 py-4 text-xs text-gray-500">
                           DEVICE
                         </th>
 
-                        <th className="text-left px-6 py-4 text-xs text-gray-500 font-semibold">
+                        <th className="text-left px-6 py-4 text-xs text-gray-500">
                           BUSINESS
                         </th>
 
-                        <th className="text-left px-6 py-4 text-xs text-gray-500 font-semibold">
+                        <th className="text-left px-6 py-4 text-xs text-gray-500">
                           TYPE
                         </th>
 
-                        <th className="text-left px-6 py-4 text-xs text-gray-500 font-semibold">
+                        <th className="text-left px-6 py-4 text-xs text-gray-500">
                           LOCATION
                         </th>
 
-                        <th className="text-left px-6 py-4 text-xs text-gray-500 font-semibold">
+                        <th className="text-left px-6 py-4 text-xs text-gray-500">
                           STATUS
                         </th>
 
-                        <th className="text-right px-6 py-4 text-xs text-gray-500 font-semibold">
+                        <th className="text-right px-6 py-4 text-xs text-gray-500">
                           ACTION
                         </th>
 
@@ -1019,12 +1014,11 @@ export default function Home() {
 
                       {devices
                         .slice(0, 8)
-                        .map((device, index) => (
+                        .map((device) => (
 
                           <tr
                             key={device.id}
-                            className="border-t border-gray-100 hover:bg-gray-50/70 tapx-stagger-item transition"
-                            style={{ "--stagger-index": index } as React.CSSProperties}
+                            className="border-t border-gray-100"
                           >
 
                             <td className="px-6 py-4">
@@ -1173,45 +1167,6 @@ export default function Home() {
    METRIC
 ============================================================ */
 
-/* ============================================================
-   ANIMATED NUMBER (Count-Up Animation)
-============================================================ */
-
-function AnimatedNumber({ value }: { value: string | number }) {
-  const numValue = typeof value === "number" ? value : parseInt(value, 10);
-  const isNumeric = !isNaN(numValue);
-  const [displayValue, setDisplayValue] = useState(0);
-
-  useEffect(() => {
-    if (!isNumeric) return;
-    let startTimestamp: number | null = null;
-    const duration = 650;
-
-    const step = (timestamp: number) => {
-      if (!startTimestamp) startTimestamp = timestamp;
-      const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-      const easeOutQuad = 1 - (1 - progress) * (1 - progress);
-      setDisplayValue(Math.floor(easeOutQuad * numValue));
-
-      if (progress < 1) {
-        window.requestAnimationFrame(step);
-      } else {
-        setDisplayValue(numValue);
-      }
-    };
-
-    const handle = window.requestAnimationFrame(step);
-    return () => window.cancelAnimationFrame(handle);
-  }, [numValue, isNumeric]);
-
-  if (!isNumeric) return <>{value}</>;
-  return <>{displayValue.toLocaleString()}</>;
-}
-
-/* ============================================================
-   METRIC CARD
-============================================================ */
-
 function Metric({
   title,
   value,
@@ -1222,14 +1177,14 @@ function Metric({
   description: string;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6 tapx-card-hover">
+    <div className="bg-white rounded-xl border border-gray-200 p-6">
 
-      <p className="text-sm text-gray-500 font-medium">
+      <p className="text-sm text-gray-500">
         {title}
       </p>
 
-      <p className="text-3xl font-bold mt-3 tracking-tight text-gray-900">
-        <AnimatedNumber value={value} />
+      <p className="text-3xl font-bold mt-3">
+        {value}
       </p>
 
       <p className="text-xs text-gray-500 mt-2">
@@ -1252,14 +1207,14 @@ function MiniStat({
   value: string;
 }) {
   return (
-    <div className="rounded-xl bg-gray-50/80 border border-gray-100 p-4 tapx-card-hover">
+    <div className="rounded-xl bg-gray-50 border border-gray-100 p-4">
 
       <p className="text-xs text-gray-500">
         {label}
       </p>
 
-      <p className="text-2xl font-bold mt-1 text-gray-900">
-        <AnimatedNumber value={value} />
+      <p className="text-2xl font-bold mt-1">
+        {value}
       </p>
 
     </div>
