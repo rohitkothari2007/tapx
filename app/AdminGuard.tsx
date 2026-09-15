@@ -17,6 +17,7 @@ export default function AdminGuard({ children }: { children: React.ReactNode }) 
   const isExemptRoute =
     pathname === "/admin/login" ||
     pathname.startsWith("/admin/login/") ||
+    pathname.startsWith("/devices") ||
     pathname.startsWith("/client") ||
     pathname.startsWith("/tap") ||
     pathname.startsWith("/t/") ||

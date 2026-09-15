@@ -98,166 +98,190 @@ export default function Home() {
      LOAD DASHBOARD DATA
   ============================================================ */
 
-  useEffect(() => {
-    async function loadDashboard() {
-      setLoadingClients(true);
-      setLoadingDevices(true);
+  async function loadDashboard() {
+    setLoadingClients(true);
+    setLoadingDevices(true);
 
-      setClientError(null);
-      setDeviceError(null);
+    setClientError(null);
+    setDeviceError(null);
 
-      const [
-        {
-          data: businessesData,
-          error: businessesError,
-        },
-        {
-          data: devicesData,
-          error: devicesError,
-        },
-      ] = await Promise.all([
-        supabase
-          .from("businesses")
-          .select("*")
-          .order("created_at", {
-            ascending: false,
-          }),
+    const [
+      {
+        data: businessesData,
+        error: businessesError,
+      },
+      {
+        data: devicesData,
+        error: devicesError,
+      },
+    ] = await Promise.all([
+      supabase
+        .from("businesses")
+        .select("*")
+        .order("created_at", {
+          ascending: false,
+        }),
 
-        supabase
-          .from("devices")
-          .select("*")
-          .order("created_at", {
-            ascending: false,
-          }),
-      ]);
+      supabase
+        .from("devices")
+        .select("*")
+        .order("created_at", {
+          ascending: false,
+        }),
+    ]);
 
-      /* ========================================================
-         BUSINESSES
-      ======================================================== */
+    if (businessesError) {
+      console.error(
+        "Dashboard businesses error:",
+        businessesError
+      );
 
-      if (businessesError) {
-        console.error(
-          "Dashboard businesses error:",
-          businessesError
-        );
-
-        setClientError(businessesError.message);
-        setClients([]);
-      }
-
-      /* ========================================================
-         DEVICES
-      ======================================================== */
-
-      if (devicesError) {
-        console.error(
-          "Dashboard devices error:",
-          devicesError
-        );
-
-        setDeviceError(devicesError.message);
-        setDevices([]);
-      }
-
-      /* ========================================================
-         FORMAT CLIENTS
-      ======================================================== */
-
-      if (!businessesError && businessesData) {
-        const formattedClients: Client[] =
-          businessesData.map((business: any) => {
-            const businessDevices =
-              (devicesData || []).filter(
-                (device: any) =>
-                  device.business_id === business.id
-              );
-
-            return {
-              id: business.id,
-
-              name:
-                business.name ||
-                "Unnamed Business",
-
-              category:
-                business.category ||
-                "Business",
-
-              location:
-                [
-                  business.city,
-                  business.state,
-                ]
-                  .filter(Boolean)
-                  .join(", ") ||
-                "Location not available",
-
-              devices: businessDevices.length,
-
-              status:
-                business.status ||
-                "active",
-            };
-          });
-
-        setClients(formattedClients);
-      }
-
-      /* ========================================================
-         FORMAT DEVICES
-      ======================================================== */
-
-      if (!devicesError && devicesData) {
-        const formattedDevices: Device[] =
-          devicesData.map((device: any) => {
-            const business =
-              (businessesData || []).find(
-                (item: any) =>
-                  item.id === device.business_id
-              );
-
-            return {
-              id: device.id,
-
-              device_code:
-                device.device_code ||
-                "Unknown",
-
-              business_id:
-                device.business_id ||
-                null,
-
-              device_type:
-                device.device_type ||
-                "Unknown",
-
-              location:
-                device.location ||
-                "Not specified",
-
-              status:
-                device.status ||
-                "unknown",
-
-              created_at:
-                device.created_at,
-
-              business_name:
-                business?.name ||
-                "Available",
-
-              taps: 0,
-            };
-          });
-
-        setDevices(formattedDevices);
-      }
-
-      setLoadingClients(false);
-      setLoadingDevices(false);
+      setClientError(businessesError.message);
+      setClients([]);
     }
 
+    if (devicesError) {
+      console.error(
+        "Dashboard devices error:",
+        devicesError
+      );
+
+      setDeviceError(devicesError.message);
+      setDevices([]);
+    }
+
+    if (!businessesError && businessesData) {
+      const formattedClients: Client[] =
+        businessesData.map((business: any) => {
+          const businessDevices =
+            (devicesData || []).filter(
+              (device: any) =>
+                device.business_id === business.id
+            );
+
+          return {
+            id: business.id,
+
+            name:
+              business.name ||
+              "Unnamed Business",
+
+            category:
+              business.category ||
+              "Business",
+
+            location:
+              [
+                business.city,
+                business.state,
+              ]
+                .filter(Boolean)
+                .join(", ") ||
+              "Location not available",
+
+            devices: businessDevices.length,
+
+            status:
+              business.status ||
+              "active",
+          };
+        });
+
+      setClients(formattedClients);
+    }
+
+    if (!devicesError && devicesData) {
+      const formattedDevices: Device[] =
+        devicesData.map((device: any) => {
+          const business =
+            (businessesData || []).find(
+              (item: any) =>
+                item.id === device.business_id
+            );
+
+          return {
+            id: device.id,
+
+            device_code:
+              device.device_code ||
+              "Unknown",
+
+            business_id:
+              device.business_id ||
+              null,
+
+            device_type:
+              device.device_type ||
+              "Unknown",
+
+            location:
+              device.location ||
+              "Not specified",
+
+            status:
+              device.status ||
+              "unknown",
+
+            created_at:
+              device.created_at,
+
+            business_name:
+              business?.name ||
+              "Available",
+
+            taps: 0,
+          };
+        });
+
+      setDevices(formattedDevices);
+    }
+
+    setLoadingClients(false);
+    setLoadingDevices(false);
+  }
+
+  const [highlightedWidgets, setHighlightedWidgets] = useState<Record<string, boolean>>({});
+
+  function triggerHighlight(key: string) {
+    setHighlightedWidgets((prev) => ({ ...prev, [key]: true }));
+    setTimeout(() => {
+      setHighlightedWidgets((prev) => ({ ...prev, [key]: false }));
+    }, 1800);
+  }
+
+  useEffect(() => {
     loadDashboard();
+
+    // Push-based Supabase Realtime Channel
+    const channel = supabase
+      .channel("admin_realtime_dashboard")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "interactions" },
+        () => {
+          triggerHighlight("taps");
+          loadDashboard();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tapx_orders" },
+        () => {
+          triggerHighlight("orders");
+          loadDashboard();
+        }
+      )
+      .subscribe();
+
+    // 25-second Auto-Polling Interval for Lower-Urgency Aggregates
+    const interval = setInterval(() => {
+      loadDashboard();
+    }, 25000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, []);
 
   /* ============================================================
@@ -609,6 +633,7 @@ export default function Home() {
                     : totalInteractions.toString()
                 }
                 description="Recorded TAPX interactions"
+                highlight={highlightedWidgets["taps"]}
               />
 
             </div>
@@ -1171,19 +1196,27 @@ function Metric({
   title,
   value,
   description,
+  highlight,
 }: {
   title: string;
   value: string;
   description: string;
+  highlight?: boolean;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
+    <div
+      className={`bg-white rounded-xl border p-6 transition-all duration-500 ${
+        highlight
+          ? "border-amber-400 bg-amber-50/50 shadow-md ring-2 ring-amber-400/50 scale-[1.02]"
+          : "border-gray-200"
+      }`}
+    >
 
       <p className="text-sm text-gray-500">
         {title}
       </p>
 
-      <p className="text-3xl font-bold mt-3">
+      <p className={`text-3xl font-bold mt-3 transition-colors duration-500 ${highlight ? "text-amber-600" : "text-gray-900"}`}>
         {value}
       </p>
 

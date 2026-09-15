@@ -316,7 +316,7 @@ export default function ClientPage() {
     try {
       const { error: updateErr } = await supabase
         .from("devices")
-        .update({ business_id: null, status: "unassigned" })
+        .update({ business_id: null, status: "unassigned", assigned_at: null })
         .eq("id", device.id);
 
       if (updateErr) throw updateErr;

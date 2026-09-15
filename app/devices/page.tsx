@@ -15,6 +15,7 @@ type Device = {
   assigned_at: string | null;
   status: string | null;
   created_at: string | null;
+  updated_at?: string | null;
 };
 
 type Business = {
@@ -92,16 +93,39 @@ export default function DevicesPage() {
   const [showRequestsDrawer, setShowRequestsDrawer] = useState(false);
   const [updatingReqId, setUpdatingReqId] = useState<string | null>(null);
 
-  // Filters & Search
+  // Retire / Delete Modal State
+  const [retireModalDevice, setRetireModalDevice] = useState<Device | null>(null);
+  const [isBulkRetireModalOpen, setIsBulkRetireModalOpen] = useState(false);
+
+  // Filters & Search — DEFAULT VIEW IS ACTIVE (ASSIGNED) DEVICES
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("active");
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
   useEffect(() => {
     loadBusinessesAndRequests();
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab");
+      if (tabParam && ["active", "unassigned", "all", "retired"].includes(tabParam)) {
+        setStatusFilter(tabParam);
+      }
+      if (params.get("drawer") === "requests") {
+        setShowRequestsDrawer(true);
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("modal") === "retire" && devices.length > 0 && !retireModalDevice) {
+        setRetireModalDevice(devices[0]);
+      }
+    }
+  }, [devices]);
 
   useEffect(() => {
     loadDevicesPage();
@@ -137,12 +161,12 @@ export default function DevicesPage() {
         .from("devices")
         .select("*", { count: "exact" });
 
-      if (statusFilter === "unassigned") {
-        query = query.is("business_id", null).neq("status", "inactive").neq("status", "faulty");
-      } else if (statusFilter === "active") {
-        query = query.not("business_id", "is", null).neq("status", "inactive").neq("status", "faulty");
-      } else if (statusFilter === "inactive" || statusFilter === "faulty") {
-        query = query.eq("status", statusFilter);
+      if (statusFilter === "active") {
+        query = query.not("business_id", "is", null).neq("status", "retired").neq("status", "inactive").neq("status", "faulty");
+      } else if (statusFilter === "unassigned") {
+        query = query.is("business_id", null).neq("status", "retired").neq("status", "inactive").neq("status", "faulty");
+      } else if (statusFilter === "retired") {
+        query = query.or("status.eq.retired,status.eq.inactive,status.eq.faulty");
       }
 
       if (search.trim()) {
@@ -153,9 +177,14 @@ export default function DevicesPage() {
       const from = (page - 1) * pageSize;
       const to = from + pageSize - 1;
 
-      const { data, count, error: fetchError } = await query
-        .order("created_at", { ascending: false })
-        .range(from, to);
+      // Sort assigned devices by assigned_at descending (or created_at fallback)
+      if (statusFilter === "active") {
+        query = query.order("assigned_at", { ascending: false, nullsFirst: false });
+      } else {
+        query = query.order("created_at", { ascending: false });
+      }
+
+      const { data, count, error: fetchError } = await query.range(from, to);
 
       if (fetchError) throw fetchError;
 
@@ -198,7 +227,6 @@ export default function DevicesPage() {
     setSaving(true);
 
     try {
-      // Database collision check
       const { data: existing } = await supabase
         .from("devices")
         .select("id")
@@ -209,7 +237,7 @@ export default function DevicesPage() {
         throw new Error(`Device code ${code} already exists in database.`);
       }
 
-      const { data, error: insertError } = await supabase
+      const { error: insertError } = await supabase
         .from("devices")
         .insert({
           device_code: code,
@@ -217,10 +245,8 @@ export default function DevicesPage() {
           business_id: null,
           device_type: deviceType,
           location: location.trim() || null,
-          status: "available",
-        })
-        .select()
-        .single();
+          status: "unassigned",
+        });
 
       if (insertError) throw insertError;
 
@@ -228,16 +254,11 @@ export default function DevicesPage() {
       setDeviceLabel("");
       setLocation("");
       setShowAddModal(false);
-      setSuccess(`${code} registered in TAPX database inventory.`);
+      setSuccess(`${code} registered in TAPX inventory.`);
       loadDevicesPage();
     } catch (err: any) {
       console.error("Unable to add device:", err);
-      const msg =
-        err?.message ||
-        err?.error_description ||
-        err?.details ||
-        (typeof err === "string" ? err : "Unable to add device.");
-      setError(msg);
+      setError(err?.message || "Unable to add device.");
     } finally {
       setSaving(false);
     }
@@ -273,7 +294,6 @@ export default function DevicesPage() {
     setSaving(true);
 
     try {
-      // Query database to check existing codes in chunk
       const { data: dbExisting } = await supabase
         .from("devices")
         .select("device_code")
@@ -290,7 +310,7 @@ export default function DevicesPage() {
         device_code: code,
         business_id: null,
         device_type: deviceType,
-        status: "available",
+        status: "unassigned",
       }));
 
       const { error: insertError } = await supabase
@@ -343,6 +363,7 @@ export default function DevicesPage() {
             status: "active",
             label: label,
             assigned_at: now,
+            updated_at: now,
           })
           .eq("id", id);
       });
@@ -390,7 +411,7 @@ export default function DevicesPage() {
     }
   }
 
-  // Exact Device Unassign Behavior (resets metadata, preserves device_code)
+  // Unassign Device (returns device to unassigned available pool)
   async function unassignDevice(device: Device) {
     if (!device.business_id) return;
     const businessName = getBusinessName(device.business_id) || "this business";
@@ -406,20 +427,82 @@ export default function DevicesPage() {
         .from("devices")
         .update({
           business_id: null,
-          status: "available",
+          status: "unassigned",
           assigned_at: null,
           label: null,
           location: null,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", device.id);
 
       if (updateError) throw updateError;
 
-      setSuccess(`${device.device_code} unassigned and returned to inventory.`);
+      setSuccess(`${device.device_code} unassigned and returned to inventory pool.`);
       loadDevicesPage();
     } catch (err) {
       console.error("Unassign error:", err);
       setError(err instanceof Error ? err.message : "Unable to unassign device.");
+    }
+  }
+
+  // Retire Single Device (permanent removal from active inventory while preserving historic logs)
+  async function executeRetireDevice() {
+    if (!retireModalDevice) return;
+    setSaving(true);
+    setError("");
+
+    try {
+      const { error: updateError } = await supabase
+        .from("devices")
+        .update({
+          status: "retired",
+          business_id: null,
+          assigned_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", retireModalDevice.id);
+
+      if (updateError) throw updateError;
+
+      setSuccess(`Device ${retireModalDevice.device_code} retired permanently.`);
+      setRetireModalDevice(null);
+      loadDevicesPage();
+    } catch (err) {
+      console.error("Retire device error:", err);
+      setError(err instanceof Error ? err.message : "Unable to retire device.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Retire Bulk Selected Devices
+  async function executeBulkRetire() {
+    if (selectedDeviceIds.length === 0) return;
+    setSaving(true);
+    setError("");
+
+    try {
+      const { error: updateError } = await supabase
+        .from("devices")
+        .update({
+          status: "retired",
+          business_id: null,
+          assigned_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .in("id", selectedDeviceIds);
+
+      if (updateError) throw updateError;
+
+      setSuccess(`Retired ${selectedDeviceIds.length} device(s) permanently.`);
+      setIsBulkRetireModalOpen(false);
+      setSelectedDeviceIds([]);
+      loadDevicesPage();
+    } catch (err) {
+      console.error("Bulk retire error:", err);
+      setError(err instanceof Error ? err.message : "Unable to retire devices.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -548,7 +631,7 @@ export default function DevicesPage() {
             </p>
           </div>
 
-          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
             <button
               type="button"
               onClick={() => setShowRequestsDrawer(true)}
@@ -572,31 +655,6 @@ export default function DevicesPage() {
               )}
             </button>
 
-            {selectedDeviceIds.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setShowBulkAssignModal(true)}
-                  style={{ ...styles.primaryButton, background: "#2563eb" }}
-                >
-                  ⚡ Bulk Assign ({selectedDeviceIds.length})
-                </button>
-
-                <button
-                  type="button"
-                  disabled={bulkExporting}
-                  onClick={() =>
-                    exportQrBatch(
-                      devices.filter((d) => selectedDeviceIds.includes(d.id))
-                    )
-                  }
-                  style={styles.secondaryButton}
-                >
-                  {bulkExporting ? "Zipping..." : `📦 Export QR ZIP (${selectedDeviceIds.length})`}
-                </button>
-              </>
-            )}
-
             <button
               type="button"
               onClick={() => {
@@ -611,6 +669,53 @@ export default function DevicesPage() {
           </div>
         </div>
 
+        {/* BULK ACTION TOOLBAR BAR - VISIBLE IMMEDIATELY WHEN AT LEAST 1 DEVICE IS CHECKED */}
+        {selectedDeviceIds.length > 0 && (
+          <div style={styles.bulkToolbar}>
+            <div style={styles.bulkToolbarLabel}>
+              <strong>{selectedDeviceIds.length}</strong> device(s) selected
+            </div>
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => setShowBulkAssignModal(true)}
+                style={{ ...styles.primaryButton, background: "#2563eb" }}
+              >
+                ⚡ Bulk Assign ({selectedDeviceIds.length})
+              </button>
+
+              <button
+                type="button"
+                disabled={bulkExporting}
+                onClick={() =>
+                  exportQrBatch(
+                    devices.filter((d) => selectedDeviceIds.includes(d.id))
+                  )
+                }
+                style={styles.secondaryButton}
+              >
+                {bulkExporting ? "Zipping..." : `📦 Export QR ZIP (${selectedDeviceIds.length})`}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsBulkRetireModalOpen(true)}
+                style={styles.smallDangerButton}
+              >
+                🗑️ Retire Selected ({selectedDeviceIds.length})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedDeviceIds([])}
+                style={{ ...styles.secondaryButton, padding: "8px 12px", fontSize: "12px" }}
+              >
+                Clear Selection
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* MESSAGES */}
         {error && (
           <div style={styles.errorBox}>
@@ -622,6 +727,65 @@ export default function DevicesPage() {
 
         {/* INVENTORY CARD */}
         <section style={styles.card}>
+          {/* TAB FILTERS TOGGLE */}
+          <div style={styles.tabToggleHeader}>
+            <button
+              type="button"
+              onClick={() => {
+                setStatusFilter("active");
+                setPage(1);
+              }}
+              style={{
+                ...styles.tabToggleBtn,
+                ...(statusFilter === "active" ? styles.tabToggleBtnActive : {}),
+              }}
+            >
+              Assigned Devices {statusFilter === "active" ? `(${totalCount})` : ""}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setStatusFilter("unassigned");
+                setPage(1);
+              }}
+              style={{
+                ...styles.tabToggleBtn,
+                ...(statusFilter === "unassigned" ? styles.tabToggleBtnActive : {}),
+              }}
+            >
+              Unassigned (Available) {statusFilter === "unassigned" ? `(${totalCount})` : ""}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setStatusFilter("all");
+                setPage(1);
+              }}
+              style={{
+                ...styles.tabToggleBtn,
+                ...(statusFilter === "all" ? styles.tabToggleBtnActive : {}),
+              }}
+            >
+              All Devices {statusFilter === "all" ? `(${totalCount})` : ""}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setStatusFilter("retired");
+                setPage(1);
+              }}
+              style={{
+                ...styles.tabToggleBtn,
+                ...(statusFilter === "retired" ? styles.tabToggleBtnActive : {}),
+              }}
+            >
+              Retired / Inactive {statusFilter === "retired" ? `(${totalCount})` : ""}
+            </button>
+          </div>
+
           {/* TOOLBAR */}
           <div style={styles.filters}>
             <input
@@ -633,21 +797,6 @@ export default function DevicesPage() {
               placeholder="Search code, label, location..."
               style={styles.searchInput}
             />
-
-            <select
-              value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value);
-                setPage(1);
-              }}
-              style={styles.filterSelect}
-            >
-              <option value="all">All Devices ({totalCount})</option>
-              <option value="unassigned">Unassigned (Inventory)</option>
-              <option value="active">Active Assigned</option>
-              <option value="inactive">Inactive</option>
-              <option value="faulty">Faulty</option>
-            </select>
 
             <button
               type="button"
@@ -670,7 +819,7 @@ export default function DevicesPage() {
               <div style={styles.emptyIcon}>📡</div>
               <h3 style={styles.emptyTitle}>No Matching Devices</h3>
               <p style={styles.emptyText}>
-                No devices found for this filter/search page.
+                No devices found for this filter tab/search query.
               </p>
             </div>
           ) : (
@@ -693,8 +842,8 @@ export default function DevicesPage() {
                     <th style={styles.th}>Type</th>
                     <th style={styles.th}>Assigned Client</th>
                     <th style={styles.th}>Status</th>
-                    <th style={styles.th}>Assigned Date</th>
-                    <th style={styles.th}>Customer URL</th>
+                    {statusFilter !== "unassigned" && <th style={styles.th}>Assigned Date</th>}
+                    {statusFilter !== "unassigned" && <th style={styles.th}>Customer URL</th>}
                     <th style={styles.th}>Actions</th>
                   </tr>
                 </thead>
@@ -758,29 +907,40 @@ export default function DevicesPage() {
                           <StatusBadge status={device.status} isAssigned={isAssigned} />
                         </td>
 
-                        <td style={styles.td}>
-                          {device.assigned_at ? (
-                            <span style={{ fontSize: "12px", color: "#64748b" }}>
-                              {new Date(device.assigned_at).toLocaleDateString("en-IN", {
-                                day: "2-digit",
-                                month: "short",
-                                year: "numeric",
-                              })}
-                            </span>
-                          ) : (
-                            <span style={{ color: "#94a3b8", fontSize: "12px" }}>—</span>
-                          )}
-                        </td>
+                        {statusFilter !== "unassigned" && (
+                          <td style={styles.td}>
+                            {device.assigned_at || device.updated_at || device.created_at ? (
+                              <span style={{ fontSize: "12px", color: "#334155", fontWeight: 600 }}>
+                                {new Date((device.assigned_at || device.updated_at || device.created_at)!).toLocaleString("en-IN", {
+                                  day: "2-digit",
+                                  month: "short",
+                                  year: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  hour12: true,
+                                })}
+                              </span>
+                            ) : (
+                              <span style={{ color: "#94a3b8", fontSize: "12px" }}>—</span>
+                            )}
+                          </td>
+                        )}
 
-                        <td style={styles.td}>
-                          <button
-                            type="button"
-                            onClick={() => window.open(`/tap/${device.device_code}`, "_blank")}
-                            style={styles.urlButton}
-                          >
-                            /tap/{device.device_code} ↗
-                          </button>
-                        </td>
+                        {statusFilter !== "unassigned" && (
+                          <td style={styles.td}>
+                            {isAssigned ? (
+                              <button
+                                type="button"
+                                onClick={() => window.open(`/tap/${device.device_code}`, "_blank")}
+                                style={styles.urlButton}
+                              >
+                                /tap/{device.device_code} ↗
+                              </button>
+                            ) : (
+                              <span style={{ color: "#94a3b8", fontSize: "12px" }}>—</span>
+                            )}
+                          </td>
+                        )}
 
                         <td style={styles.td}>
                           <div style={styles.actionGroup}>
@@ -807,7 +967,7 @@ export default function DevicesPage() {
                               <button
                                 type="button"
                                 onClick={() => unassignDevice(device)}
-                                style={styles.smallDangerButton}
+                                style={styles.smallButton}
                               >
                                 Unassign
                               </button>
@@ -818,11 +978,20 @@ export default function DevicesPage() {
                                   setSelectedDeviceIds([device.id]);
                                   setShowBulkAssignModal(true);
                                 }}
-                                style={{ ...styles.smallButton, borderColor: "#2563eb", color: "#2563eb" }}
+                                style={{ ...styles.smallButton, borderColor: "#2563eb", color: "#2563eb", fontWeight: 800 }}
                               >
-                                Assign
+                                ⚡ Assign
                               </button>
                             )}
+
+                            <button
+                              type="button"
+                              onClick={() => setRetireModalDevice(device)}
+                              style={styles.smallDangerButton}
+                              title="Retire hardware device permanently"
+                            >
+                              🗑️ Retire
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -881,8 +1050,8 @@ export default function DevicesPage() {
           <div style={{ ...styles.modalContent, maxWidth: "700px" }}>
             <div style={styles.modalHeader}>
               <div>
-                <h3 style={styles.modalTitle}>Persistent Hardware Requests ({hardwareRequests.length})</h3>
-                <p style={styles.modalSubtitle}>Device requests submitted by client portal users.</p>
+                <h3 style={styles.modalTitle}>Hardware Requests ({hardwareRequests.length})</h3>
+                <p style={styles.modalSubtitle}>Device requests submitted by client portal owners.</p>
               </div>
               <button type="button" onClick={() => setShowRequestsDrawer(false)} style={styles.closeButton}>×</button>
             </div>
@@ -900,7 +1069,7 @@ export default function DevicesPage() {
                         <div>
                           <strong style={{ fontSize: "15px", color: "#0f172a" }}>{req.customer_name || "Client"}</strong>
                           <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
-                            Phone: {req.customer_phone || "N/A"} • Submitted {new Date(req.created_at).toLocaleString()}
+                            Contact: {req.customer_phone || "N/A"} • Submitted {new Date(req.created_at).toLocaleString()}
                           </div>
                         </div>
                         <span
@@ -957,6 +1126,84 @@ export default function DevicesPage() {
 
             <div style={styles.modalFooter}>
               <button type="button" onClick={() => setShowRequestsDrawer(false)} style={styles.secondaryButton}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SINGLE RETIRE / DELETE CONFIRMATION MODAL */}
+      {retireModalDevice && (
+        <div style={styles.modalBackdrop}>
+          <div style={{ ...styles.modalContent, maxWidth: "480px" }}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h3 style={{ ...styles.modalTitle, color: "#dc2626" }}>⚠️ Retire Hardware Device</h3>
+                <p style={styles.modalSubtitle}>Confirm permanent hardware retirement</p>
+              </div>
+              <button type="button" onClick={() => setRetireModalDevice(null)} style={styles.closeButton}>×</button>
+            </div>
+
+            <div style={{ padding: "20px" }}>
+              <p style={{ margin: "0 0 12px", fontSize: "14px", color: "#334155", lineHeight: 1.5 }}>
+                Are you sure you want to retire <strong>{retireModalDevice.device_code}</strong> ({retireModalDevice.label || "No Label"})?
+              </p>
+
+              <div style={{ background: "#fff1f2", border: "1px solid #fecaca", borderRadius: "10px", padding: "12px", fontSize: "12px", color: "#9f1239" }}>
+                <strong>Data Preservation Note:</strong> The device code will be permanently marked as <code>retired</code> and unassigned. Its code will not be reused to ensure all past interaction logs and analytics remain completely intact.
+              </div>
+            </div>
+
+            <div style={styles.modalFooter}>
+              <button type="button" onClick={() => setRetireModalDevice(null)} style={styles.secondaryButton}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={executeRetireDevice}
+                style={{ ...styles.primaryButton, background: "#dc2626" }}
+              >
+                {saving ? "Retiring..." : "Permanently Retire Device"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BULK RETIRE CONFIRMATION MODAL */}
+      {isBulkRetireModalOpen && (
+        <div style={styles.modalBackdrop}>
+          <div style={{ ...styles.modalContent, maxWidth: "480px" }}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h3 style={{ ...styles.modalTitle, color: "#dc2626" }}>⚠️ Retire {selectedDeviceIds.length} Selected Devices</h3>
+                <p style={styles.modalSubtitle}>Bulk permanent hardware retirement</p>
+              </div>
+              <button type="button" onClick={() => setIsBulkRetireModalOpen(false)} style={styles.closeButton}>×</button>
+            </div>
+
+            <div style={{ padding: "20px" }}>
+              <p style={{ margin: "0 0 12px", fontSize: "14px", color: "#334155", lineHeight: 1.5 }}>
+                Are you sure you want to retire <strong>{selectedDeviceIds.length}</strong> selected device(s)?
+              </p>
+
+              <div style={{ background: "#fff1f2", border: "1px solid #fecaca", borderRadius: "10px", padding: "12px", fontSize: "12px", color: "#9f1239" }}>
+                <strong>Data Preservation Note:</strong> Selected device codes will be permanently marked as <code>retired</code>. Codes remain retired to protect historic interaction reports.
+              </div>
+            </div>
+
+            <div style={styles.modalFooter}>
+              <button type="button" onClick={() => setIsBulkRetireModalOpen(false)} style={styles.secondaryButton}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={executeBulkRetire}
+                style={{ ...styles.primaryButton, background: "#dc2626" }}
+              >
+                {saving ? "Retiring..." : `Retire ${selectedDeviceIds.length} Devices`}
+              </button>
             </div>
           </div>
         </div>
@@ -1371,8 +1618,11 @@ function StatusBadge({
 }) {
   const norm = (status || "").toLowerCase();
 
+  if (norm === "retired") {
+    return <span style={{ ...styles.statusBadge, background: "#fee2e2", color: "#991b1b" }}>Retired</span>;
+  }
   if (norm === "faulty") {
-    return <span style={{ ...styles.statusBadge, background: "#fee2e2", color: "#991b1b" }}>Faulty</span>;
+    return <span style={{ ...styles.statusBadge, background: "#fef3c7", color: "#b45309" }}>Faulty</span>;
   }
   if (norm === "inactive") {
     return <span style={{ ...styles.statusBadge, background: "#f1f5f9", color: "#64748b" }}>Inactive</span>;
@@ -1400,7 +1650,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: "20px",
-    marginBottom: "24px",
+    marginBottom: "20px",
     flexWrap: "wrap",
   },
   eyebrow: {
@@ -1444,6 +1694,23 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     whiteSpace: "nowrap",
   },
+  bulkToolbar: {
+    background: "#1e293b",
+    color: "white",
+    borderRadius: "14px",
+    padding: "14px 20px",
+    marginBottom: "20px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "12px",
+    boxShadow: "0 10px 25px rgba(0,0,0,0.15)",
+  },
+  bulkToolbarLabel: {
+    fontSize: "14px",
+    fontWeight: 600,
+  },
   closeButton: {
     border: "none",
     background: "transparent",
@@ -1478,12 +1745,34 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "hidden",
     boxShadow: "0 4px 20px rgba(0, 0, 0, 0.03)",
   },
+  tabToggleHeader: {
+    display: "flex",
+    borderBottom: "1px solid #e2e8f0",
+    background: "#f8fafc",
+    overflowX: "auto",
+  },
+  tabToggleBtn: {
+    padding: "14px 20px",
+    border: "none",
+    borderBottom: "3px solid transparent",
+    background: "transparent",
+    color: "#64748b",
+    fontSize: "13px",
+    fontWeight: 700,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  tabToggleBtnActive: {
+    color: "#2563eb",
+    borderBottom: "3px solid #2563eb",
+    background: "white",
+  },
   filters: {
     display: "flex",
     gap: "12px",
     padding: "16px 20px",
     borderBottom: "1px solid #e2e8f0",
-    background: "#f8fafc",
+    background: "white",
     flexWrap: "wrap",
   },
   searchInput: {
@@ -1495,15 +1784,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "13px",
     outline: "none",
     background: "white",
-  },
-  filterSelect: {
-    width: "220px",
-    border: "1px solid #cbd5e1",
-    borderRadius: "10px",
-    padding: "10px 14px",
-    fontSize: "13px",
-    background: "white",
-    color: "#334155",
   },
   tableWrapper: {
     width: "100%",
@@ -1773,4 +2053,4 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#eff6ff",
     color: "#1d4ed8",
   },
-};
+};

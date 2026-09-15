@@ -296,12 +296,15 @@ export default function ClientPortalPage() {
   const [customerFeedbackList, setCustomerFeedbackList] = useState<FeedbackItem[]>([]);
   const [showRequestDeviceModal, setShowRequestDeviceModal] = useState(false);
   const [requestNotes, setRequestNotes] = useState("");
+  const [requestQuantity, setRequestQuantity] = useState(1);
+  const [requestDeviceType, setRequestDeviceType] = useState("NFC + QR");
   const [requestSending, setRequestSending] = useState(false);
   const [requestSuccess, setRequestSuccess] = useState("");
 
   async function handleSendHardwareRequest() {
     if (!business) return;
     setRequestSending(true);
+    setRequestSuccess("");
     try {
       const { error: err } = await supabase
         .from("customer_requests")
@@ -312,8 +315,8 @@ export default function ClientPortalPage() {
           request_type: "hardware_request",
           status: "pending",
           payload: {
-            quantity: 1,
-            device_type: "NFC + QR",
+            quantity: Number(requestQuantity) || 1,
+            device_type: requestDeviceType,
             notes: requestNotes.trim(),
             requested_at: new Date().toISOString(),
           },
@@ -632,9 +635,78 @@ export default function ClientPortalPage() {
     }
   }, [router]);
 
+  const [highlightedWidgets, setHighlightedWidgets] = useState<Record<string, boolean>>({});
+
+  const triggerHighlight = useCallback((key: string) => {
+    setHighlightedWidgets((prev) => ({ ...prev, [key]: true }));
+    setTimeout(() => {
+      setHighlightedWidgets((prev) => ({ ...prev, [key]: false }));
+    }, 1800);
+  }, []);
+
   useEffect(() => {
     loadPortal();
   }, [loadPortal]);
+
+  // Realtime Push Subscriptions & Auto-polling for Client Portal
+  useEffect(() => {
+    if (!business?.id) return;
+
+    const bId = business.id;
+    const channel = supabase
+      .channel(`client_realtime_${bId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "interactions" },
+        () => {
+          triggerHighlight("taps");
+          loadPortal();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tapx_orders", filter: `business_id=eq.${bId}` },
+        () => {
+          triggerHighlight("orders");
+          loadPortal();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tapx_appointments", filter: `business_id=eq.${bId}` },
+        () => {
+          triggerHighlight("appointments");
+          loadPortal();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "customer_feedback", filter: `business_id=eq.${bId}` },
+        () => {
+          triggerHighlight("feedback");
+          loadPortal();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "loyalty_rewards", filter: `business_id=eq.${bId}` },
+        () => {
+          triggerHighlight("loyalty");
+          loadPortal();
+        }
+      )
+      .subscribe();
+
+    // 25-Second Auto-Polling Interval for Lower-Urgency Aggregates
+    const interval = setInterval(() => {
+      loadPortal();
+    }, 25000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
+  }, [business?.id, loadPortal, triggerHighlight]);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -1364,6 +1436,7 @@ export default function ClientPortalPage() {
             <ClientDevicesSection
               devices={clientDevices}
               interactions={deviceInteractions}
+              highlightTaps={highlightedWidgets["taps"]}
               onRequestDevice={() => {
                 setShowRequestDeviceModal(true);
                 setRequestSuccess("");
@@ -1488,6 +1561,193 @@ export default function ClientPortalPage() {
             />
           )}
         </div>
+
+        {/* HARDWARE REQUEST MODAL */}
+        {showRequestDeviceModal && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.6)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "20px",
+            }}
+          >
+            <div
+              style={{
+                background: "white",
+                borderRadius: "16px",
+                maxWidth: "500px",
+                width: "100%",
+                boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "18px 24px",
+                  borderBottom: "1px solid #e2e8f0",
+                }}
+              >
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>
+                    Request Additional Devices
+                  </h3>
+                  <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
+                    Submit a hardware request to TAPX provisioning team.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowRequestDeviceModal(false)}
+                  style={{ border: "none", background: "transparent", fontSize: "22px", cursor: "pointer", color: "#64748b" }}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div style={{ padding: "20px" }}>
+                {requestSuccess ? (
+                  <div
+                    style={{
+                      background: "#f0fdf4",
+                      border: "1px solid #bbf7d0",
+                      color: "#15803d",
+                      borderRadius: "12px",
+                      padding: "16px",
+                      fontSize: "13px",
+                      lineHeight: 1.5,
+                      fontWeight: 600,
+                    }}
+                  >
+                    ✓ {requestSuccess}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
+                        Quantity Needed *
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={requestQuantity}
+                        onChange={(e) => setRequestQuantity(Math.max(1, Number(e.target.value)))}
+                        style={{
+                          width: "100%",
+                          boxSizing: "border-box",
+                          border: "1px solid #cbd5e1",
+                          borderRadius: "9px",
+                          padding: "10px 12px",
+                          fontSize: "13px",
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
+                        Hardware Form Factor *
+                      </label>
+                      <select
+                        value={requestDeviceType}
+                        onChange={(e) => setRequestDeviceType(e.target.value)}
+                        style={{
+                          width: "100%",
+                          boxSizing: "border-box",
+                          border: "1px solid #cbd5e1",
+                          borderRadius: "9px",
+                          padding: "10px 12px",
+                          fontSize: "13px",
+                          background: "white",
+                        }}
+                      >
+                        <option value="NFC + QR">NFC + QR Standee/Card</option>
+                        <option value="NFC">NFC Sticker/Tag</option>
+                        <option value="QR">QR Code Standee</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
+                        Special Notes / Delivery Address
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={requestNotes}
+                        onChange={(e) => setRequestNotes(e.target.value)}
+                        placeholder="e.g. Need 2 for front desk and 3 for outdoor dining tables."
+                        style={{
+                          width: "100%",
+                          boxSizing: "border-box",
+                          border: "1px solid #cbd5e1",
+                          borderRadius: "9px",
+                          padding: "10px 12px",
+                          fontSize: "13px",
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: "10px",
+                  padding: "14px 24px",
+                  borderTop: "1px solid #e2e8f0",
+                  background: "#f8fafc",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setShowRequestDeviceModal(false)}
+                  style={{
+                    border: "1px solid #cbd5e1",
+                    background: "white",
+                    borderRadius: "9px",
+                    padding: "9px 16px",
+                    fontSize: "13px",
+                    fontWeight: 700,
+                    color: "#334155",
+                    cursor: "pointer",
+                  }}
+                >
+                  {requestSuccess ? "Close" : "Cancel"}
+                </button>
+
+                {!requestSuccess && (
+                  <button
+                    type="button"
+                    disabled={requestSending}
+                    onClick={handleSendHardwareRequest}
+                    style={{
+                      border: "none",
+                      background: "#2563eb",
+                      color: "white",
+                      borderRadius: "9px",
+                      padding: "9px 18px",
+                      fontSize: "13px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {requestSending ? "Submitting..." : "Submit Hardware Request"}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
       <style jsx global>{`
@@ -5507,18 +5767,16 @@ function SettingRow({
   );
 }
 
-/* =========================================================
-   CLIENT DEVICES PORTAL COMPONENTS
-========================================================= */
-
 function ClientDevicesSection({
   devices,
   interactions,
   onRequestDevice,
+  highlightTaps,
 }: {
   devices: ClientDevice[];
   interactions: Record<string, number>;
   onRequestDevice: () => void;
+  highlightTaps?: boolean;
 }) {
   const activeCount = devices.filter((d) => d.status !== "inactive" && d.status !== "faulty").length;
   const totalTaps = Object.values(interactions).reduce((a, b) => a + b, 0);
@@ -5583,10 +5841,25 @@ function ClientDevicesSection({
           <div style={clientMetricSub}>Live & accepting taps</div>
         </div>
 
-        <div style={clientMetricCard}>
+        <div
+          style={{
+            ...clientMetricCard,
+            transition: "all 0.5s ease",
+            ...(highlightTaps
+              ? {
+                  borderColor: "#f59e0b",
+                  background: "#fffbeb",
+                  boxShadow: "0 0 18px rgba(245, 158, 11, 0.35)",
+                  transform: "scale(1.02)",
+                }
+              : {}),
+          }}
+        >
           <div style={clientMetricLabel}>Total Customer Taps</div>
-          <div style={{ ...clientMetricValue, color: "#2563eb" }}>{totalTaps}</div>
-          <div style={clientMetricSub}>Recorded NFC & QR interactions</div>
+          <div style={{ ...clientMetricValue, color: highlightTaps ? "#d97706" : "#2563eb" }}>{totalTaps}</div>
+          <div style={clientMetricSub}>
+            {highlightTaps ? "⚡ Live tap update received!" : "Recorded NFC & QR interactions"}
+          </div>
         </div>
       </div>
 

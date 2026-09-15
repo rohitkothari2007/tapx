@@ -313,7 +313,7 @@ export default function ClientsPage() {
             ? {
                 ...device,
                 business_id: null,
-                status: "available",
+                status: "unassigned",
               }
             : device
         )
@@ -543,13 +543,13 @@ export default function ClientsPage() {
         />
 
         <StatCard
-          title="Available Devices"
+          title="Unassigned Devices"
           value={
             devices.filter(
               (device) =>
                 !device.business_id ||
                 device.status?.toLowerCase() ===
-                  "available"
+                  "unassigned"
             ).length
           }
         />
