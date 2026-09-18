@@ -506,14 +506,18 @@ export default function ClientPage() {
     }
   }
 
-  async function markRewardRedeemed(reward: LoyaltyReward) {
+  async function markRewardRedeemed(reward: any) {
     try {
-      await supabase
-        .from("loyalty_rewards")
-        .update({ status: "redeemed" })
-        .eq("id", reward.id);
+      const rewardId = typeof reward === "string" ? reward : reward?.id;
+      const membershipId = typeof reward === "string" ? null : reward?.membership_id;
 
-      const membershipId = reward.membership_id;
+      if (rewardId) {
+        await supabase
+          .from("loyalty_rewards")
+          .update({ status: "redeemed" })
+          .eq("id", rewardId);
+      }
+
       if (membershipId) {
         const { data: mem } = await supabase
           .from("loyalty_memberships")
