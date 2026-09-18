@@ -732,28 +732,23 @@ export default function TapPage({
 
       setLoyaltyConfig({
         program_name:
-          typeof
-            rawLoyaltyConfig.program_name ===
-          "string"
+          typeof rawLoyaltyConfig.program_name === "string" && rawLoyaltyConfig.program_name.trim() !== ""
             ? rawLoyaltyConfig.program_name
-            : "",
+            : "Loyalty Rewards",
 
         reward:
-          typeof
-            rawLoyaltyConfig.reward ===
-          "string"
+          typeof rawLoyaltyConfig.milestone_reward === "string" && rawLoyaltyConfig.milestone_reward.trim() !== ""
+            ? rawLoyaltyConfig.milestone_reward
+            : typeof rawLoyaltyConfig.reward === "string"
             ? rawLoyaltyConfig.reward
-            : "",
+            : "Exclusive reward from the business",
 
         visits_required:
-          rawLoyaltyConfig.visits_required !==
-            undefined &&
-          rawLoyaltyConfig.visits_required !==
-            null
-            ? String(
-                rawLoyaltyConfig.visits_required
-              )
-            : "",
+          rawLoyaltyConfig.milestone_interval !== undefined && rawLoyaltyConfig.milestone_interval !== null
+            ? String(rawLoyaltyConfig.milestone_interval)
+            : rawLoyaltyConfig.visits_required !== undefined && rawLoyaltyConfig.visits_required !== null
+            ? String(rawLoyaltyConfig.visits_required)
+            : "5",
       });
 
       // ====================================================
@@ -3895,11 +3890,14 @@ function LoyaltySection({
     const cleanName =
       name.trim();
 
-    const cleanPhone =
+    const rawPhoneDigits =
       phone.replace(
         /\D/g,
         ""
       );
+
+    const cleanPhone =
+      rawPhoneDigits.slice(-10);
 
     setError("");
     setMessage("");
@@ -3923,167 +3921,126 @@ function LoyaltySection({
     setLoading(true);
 
     try {
-      const {
-        data: existingCustomer,
-        error:
-          customerLookupError,
-      } = await supabase
-        .from("customers")
-        .select(
-          "id, name, phone"
-        )
-        .eq(
-          "phone",
-          cleanPhone
-        )
-        .maybeSingle();
+      let membershipId = "";
+      let visits = 0;
+      let rewardClaimed = false;
+      let isNewMem = false;
 
-      if (
-        customerLookupError
-      ) {
-        throw customerLookupError;
-      }
+      const { data: rpcData, error: rpcError } = await supabase.rpc("get_or_join_tap_loyalty", {
+        p_business_id: businessId,
+        p_name: cleanName,
+        p_phone: cleanPhone,
+      });
 
-      let customerId =
-        existingCustomer?.id as
-          | string
-          | undefined;
-
-      if (!customerId) {
+      if (!rpcError && rpcData) {
+        membershipId = rpcData.membership_id;
+        visits = Number(rpcData.visits) || 0;
+        rewardClaimed = rpcData.reward_claimed === true;
+        isNewMem = rpcData.is_new_membership === true;
+      } else {
         const {
-          data: newCustomer,
-          error:
-            customerInsertError,
+          data: existingCustomer,
+          error: customerLookupError,
         } = await supabase
           .from("customers")
-          .insert({
-            name:
-              cleanName,
-            phone:
-              cleanPhone,
-          })
-          .select("id")
-          .single();
+          .select("id, name, phone")
+          .or(`phone.eq.${cleanPhone},phone.eq.91${cleanPhone},phone.eq.+91${cleanPhone}`)
+          .maybeSingle();
 
-        if (
-          customerInsertError
-        ) {
-          throw customerInsertError;
+        if (customerLookupError) {
+          throw customerLookupError;
         }
 
-        customerId =
-          newCustomer.id;
-      } else if (
-        existingCustomer?.name !==
-        cleanName
-      ) {
+        let customerId = existingCustomer?.id as string | undefined;
+
+        if (!customerId) {
+          const {
+            data: newCustomer,
+            error: customerInsertError,
+          } = await supabase
+            .from("customers")
+            .insert({
+              name: cleanName,
+              phone: cleanPhone,
+            })
+            .select("id")
+            .single();
+
+          if (customerInsertError) {
+            throw customerInsertError;
+          }
+
+          customerId = newCustomer.id;
+        } else if (existingCustomer?.name !== cleanName) {
+          const { error: customerUpdateError } = await supabase
+            .from("customers")
+            .update({
+              name: cleanName,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", customerId);
+
+          if (customerUpdateError) {
+            throw customerUpdateError;
+          }
+        }
+
         const {
-          error:
-            customerUpdateError,
+          data: existingMembership,
+          error: membershipLookupError,
         } = await supabase
-          .from("customers")
-          .update({
-            name:
-              cleanName,
-            updated_at:
-              new Date().toISOString(),
-          })
-          .eq(
-            "id",
-            customerId
-          );
+          .from("loyalty_memberships")
+          .select("id, visits, reward_claimed")
+          .eq("business_id", businessId)
+          .eq("customer_id", customerId)
+          .maybeSingle();
 
-        if (
-          customerUpdateError
-        ) {
-          throw customerUpdateError;
+        if (membershipLookupError) {
+          throw membershipLookupError;
         }
+
+        let membershipData = existingMembership;
+
+        if (!membershipData) {
+          const {
+            data: newMembership,
+            error: membershipInsertError,
+          } = await supabase
+            .from("loyalty_memberships")
+            .insert({
+              business_id: businessId,
+              customer_id: customerId,
+              visits: 0,
+              reward_claimed: false,
+            })
+            .select("id, visits, reward_claimed")
+            .single();
+
+          if (membershipInsertError) {
+            throw membershipInsertError;
+          }
+
+          membershipData = newMembership;
+          isNewMem = true;
+        }
+
+        membershipId = membershipData.id;
+        visits = Number(membershipData.visits) || 0;
+        rewardClaimed = membershipData.reward_claimed === true;
       }
 
       setName(cleanName);
 
-      const {
-        data: existingMembership,
-        error:
-          membershipLookupError,
-      } = await supabase
-        .from(
-          "loyalty_memberships"
-        )
-        .select(
-          "id, visits, reward_claimed"
-        )
-        .eq(
-          "business_id",
-          businessId
-        )
-        .eq(
-          "customer_id",
-          customerId
-        )
-        .maybeSingle();
-
-      if (
-        membershipLookupError
-      ) {
-        throw membershipLookupError;
-      }
-
-      let membershipData =
-        existingMembership;
-
-      if (!membershipData) {
-        const {
-          data: newMembership,
-          error:
-            membershipInsertError,
-        } = await supabase
-          .from(
-            "loyalty_memberships"
-          )
-          .insert({
-            business_id:
-              businessId,
-            customer_id:
-              customerId,
-            visits: 0,
-            reward_claimed:
-              false,
-          })
-          .select(
-            "id, visits, reward_claimed"
-          )
-          .single();
-
-        if (
-          membershipInsertError
-        ) {
-          throw membershipInsertError;
-        }
-
-        membershipData =
-          newMembership;
-
-        setMessage(
-          `Welcome to ${programName}, ${cleanName}!`
-        );
+      if (isNewMem) {
+        setMessage(`Welcome to ${programName}, ${cleanName}!`);
       } else {
-        setMessage(
-          `Welcome back, ${cleanName}!`
-        );
+        setMessage(`Welcome back, ${cleanName}!`);
       }
 
       setMembership({
-        id: String(
-          membershipData.id
-        ),
-        visits:
-          Number(
-            membershipData.visits
-          ) || 0,
-        reward_claimed:
-          membershipData.reward_claimed ===
-          true,
+        id: String(membershipId),
+        visits: visits,
+        reward_claimed: rewardClaimed,
       });
     } catch (err) {
       console.error(

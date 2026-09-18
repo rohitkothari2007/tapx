@@ -1509,7 +1509,7 @@ export default function ClientPortalPage() {
           )}
 
           {activePage === "loyalty" && hasLoyalty && (
-            <LoyaltyPortalSection businessId={business.id} />
+            <LoyaltyPortalSection businessId={business.id} businessName={business.name} />
           )}
 
           {activePage === "feedback" && hasFeedback && (
@@ -6349,7 +6349,7 @@ function FeedbackSection({ feedback }: { feedback: FeedbackItem[] }) {
    LOYALTY PORTAL COMPONENT WITH MILESTONES & REWARDS
 ========================================================= */
 
-function LoyaltyPortalSection({ businessId }: { businessId: string }) {
+function LoyaltyPortalSection({ businessId, businessName }: { businessId: string; businessName?: string }) {
   const [members, setMembers] = useState<any[]>([]);
   const [rewards, setRewards] = useState<any[]>([]);
   const [interval, setInterval] = useState<number>(5);
@@ -6370,7 +6370,7 @@ function LoyaltyPortalSection({ businessId }: { businessId: string }) {
       // 1. Fetch Members
       const { data: memberData } = await supabase
         .from("loyalty_memberships")
-        .select("id, customer_id, visits, reward_claimed, updated_at, customer:customers(name, phone)")
+        .select("id, customer_id, visits, redemption_count, reward_claimed, updated_at, customer:customers(name, phone)")
         .eq("business_id", businessId)
         .order("updated_at", { ascending: false });
 
@@ -6463,8 +6463,9 @@ function LoyaltyPortalSection({ businessId }: { businessId: string }) {
     const name = reward.customer?.name || "Valued Customer";
     const desc = reward.reward_description || "Special Reward";
     const visits = reward.visit_count_at_reward;
+    const bName = businessName || "our business";
 
-    const msg = `Hi ${name}! 🎉 Congratulations on visit #${visits}! You've unlocked a milestone reward: ${desc}. Show this message on your next visit to redeem!`;
+    const msg = `Hi ${name}! 🎉 You just hit visit #${visits} at ${bName} — thank you for being a regular! You've unlocked: ${desc}. Just show this message on your next visit to redeem it. See you soon!`;
     const phone = rawPhone ? (rawPhone.startsWith("91") ? rawPhone : `91${rawPhone}`) : "";
     const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(msg)}`;
 
@@ -6478,12 +6479,52 @@ function LoyaltyPortalSection({ businessId }: { businessId: string }) {
     }
   }
 
-  async function markRedeemed(rewardId: string) {
+  async function markRedeemed(reward: any) {
     try {
-      await supabase.from("loyalty_rewards").update({ status: "redeemed" }).eq("id", rewardId);
+      await supabase.from("loyalty_rewards").update({ status: "redeemed" }).eq("id", reward.id);
+
+      const membershipId = reward.membership_id;
+      if (membershipId) {
+        const { data: mem } = await supabase
+          .from("loyalty_memberships")
+          .select("redemption_count")
+          .eq("id", membershipId)
+          .maybeSingle();
+
+        const currentRedemptions = Number((mem as any)?.redemption_count) || 0;
+
+        await supabase
+          .from("loyalty_memberships")
+          .update({
+            visits: 0,
+            redemption_count: currentRedemptions + 1,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", membershipId);
+      } else if (reward.customer_id && businessId) {
+        const { data: mem } = await supabase
+          .from("loyalty_memberships")
+          .select("id, redemption_count")
+          .eq("business_id", businessId)
+          .eq("customer_id", reward.customer_id)
+          .maybeSingle();
+
+        if (mem?.id) {
+          const currentRedemptions = Number((mem as any)?.redemption_count) || 0;
+          await supabase
+            .from("loyalty_memberships")
+            .update({
+              visits: 0,
+              redemption_count: currentRedemptions + 1,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", mem.id);
+        }
+      }
+
       await loadLoyaltyData();
     } catch (e) {
-      console.error(e);
+      console.error("Error marking reward redeemed:", e);
     }
   }
 
@@ -6610,7 +6651,7 @@ function LoyaltyPortalSection({ businessId }: { businessId: string }) {
                   {reward.status !== "redeemed" && (
                     <button
                       type="button"
-                      onClick={() => markRedeemed(reward.id)}
+                      onClick={() => markRedeemed(reward)}
                       style={{ padding: "8px 14px", background: "#0f172a", color: "white", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
                     >
                       ✓ Mark Redeemed
@@ -6655,8 +6696,13 @@ function LoyaltyPortalSection({ businessId }: { businessId: string }) {
                   <div>
                     <strong style={{ fontSize: "14px", color: "#0f172a", display: "block" }}>{member.customer?.name || "Customer"}</strong>
                     <span style={{ fontSize: "12px", color: "#64748b" }}>{member.customer?.phone || "No phone"}</span>
-                    <div style={{ fontSize: "12px", color: "#2563eb", fontWeight: 700, marginTop: "2px" }}>
-                      {member.visits} verified visit{member.visits === 1 ? "" : "s"}
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "4px", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: "12px", color: "#2563eb", fontWeight: 700 }}>
+                        {member.visits} verified visit{member.visits === 1 ? "" : "s"}
+                      </span>
+                      <span style={{ fontSize: "12px", color: "#166534", background: "#f0fdf4", padding: "2px 8px", borderRadius: "12px", border: "1px solid #bbf7d0", fontWeight: 700 }}>
+                        🏆 {member.redemption_count || 0} reward{(member.redemption_count || 0) === 1 ? "" : "s"} redeemed all-time
+                      </span>
                     </div>
                   </div>
 

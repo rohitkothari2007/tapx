@@ -486,8 +486,9 @@ export default function ClientPage() {
     const name = reward.customer?.name || "Valued Customer";
     const rewardText = reward.reward_description || "Special Reward";
     const visits = reward.visit_count_at_reward;
+    const bName = business?.name || "our business";
 
-    const message = `Hi ${name}! 🎉 Congratulations on visit #${visits}! You've unlocked a milestone reward: ${rewardText}. Show this message on your next visit to redeem!`;
+    const message = `Hi ${name}! 🎉 You just hit visit #${visits} at ${bName} — thank you for being a regular! You've unlocked: ${rewardText}. Just show this message on your next visit to redeem it. See you soon!`;
     const phone = rawPhone ? (rawPhone.startsWith("91") ? rawPhone : `91${rawPhone}`) : "";
     const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
 
@@ -505,14 +506,34 @@ export default function ClientPage() {
     }
   }
 
-  async function markRewardRedeemed(rewardId: string) {
+  async function markRewardRedeemed(reward: LoyaltyReward) {
     try {
       await supabase
         .from("loyalty_rewards")
         .update({ status: "redeemed" })
-        .eq("id", rewardId);
+        .eq("id", reward.id);
 
-      if (businessId) await loadLoyaltyRewards(businessId);
+      const membershipId = reward.membership_id;
+      if (membershipId) {
+        const { data: mem } = await supabase
+          .from("loyalty_memberships")
+          .select("redemption_count")
+          .eq("id", membershipId)
+          .maybeSingle();
+
+        const currentRedemptions = Number((mem as any)?.redemption_count) || 0;
+
+        await supabase
+          .from("loyalty_memberships")
+          .update({
+            visits: 0,
+            redemption_count: currentRedemptions + 1,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", membershipId);
+      }
+
+      if (businessId) await loadLoyaltyMembers(businessId);
     } catch (err) {
       console.error("Error marking reward redeemed:", err);
     }
@@ -527,6 +548,7 @@ export default function ClientPage() {
           id,
           customer_id,
           visits,
+          redemption_count,
           reward_claimed,
           updated_at,
           customer:customers(name, phone)
