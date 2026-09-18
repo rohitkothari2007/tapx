@@ -3921,113 +3921,24 @@ function LoyaltySection({
     setLoading(true);
 
     try {
-      let membershipId = "";
-      let visits = 0;
-      let rewardClaimed = false;
-      let isNewMem = false;
-
       const { data: rpcData, error: rpcError } = await supabase.rpc("get_or_join_tap_loyalty", {
         p_business_id: businessId,
         p_name: cleanName,
         p_phone: cleanPhone,
       });
 
-      if (!rpcError && rpcData) {
-        membershipId = rpcData.membership_id;
-        visits = Number(rpcData.visits) || 0;
-        rewardClaimed = rpcData.reward_claimed === true;
-        isNewMem = rpcData.is_new_membership === true;
-      } else {
-        const {
-          data: existingCustomer,
-          error: customerLookupError,
-        } = await supabase
-          .from("customers")
-          .select("id, name, phone")
-          .or(`phone.eq.${cleanPhone},phone.eq.91${cleanPhone},phone.eq.+91${cleanPhone}`)
-          .maybeSingle();
-
-        if (customerLookupError) {
-          throw customerLookupError;
-        }
-
-        let customerId = existingCustomer?.id as string | undefined;
-
-        if (!customerId) {
-          const {
-            data: newCustomer,
-            error: customerInsertError,
-          } = await supabase
-            .from("customers")
-            .insert({
-              name: cleanName,
-              phone: cleanPhone,
-            })
-            .select("id")
-            .single();
-
-          if (customerInsertError) {
-            throw customerInsertError;
-          }
-
-          customerId = newCustomer.id;
-        } else if (existingCustomer?.name !== cleanName) {
-          const { error: customerUpdateError } = await supabase
-            .from("customers")
-            .update({
-              name: cleanName,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", customerId);
-
-          if (customerUpdateError) {
-            throw customerUpdateError;
-          }
-        }
-
-        const {
-          data: existingMembership,
-          error: membershipLookupError,
-        } = await supabase
-          .from("loyalty_memberships")
-          .select("id, visits, reward_claimed")
-          .eq("business_id", businessId)
-          .eq("customer_id", customerId)
-          .maybeSingle();
-
-        if (membershipLookupError) {
-          throw membershipLookupError;
-        }
-
-        let membershipData = existingMembership;
-
-        if (!membershipData) {
-          const {
-            data: newMembership,
-            error: membershipInsertError,
-          } = await supabase
-            .from("loyalty_memberships")
-            .insert({
-              business_id: businessId,
-              customer_id: customerId,
-              visits: 0,
-              reward_claimed: false,
-            })
-            .select("id, visits, reward_claimed")
-            .single();
-
-          if (membershipInsertError) {
-            throw membershipInsertError;
-          }
-
-          membershipData = newMembership;
-          isNewMem = true;
-        }
-
-        membershipId = membershipData.id;
-        visits = Number(membershipData.visits) || 0;
-        rewardClaimed = membershipData.reward_claimed === true;
+      if (rpcError) {
+        throw rpcError;
       }
+
+      if (!rpcData || !rpcData.membership_id) {
+        throw new Error("Unable to retrieve loyalty membership.");
+      }
+
+      const membershipId = String(rpcData.membership_id);
+      const visits = Number(rpcData.visits) || 0;
+      const rewardClaimed = rpcData.reward_claimed === true;
+      const isNewMem = rpcData.is_new_membership === true;
 
       setName(cleanName);
 
@@ -4038,7 +3949,7 @@ function LoyaltySection({
       }
 
       setMembership({
-        id: String(membershipId),
+        id: membershipId,
         visits: visits,
         reward_claimed: rewardClaimed,
       });
