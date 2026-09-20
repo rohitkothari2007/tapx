@@ -5,11 +5,14 @@ import { supabase } from "../lib/supabase";
 import QRCode from "qrcode";
 import JSZip from "jszip";
 
+type DeviceProductType = "smart_stand" | "action_whatsapp" | "action_instagram" | "action_call";
+
 type Device = {
   id: string;
   device_code: string;
   business_id: string | null;
   device_type: string | null;
+  product_type?: DeviceProductType | null;
   location: string | null;
   label: string | null;
   assigned_at: string | null;
@@ -58,6 +61,9 @@ export default function DevicesPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [addMode, setAddMode] = useState<"single" | "list" | "sequence">("single");
 
+  // Product Type selection state for provisioning
+  const [productType, setProductType] = useState<DeviceProductType>("smart_stand");
+
   // Single Add form
   const [deviceCode, setDeviceCode] = useState("");
   const [deviceLabel, setDeviceLabel] = useState("");
@@ -100,6 +106,7 @@ export default function DevicesPage() {
   // Filters & Search — DEFAULT VIEW IS ACTIVE (ASSIGNED) DEVICES
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
+  const [productTypeFilter, setProductTypeFilter] = useState("all");
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -129,7 +136,7 @@ export default function DevicesPage() {
 
   useEffect(() => {
     loadDevicesPage();
-  }, [page, pageSize, statusFilter, search]);
+  }, [page, pageSize, statusFilter, productTypeFilter, search]);
 
   async function loadBusinessesAndRequests() {
     try {
@@ -167,6 +174,10 @@ export default function DevicesPage() {
         query = query.is("business_id", null).neq("status", "retired").neq("status", "inactive").neq("status", "faulty");
       } else if (statusFilter === "retired") {
         query = query.or("status.eq.retired,status.eq.inactive,status.eq.faulty");
+      }
+
+      if (productTypeFilter !== "all") {
+        query = query.eq("product_type", productTypeFilter);
       }
 
       if (search.trim()) {
@@ -244,6 +255,7 @@ export default function DevicesPage() {
           label: deviceLabel.trim() || null,
           business_id: null,
           device_type: deviceType,
+          product_type: productType,
           location: location.trim() || null,
           status: "unassigned",
         });
@@ -310,6 +322,7 @@ export default function DevicesPage() {
         device_code: code,
         business_id: null,
         device_type: deviceType,
+        product_type: productType,
         status: "unassigned",
       }));
 
@@ -798,6 +811,31 @@ export default function DevicesPage() {
               style={styles.searchInput}
             />
 
+            <select
+              value={productTypeFilter}
+              onChange={(e) => {
+                setProductTypeFilter(e.target.value);
+                setPage(1);
+              }}
+              style={{
+                border: "1px solid #cbd5e1",
+                borderRadius: "10px",
+                padding: "10px 14px",
+                fontSize: "13px",
+                outline: "none",
+                background: "white",
+                color: "#334155",
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              <option value="all">All Product Types</option>
+              <option value="smart_stand">📱 Smart Stand</option>
+              <option value="action_whatsapp">🟢 Action: WhatsApp</option>
+              <option value="action_instagram">📸 Action: Instagram</option>
+              <option value="action_call">📞 Action: Phone Call</option>
+            </select>
+
             <button
               type="button"
               disabled={bulkExporting || devices.length === 0}
@@ -839,7 +877,8 @@ export default function DevicesPage() {
                       />
                     </th>
                     <th style={styles.th}>Device & Label</th>
-                    <th style={styles.th}>Type</th>
+                    <th style={styles.th}>Product Type</th>
+                    <th style={styles.th}>Hardware</th>
                     <th style={styles.th}>Assigned Client</th>
                     <th style={styles.th}>Status</th>
                     {statusFilter !== "unassigned" && <th style={styles.th}>Assigned Date</th>}
@@ -887,6 +926,10 @@ export default function DevicesPage() {
                               </div>
                             </div>
                           </div>
+                        </td>
+
+                        <td style={styles.td}>
+                          <ProductTypeBadge productType={device.product_type} />
                         </td>
 
                         <td style={styles.td}>
@@ -1272,6 +1315,20 @@ export default function DevicesPage() {
                   </div>
 
                   <div>
+                    <label style={styles.label}>Product Type *</label>
+                    <select
+                      value={productType}
+                      onChange={(e) => setProductType(e.target.value as DeviceProductType)}
+                      style={{ ...styles.input, fontWeight: 700 }}
+                    >
+                      <option value="smart_stand">📱 Smart Stand (Default Full Profile)</option>
+                      <option value="action_whatsapp">🟢 Action Tag: WhatsApp</option>
+                      <option value="action_instagram">📸 Action Tag: Instagram</option>
+                      <option value="action_call">📞 Action Tag: Phone Call</option>
+                    </select>
+                  </div>
+
+                  <div>
                     <label style={styles.label}>Initial Label</label>
                     <input
                       value={deviceLabel}
@@ -1294,7 +1351,7 @@ export default function DevicesPage() {
                     </select>
                   </div>
 
-                  <div>
+                  <div style={{ gridColumn: "span 2" }}>
                     <label style={styles.label}>Location / Note</label>
                     <input
                       value={location}
@@ -1308,6 +1365,19 @@ export default function DevicesPage() {
 
               {addMode === "list" && (
                 <div>
+                  <div style={{ marginBottom: "14px" }}>
+                    <label style={styles.label}>Product Type for Batch *</label>
+                    <select
+                      value={productType}
+                      onChange={(e) => setProductType(e.target.value as DeviceProductType)}
+                      style={{ ...styles.input, fontWeight: 700 }}
+                    >
+                      <option value="smart_stand">📱 Smart Stand (Default Full Profile)</option>
+                      <option value="action_whatsapp">🟢 Action Tag: WhatsApp</option>
+                      <option value="action_instagram">📸 Action Tag: Instagram</option>
+                      <option value="action_call">📞 Action Tag: Phone Call</option>
+                    </select>
+                  </div>
                   <label style={styles.label}>Paste Device Codes (one per line or comma-separated)</label>
                   <textarea
                     value={batchCodesText}
@@ -1324,6 +1394,20 @@ export default function DevicesPage() {
 
               {addMode === "sequence" && (
                 <div style={styles.formGridSeq}>
+                  <div style={{ gridColumn: "span 2" }}>
+                    <label style={styles.label}>Product Type for Sequence *</label>
+                    <select
+                      value={productType}
+                      onChange={(e) => setProductType(e.target.value as DeviceProductType)}
+                      style={{ ...styles.input, fontWeight: 700 }}
+                    >
+                      <option value="smart_stand">📱 Smart Stand (Default Full Profile)</option>
+                      <option value="action_whatsapp">🟢 Action Tag: WhatsApp</option>
+                      <option value="action_instagram">📸 Action Tag: Instagram</option>
+                      <option value="action_call">📞 Action Tag: Phone Call</option>
+                    </select>
+                  </div>
+
                   <div>
                     <label style={styles.label}>Code Prefix</label>
                     <input
@@ -1633,6 +1717,37 @@ function StatusBadge({
   return <span style={{ ...styles.statusBadge, background: "#dbeafe", color: "#1d4ed8" }}>Unassigned</span>;
 }
 
+function ProductTypeBadge({ productType }: { productType?: string | null }) {
+  const norm = (productType || "smart_stand").toLowerCase();
+
+  if (norm === "action_whatsapp") {
+    return (
+      <span style={{ ...styles.productTypeBadge, background: "#dcfce7", color: "#166534", borderColor: "#bbf7d0" }}>
+        🟢 Action: WhatsApp
+      </span>
+    );
+  }
+  if (norm === "action_instagram") {
+    return (
+      <span style={{ ...styles.productTypeBadge, background: "#fce7f3", color: "#9d174d", borderColor: "#fbcfe8" }}>
+        📸 Action: Instagram
+      </span>
+    );
+  }
+  if (norm === "action_call") {
+    return (
+      <span style={{ ...styles.productTypeBadge, background: "#fef3c7", color: "#92400e", borderColor: "#fde68a" }}>
+        📞 Action: Call
+      </span>
+    );
+  }
+  return (
+    <span style={{ ...styles.productTypeBadge, background: "#f3e8ff", color: "#6b21a8", borderColor: "#e9d5ff" }}>
+      📱 Smart Stand
+    </span>
+  );
+}
+
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: "100vh",
@@ -1860,6 +1975,17 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "6px",
     fontSize: "11px",
     fontWeight: 700,
+  },
+  productTypeBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    padding: "3px 9px",
+    borderRadius: "6px",
+    fontSize: "11px",
+    fontWeight: 700,
+    border: "1px solid transparent",
+    whiteSpace: "nowrap",
   },
   businessName: {
     fontWeight: 700,
