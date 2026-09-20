@@ -670,9 +670,16 @@ export default function ClientPortalPage() {
       .channel(`client_realtime_${bId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "interactions" },
-        () => {
+        { event: "INSERT", schema: "public", table: "interactions", filter: `business_id=eq.${bId}` },
+        (payload: any) => {
           triggerHighlight("taps");
+          if (payload?.new) {
+            const newLog = payload.new as InteractionLog;
+            setRawInteractions((prev) => {
+              if (prev.some((item) => item.id === newLog.id)) return prev;
+              return [newLog, ...prev];
+            });
+          }
           loadPortal();
         }
       )

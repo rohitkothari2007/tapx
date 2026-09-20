@@ -248,6 +248,10 @@ export default function TapPage({
 
   const [device, setDevice] = useState<Device | null>(null);
   const [business, setBusiness] = useState<Business | null>(null);
+  const [socialProofCounts, setSocialProofCounts] = useState<{
+    google_review_click: number;
+    instagram_click: number;
+  }>({ google_review_click: 0, instagram_click: 0 });
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -957,6 +961,24 @@ export default function TapPage({
           console.error("[TAPX Analytics] Interaction recording exception:", err);
         }
       })();
+
+      // Social proof all-time cumulative counts fetch
+      try {
+        const { data: socialLogs } = await supabase
+          .from("interactions")
+          .select("interaction_type")
+          .eq("business_id", deviceData.business_id)
+          .in("interaction_type", ["google_review_click", "instagram_click"]);
+
+        const proofCounts = { google_review_click: 0, instagram_click: 0 };
+        (socialLogs || []).forEach((item: any) => {
+          if (item.interaction_type === "google_review_click") proofCounts.google_review_click += 1;
+          if (item.interaction_type === "instagram_click") proofCounts.instagram_click += 1;
+        });
+        setSocialProofCounts(proofCounts);
+      } catch (err) {
+        console.error("[TAPX Social Proof] Error loading counts:", err);
+      }
     } catch (err) {
       console.error(
         "TAPX customer experience error:",
@@ -1002,6 +1024,12 @@ export default function TapPage({
 
   async function trackActionClick(interactionType: string) {
     if (!device) return;
+    if (interactionType === "google_review_click" || interactionType === "instagram_click") {
+      setSocialProofCounts((prev) => ({
+        ...prev,
+        [interactionType]: (prev[interactionType as keyof typeof prev] || 0) + 1,
+      }));
+    }
     try {
       const { error: interactionError } = await supabase
         .from("interactions")
@@ -1348,6 +1376,11 @@ export default function TapPage({
                   )}
                   title="Review us"
                   subtitle="Google"
+                  socialProofText={
+                    socialProofCounts.google_review_click >= 5
+                      ? `${socialProofCounts.google_review_click} people have visited to leave a review`
+                      : undefined
+                  }
                   href={
                     business.google_review_url
                   }
@@ -1360,10 +1393,14 @@ export default function TapPage({
                   )}
                   title="Instagram"
                   subtitle="Follow us"
+                  socialProofText={
+                    socialProofCounts.instagram_click >= 5
+                      ? `${socialProofCounts.instagram_click} people have visited our Instagram`
+                      : undefined
+                  }
                   href={
                     business.instagram_url
                   }
-                  onClick={() => void trackActionClick("instagram_click")}
                 />
 
                 <ActionCard
@@ -5319,12 +5356,14 @@ function ActionCard({
   icon,
   title,
   subtitle,
+  socialProofText,
   href,
   onClick,
 }: {
   icon: string;
   title: string;
   subtitle: string;
+  socialProofText?: string | null;
   href?: string | null;
   onClick?: () => void;
 }) {
@@ -5335,6 +5374,19 @@ function ActionCard({
       <div style={styles.actionIcon}>{icon}</div>
       <div style={styles.actionTitle}>{title}</div>
       <div style={styles.actionSubtitle}>{subtitle}</div>
+      {socialProofText && (
+        <div
+          style={{
+            marginTop: "6px",
+            fontSize: "10.5px",
+            lineHeight: 1.3,
+            color: "#64748b",
+            fontWeight: 600,
+          }}
+        >
+          {socialProofText}
+        </div>
+      )}
     </>
   );
 
