@@ -52,6 +52,15 @@ type ModuleConfig = {
   config: Record<string, any> | null;
 };
 
+type InteractionLog = {
+  id: string;
+  device_id: string | null;
+  business_id: string | null;
+  interaction_type: string | null;
+  created_at: string;
+  device_code: string | null;
+};
+
 type Order = {
   id: string;
   business_id: string;
@@ -292,6 +301,7 @@ export default function ClientPortalPage() {
 
   const [clientDevices, setClientDevices] = useState<ClientDevice[]>([]);
   const [deviceInteractions, setDeviceInteractions] = useState<Record<string, number>>({});
+  const [rawInteractions, setRawInteractions] = useState<InteractionLog[]>([]);
   const [hotelRequests, setHotelRequests] = useState<HotelRequestItem[]>([]);
   const [customerFeedbackList, setCustomerFeedbackList] = useState<FeedbackItem[]>([]);
   const [showRequestDeviceModal, setShowRequestDeviceModal] = useState(false);
@@ -518,7 +528,7 @@ export default function ClientPortalPage() {
 
         supabase
           .from("interactions")
-          .select("device_code, device_id")
+          .select("id, device_id, business_id, interaction_type, created_at, device_code")
           .eq("business_id", businessId),
       ]);
 
@@ -563,6 +573,9 @@ export default function ClientPortalPage() {
       const loadedDevices = (devicesResult?.data || []) as ClientDevice[];
       setClientDevices(loadedDevices);
 
+      const loadedInteractions = (interactionsResult?.data || []) as InteractionLog[];
+      setRawInteractions(loadedInteractions);
+
       const deviceIdToCodeMap: Record<string, string> = {};
       loadedDevices.forEach((dev) => {
         if (dev.id && dev.device_code) {
@@ -571,7 +584,7 @@ export default function ClientPortalPage() {
       });
 
       const counts: Record<string, number> = {};
-      ((interactionsResult?.data || []) as { device_code: string | null; device_id: string | null }[]).forEach((t) => {
+      loadedInteractions.forEach((t) => {
         const code = t.device_code || (t.device_id ? deviceIdToCodeMap[t.device_id] : null);
         if (code) {
           counts[code] = (counts[code] || 0) + 1;
@@ -843,6 +856,49 @@ export default function ClientPortalPage() {
         !["cancelled", "no_show", "completed"].includes(appointment.status)
     );
   }, [appointments]);
+
+  const todayActionCounts = useMemo(() => {
+    const today = new Date();
+    const counts = {
+      totalTaps: 0,
+      googleReviewClicks: 0,
+      instagramClicks: 0,
+      whatsappClicks: 0,
+      callClicks: 0,
+      locationClicks: 0,
+      paymentClicks: 0,
+    };
+
+    rawInteractions.forEach((item) => {
+      if (!item.created_at) return;
+      const date = new Date(item.created_at);
+      const isToday =
+        date.getFullYear() === today.getFullYear() &&
+        date.getMonth() === today.getMonth() &&
+        date.getDate() === today.getDate();
+
+      if (!isToday) return;
+
+      const type = (item.interaction_type || "").toLowerCase();
+      if (type === "nfc_tap") {
+        counts.totalTaps += 1;
+      } else if (type === "google_review_click") {
+        counts.googleReviewClicks += 1;
+      } else if (type === "instagram_click") {
+        counts.instagramClicks += 1;
+      } else if (type === "whatsapp_click") {
+        counts.whatsappClicks += 1;
+      } else if (type === "call_click") {
+        counts.callClicks += 1;
+      } else if (type === "location_click") {
+        counts.locationClicks += 1;
+      } else if (type === "payment_click") {
+        counts.paymentClicks += 1;
+      }
+    });
+
+    return counts;
+  }, [rawInteractions]);
 
   const pendingAppointments = useMemo(() =>
     appointments.filter((appointment) => appointment.status === "pending"),
@@ -1549,6 +1605,9 @@ export default function ClientPortalPage() {
               }
               enabledPaidFeatures={
                 enabledPaidFeatures
+              }
+              todayActionCounts={
+                todayActionCounts
               }
             />
           )}
@@ -4881,6 +4940,7 @@ function AnalyticsPage({
   todayRevenue,
   completedRevenue,
   enabledPaidFeatures,
+  todayActionCounts,
 }: {
   orders: Order[];
   todayOrders: Order[];
@@ -4889,12 +4949,31 @@ function AnalyticsPage({
   todayRevenue: number;
   completedRevenue: number;
   enabledPaidFeatures: Feature[];
+  todayActionCounts?: {
+    totalTaps: number;
+    googleReviewClicks: number;
+    instagramClicks: number;
+    whatsappClicks: number;
+    callClicks: number;
+    locationClicks: number;
+    paymentClicks: number;
+  };
 }) {
   const averageOrderValue =
     completedOrders.length > 0
       ? completedRevenue /
         completedOrders.length
       : 0;
+
+  const actionCounts = todayActionCounts || {
+    totalTaps: 0,
+    googleReviewClicks: 0,
+    instagramClicks: 0,
+    whatsappClicks: 0,
+    callClicks: 0,
+    locationClicks: 0,
+    paymentClicks: 0,
+  };
 
   return (
     <div className="analytics-page">
@@ -4910,6 +4989,50 @@ function AnalyticsPage({
             A clear view of your TAPX business
             activity.
           </p>
+        </div>
+      </div>
+
+      <div className="analytics-today-actions" style={{ marginTop: "24px" }}>
+        <div className="eyebrow">TODAY'S CUSTOMER ACTIONS</div>
+        <h2 style={{ fontSize: "18px", fontWeight: 800, margin: "2px 0 14px", color: "#0f172a" }}>
+          Today's Action Summary
+        </h2>
+        <div className="analytics-actions-grid">
+          <AnalyticsCard
+            title="Total Taps"
+            value={String(actionCounts.totalTaps)}
+            note="NFC & QR page opens today"
+          />
+          <AnalyticsCard
+            title="Google Review Clicks"
+            value={String(actionCounts.googleReviewClicks)}
+            note="Review us button clicks"
+          />
+          <AnalyticsCard
+            title="Instagram Clicks"
+            value={String(actionCounts.instagramClicks)}
+            note="Instagram profile visits"
+          />
+          <AnalyticsCard
+            title="WhatsApp Clicks"
+            value={String(actionCounts.whatsappClicks)}
+            note="WhatsApp chat starts"
+          />
+          <AnalyticsCard
+            title="Calls"
+            value={String(actionCounts.callClicks)}
+            note="Direct phone call attempts"
+          />
+          <AnalyticsCard
+            title="Location Views"
+            value={String(actionCounts.locationClicks)}
+            note="Map location views"
+          />
+          <AnalyticsCard
+            title="Payment Attempts"
+            value={String(actionCounts.paymentClicks)}
+            note="Pay Now & UPI clicks"
+          />
         </div>
       </div>
 
@@ -5015,6 +5138,12 @@ function AnalyticsPage({
           color: #8d96a2;
           font-size: 13px;
           margin: 8px 0 0;
+        }
+
+        .analytics-actions-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+          gap: 13px;
         }
 
         .analytics-grid {
@@ -5693,14 +5822,13 @@ function SettingsPage({
             width: 100%;
           }
 
-          h1 {
-            font-size: 28px;
-          }
         }
       `}</style>
     </form>
   );
 }
+
+
 
 function SettingRow({
   label,

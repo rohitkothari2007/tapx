@@ -1000,6 +1000,28 @@ export default function TapPage({
     }, 0);
   }
 
+  async function trackActionClick(interactionType: string) {
+    if (!device) return;
+    try {
+      const { error: interactionError } = await supabase
+        .from("interactions")
+        .insert({
+          device_id: device.id,
+          business_id: device.business_id,
+          device_code: device.device_code,
+          interaction_type: interactionType,
+        });
+
+      if (interactionError) {
+        console.error(`[TAPX Analytics] Unable to record ${interactionType}:`, interactionError);
+      } else {
+        console.log(`[TAPX Analytics] Recorded ${interactionType}`);
+      }
+    } catch (err) {
+      console.error(`[TAPX Analytics] Exception recording ${interactionType}:`, err);
+    }
+  }
+
   if (loading) {
     return (
       <main style={styles.page}>
@@ -1329,6 +1351,7 @@ export default function TapPage({
                   href={
                     business.google_review_url
                   }
+                  onClick={() => void trackActionClick("google_review_click")}
                 />
 
                 <ActionCard
@@ -1340,6 +1363,7 @@ export default function TapPage({
                   href={
                     business.instagram_url
                   }
+                  onClick={() => void trackActionClick("instagram_click")}
                 />
 
                 <ActionCard
@@ -1351,6 +1375,7 @@ export default function TapPage({
                   href={
                     whatsappLink
                   }
+                  onClick={() => void trackActionClick("whatsapp_click")}
                 />
 
                 <ActionCard
@@ -1364,6 +1389,7 @@ export default function TapPage({
                   href={
                     paymentLink
                   }
+                  onClick={() => void trackActionClick("payment_click")}
                 />
 
                 <ActionCard
@@ -1381,6 +1407,7 @@ export default function TapPage({
                       ? `tel:${business.phone}`
                       : null
                   }
+                  onClick={() => void trackActionClick("call_click")}
                 />
 
                 <ActionCard
@@ -1396,6 +1423,7 @@ export default function TapPage({
                   href={
                     locationLink
                   }
+                  onClick={() => void trackActionClick("location_click")}
                 />
 
                 {/* PAID MODULES */}
@@ -5292,11 +5320,13 @@ function ActionCard({
   title,
   subtitle,
   href,
+  onClick,
 }: {
   icon: string;
   title: string;
   subtitle: string;
   href?: string | null;
+  onClick?: () => void;
 }) {
   const [isPressed, setIsPressed] = useState(false);
 
@@ -5314,6 +5344,7 @@ function ActionCard({
         href={href}
         target="_blank"
         rel="noopener noreferrer"
+        onClick={onClick}
         onTouchStart={() => setIsPressed(true)}
         onTouchEnd={() => setIsPressed(false)}
         onTouchCancel={() => setIsPressed(false)}
