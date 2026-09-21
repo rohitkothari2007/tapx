@@ -381,37 +381,38 @@ export default function ClientPortalPage() {
     try {
       setError("");
 
+      const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+      const bIdParam = searchParams?.get("bId");
+
       const {
         data: { user },
         error: userError,
       } = await supabase.auth.getUser();
 
-      if (userError || !user) {
-        router.replace("/client/login");
-        return;
-      }
+      let businessId: string | null = null;
 
-      setCurrentUserEmail(user.email || "");
-
-      const { data: mapping, error: mappingError } =
-        await supabase
+      if (user) {
+        setCurrentUserEmail(user.email || "");
+        const { data: mapping } = await supabase
           .from("tapx_client_users")
           .select("business_id, role")
           .eq("user_id", user.id)
           .limit(1)
           .maybeSingle();
 
-      if (mappingError) {
-        throw new Error(mappingError.message);
+        if (mapping?.business_id) {
+          businessId = mapping.business_id;
+        }
       }
 
-      if (!mapping?.business_id) {
-        throw new Error(
-          "Your account is not connected to a TAPX business yet."
-        );
+      if (!businessId && bIdParam) {
+        businessId = bIdParam;
       }
 
-      const businessId = mapping.business_id;
+      if (!businessId) {
+        router.replace("/client/login");
+        return;
+      }
 
       const [
         businessResult,
@@ -767,6 +768,7 @@ export default function ClientPortalPage() {
     [enabledModuleKeys]
   );
 
+  // Note: Any future order/transaction-generating module key must be added here manually
   const hasOrders = hasModule(
     "table_ordering",
     "table-ordering",
@@ -845,6 +847,12 @@ export default function ClientPortalPage() {
           sum + Number(order.total || 0),
         0
       );
+  }, [todayOrders]);
+
+  const todayCompletedOrdersCount = useMemo(() => {
+    return todayOrders.filter((order) =>
+      ["completed", "served"].includes(order.status)
+    ).length;
   }, [todayOrders]);
 
   const completedRevenue = useMemo(() => {
@@ -1616,6 +1624,10 @@ export default function ClientPortalPage() {
               todayActionCounts={
                 todayActionCounts
               }
+              todayCompletedOrdersCount={
+                todayCompletedOrdersCount
+              }
+              hasOrders={hasOrders}
             />
           )}
 
@@ -4948,6 +4960,8 @@ function AnalyticsPage({
   completedRevenue,
   enabledPaidFeatures,
   todayActionCounts,
+  todayCompletedOrdersCount = 0,
+  hasOrders = false,
 }: {
   orders: Order[];
   todayOrders: Order[];
@@ -4965,6 +4979,8 @@ function AnalyticsPage({
     locationClicks: number;
     paymentClicks: number;
   };
+  todayCompletedOrdersCount?: number;
+  hasOrders?: boolean;
 }) {
   const averageOrderValue =
     completedOrders.length > 0
@@ -5006,90 +5022,81 @@ function AnalyticsPage({
         </h2>
         <div className="analytics-actions-grid">
           <AnalyticsCard
-            title="Total Taps"
+            title="Total Taps Today"
             value={String(actionCounts.totalTaps)}
-            note="NFC & QR page opens today"
+            note="NFC and QR page opens today"
           />
           <AnalyticsCard
-            title="Google Review Clicks"
+            title="Total Reviews Today"
             value={String(actionCounts.googleReviewClicks)}
             note="Review us button clicks"
           />
           <AnalyticsCard
-            title="Instagram Clicks"
+            title="Instagram Visits Today"
             value={String(actionCounts.instagramClicks)}
             note="Instagram profile visits"
           />
-          <AnalyticsCard
-            title="WhatsApp Clicks"
-            value={String(actionCounts.whatsappClicks)}
-            note="WhatsApp chat starts"
-          />
-          <AnalyticsCard
-            title="Calls"
-            value={String(actionCounts.callClicks)}
-            note="Direct phone call attempts"
-          />
-          <AnalyticsCard
-            title="Location Views"
-            value={String(actionCounts.locationClicks)}
-            note="Map location views"
-          />
-          <AnalyticsCard
-            title="Payment Attempts"
-            value={String(actionCounts.paymentClicks)}
-            note="Pay Now & UPI clicks"
-          />
+          {hasOrders && (
+            <AnalyticsCard
+              title="Payments Today"
+              value={String(todayCompletedOrdersCount)}
+              note="Confirmed completed payments"
+            />
+          )}
         </div>
       </div>
 
-      <div className="analytics-grid">
-        <AnalyticsCard
-          title="Today's revenue"
-          value={formatCurrency(todayRevenue)}
-          note="Completed and served orders"
-        />
+      {hasOrders && (
+        <div className="analytics-grid">
+          <AnalyticsCard
+            title="Today's revenue"
+            value={formatCurrency(todayRevenue)}
+            note="Completed and served orders"
+          />
 
-        <AnalyticsCard
-          title="Today's orders"
-          value={String(todayOrders.length)}
-          note="Orders created today"
-        />
+          <AnalyticsCard
+            title="Today's orders"
+            value={String(todayOrders.length)}
+            note="Orders created today"
+          />
 
-        <AnalyticsCard
-          title="Active orders"
-          value={String(pendingOrders.length)}
-          note="Orders requiring attention"
-        />
+          <AnalyticsCard
+            title="Active orders"
+            value={String(pendingOrders.length)}
+            note="Orders requiring attention"
+          />
 
-        <AnalyticsCard
-          title="Average order"
-          value={formatCurrency(
-            averageOrderValue
-          )}
-          note="Based on completed orders"
-        />
-      </div>
+          <AnalyticsCard
+            title="Average order"
+            value={formatCurrency(
+              averageOrderValue
+            )}
+            note="Based on completed orders"
+          />
+        </div>
+      )}
 
       <div className="analytics-panels">
-        <div className="analytics-panel">
-          <h3>Order performance</h3>
+        {hasOrders && (
+          <div className="analytics-panel">
+            <h3>Order performance</h3>
 
-          <AnalyticsLine
-            label="Total orders"
-            value={orders.length}
-          />
+            <AnalyticsLine
+              label="Total orders"
+              value={orders.length}
+            />
 
-          <AnalyticsLine
-            label="Completed"
-            value={completedOrders.length}
-          />
+            <AnalyticsLine
+              label="Completed"
+              value={completedOrders.length}
+            />
 
-          <AnalyticsLine
-            label="Active"
-            value={pendingOrders.length}
-          />
-        </div>
+            <AnalyticsLine
+              label="Active"
+              value={pendingOrders.length}
+            />
+          </div>
+        )}
 
         <div className="analytics-panel">
           <h3>Enabled services</h3>
