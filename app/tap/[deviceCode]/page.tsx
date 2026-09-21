@@ -1401,6 +1401,7 @@ export default function TapPage({
                   href={
                     business.instagram_url
                   }
+                  onClick={() => void trackActionClick("instagram_click")}
                 />
 
                 <ActionCard

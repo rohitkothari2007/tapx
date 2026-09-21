@@ -5156,8 +5156,8 @@ function AnalyticsPage({
 
         .analytics-actions-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-          gap: 13px;
+          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+          gap: 16px;
         }
 
         .analytics-grid {
