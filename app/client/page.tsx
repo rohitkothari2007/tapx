@@ -72,6 +72,7 @@ type Order = {
   status: string;
   source_device_code: string | null;
   created_at: string;
+  order_number?: number | null;
 };
 
 type OrderItem = {
@@ -167,6 +168,23 @@ const ORDER_STATUSES = [
   "completed",
   "cancelled",
 ] as const;
+
+function getNextOrderStatus(currentStatus: string): { nextStatus: string; label: string } | null {
+  switch (currentStatus) {
+    case "pending":
+      return { nextStatus: "accepted", label: "Accept →" };
+    case "accepted":
+      return { nextStatus: "preparing", label: "Prepare →" };
+    case "preparing":
+      return { nextStatus: "ready", label: "Mark Ready →" };
+    case "ready":
+      return { nextStatus: "served", label: "Mark Served →" };
+    case "served":
+      return { nextStatus: "completed", label: "Complete ✓" };
+    default:
+      return null;
+  }
+}
 
 function normalizeKey(value: string | null | undefined) {
   return String(value || "")
@@ -625,8 +643,20 @@ export default function ClientPortalPage() {
         throw new Error(ordersResult.error.message);
       }
 
-      const loadedOrders =
-        (ordersResult.data || []) as Order[];
+      const rawOrders = (ordersResult.data || []) as Order[];
+
+      const sortedAsc = [...rawOrders].sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+      const orderNumberMap: Record<string, number> = {};
+      sortedAsc.forEach((ord, index) => {
+        orderNumberMap[ord.id] = ord.order_number || index + 1;
+      });
+
+      const loadedOrders = rawOrders.map((ord) => ({
+        ...ord,
+        order_number: ord.order_number || orderNumberMap[ord.id] || 1,
+      }));
 
       setBusiness(businessResult.data as Business);
       setFeatures((featuresResult.data || []) as Feature[]);
@@ -1005,6 +1035,7 @@ export default function ClientPortalPage() {
     try {
       setUpdatingOrderId(orderId);
 
+      let updateErr = null;
       const { error: rpcError } =
         await supabase.rpc(
           "update_tapx_order_status",
@@ -1015,7 +1046,15 @@ export default function ClientPortalPage() {
         );
 
       if (rpcError) {
-        throw new Error(rpcError.message);
+        const { error: directErr } = await supabase
+          .from("tapx_orders")
+          .update({ status })
+          .eq("id", orderId);
+        updateErr = directErr;
+      }
+
+      if (updateErr) {
+        throw new Error(updateErr.message);
       }
 
       setOrders((current) =>
@@ -4462,51 +4501,88 @@ function OrdersPage({
               <span>TABLE</span>
               <span>TIME</span>
               <span>TOTAL</span>
-              <span>STATUS</span>
+              <span>STATUS & ACTIONS</span>
             </div>
 
-            {orders.map((order) => (
-              <button
-                className="order-row"
-                key={order.id}
-                onClick={() =>
-                  setSelectedOrder(order)
-                }
-              >
-                <span>
-                  <strong>
-                    #{order.id.slice(0, 8)}
-                  </strong>
-                </span>
+            {orders.map((order) => {
+              const nextInfo = getNextOrderStatus(order.status);
+              return (
+                <div
+                  className="order-row"
+                  key={order.id}
+                  onClick={() =>
+                    setSelectedOrder(order)
+                  }
+                >
+                  <span>
+                    <strong>
+                      Order #{order.order_number || order.id.slice(0, 8)}
+                    </strong>
+                  </span>
 
-                <span>
-                  {order.customer_name ||
-                    "Customer"}
-                </span>
+                  <span>
+                    {order.customer_name ||
+                      "Customer"}
+                  </span>
 
-                <span>
-                  {order.table_number
-                    ? `Table ${order.table_number}`
-                    : "—"}
-                </span>
+                  <span>
+                    {order.table_number
+                      ? `Table ${order.table_number}`
+                      : "—"}
+                  </span>
 
-                <span>
-                  {formatDateTime(
-                    order.created_at
-                  )}
-                </span>
+                  <span>
+                    {formatDateTime(
+                      order.created_at
+                    )}
+                  </span>
 
-                <span>
-                  {formatCurrency(order.total)}
-                </span>
+                  <span>
+                    {formatCurrency(order.total)}
+                  </span>
 
-                <span>
-                  <StatusBadge
-                    status={order.status}
-                  />
-                </span>
-              </button>
-            ))}
+                  <span
+                    className="order-row-actions"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <StatusBadge
+                      status={order.status}
+                    />
+
+                    {nextInfo && (
+                      <button
+                        type="button"
+                        className="quick-status-btn"
+                        disabled={updatingOrderId === order.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateOrderStatus(order.id, nextInfo.nextStatus);
+                        }}
+                      >
+                        {nextInfo.label}
+                      </button>
+                    )}
+
+                    <select
+                      className="status-select-inline"
+                      value={order.status}
+                      disabled={updatingOrderId === order.id}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        updateOrderStatus(order.id, e.target.value);
+                      }}
+                    >
+                      {ORDER_STATUSES.map((status) => (
+                        <option value={status} key={status}>
+                          {prettyName(status)}
+                        </option>
+                      ))}
+                    </select>
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -4531,10 +4607,7 @@ function OrdersPage({
                 </div>
 
                 <h2>
-                  #{selectedOrder.id.slice(
-                    0,
-                    8
-                  )}
+                  Order #{selectedOrder.order_number || selectedOrder.id.slice(0, 8)}
                 </h2>
               </div>
 
@@ -4708,17 +4781,62 @@ function OrdersPage({
         }
 
         .orders-table {
-          min-width: 850px;
+          min-width: 960px;
         }
 
         .table-header,
         .order-row {
           display: grid;
           grid-template-columns:
-            1fr 1.4fr 1fr 1.2fr 1fr 1fr;
+            1.1fr 1.2fr 0.9fr 1.1fr 1fr 2.6fr;
           gap: 15px;
           align-items: center;
           padding: 15px 19px;
+        }
+
+        .order-row-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .quick-status-btn {
+          border: 0;
+          border-radius: 6px;
+          padding: 5px 9px;
+          background: #3b82f6;
+          color: white;
+          font-size: 11px;
+          font-weight: 650;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: background 0.15s ease;
+        }
+
+        .quick-status-btn:hover {
+          background: #2563eb;
+        }
+
+        .quick-status-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .status-select-inline {
+          border: 1px solid #d0d5dd;
+          border-radius: 6px;
+          padding: 4px 7px;
+          background: #f8fafc;
+          color: #334155;
+          font-size: 11px;
+          font-weight: 600;
+          outline: none;
+          cursor: pointer;
+        }
+
+        .status-select-inline:focus {
+          border-color: #3b82f6;
         }
 
         .table-header {
