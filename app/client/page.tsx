@@ -377,7 +377,27 @@ export default function ClientPortalPage() {
   const [currentUserEmail, setCurrentUserEmail] =
     useState("");
 
+  const [currentUserId, setCurrentUserId] =
+    useState("");
+
+  const [showBusinessPicker, setShowBusinessPicker] =
+    useState(false);
+
   const [userBusinesses, setUserBusinesses] = useState<Array<{ id: string; name: string; category: string | null }>>([]);
+
+  const handleSelectBusiness = (bId: string) => {
+    if (currentUserId) {
+      localStorage.setItem(`tapx_selected_bId_${currentUserId}`, bId);
+    }
+    setShowBusinessPicker(false);
+    setLoading(true);
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("bId", bId);
+    window.history.pushState({}, "", url.toString());
+
+    loadPortal();
+  };
 
   const loadPortal = useCallback(async () => {
     try {
@@ -396,6 +416,7 @@ export default function ClientPortalPage() {
 
       if (user) {
         setCurrentUserEmail(user.email || "");
+        setCurrentUserId(user.id);
 
         // 1. Fetch businesses mapped via tapx_client_users
         const { data: mappings } = await supabase
@@ -426,18 +447,40 @@ export default function ClientPortalPage() {
         }
       }
 
-      // MULTI-BUSINESS RESOLUTION:
-      // 1. If bIdParam is provided and valid for user, use it
-      if (bIdParam && (userMappedIds.includes(bIdParam) || userMappedIds.length === 0)) {
-        businessId = bIdParam;
-      }
-      // 2. Otherwise default to user's first mapped business
-      else if (userMappedIds.length > 0) {
-        businessId = userMappedIds[0];
+      if (userMappedIds.length === 0) {
+        setError("No business accounts found for your login. Please contact TAPX Admin.");
+        setLoading(false);
+        return;
       }
 
-      if (!businessId) {
-        router.replace("/client/login");
+      const savedBId = typeof window !== "undefined" ? localStorage.getItem(`tapx_selected_bId_${user?.id}`) : null;
+
+      // MULTI-BUSINESS RESOLUTION:
+      // 1. If bIdParam is provided and valid for user, use it
+      if (bIdParam && userMappedIds.includes(bIdParam)) {
+        businessId = bIdParam;
+        if (typeof window !== "undefined" && user?.id) {
+          localStorage.setItem(`tapx_selected_bId_${user.id}`, bIdParam);
+        }
+        setShowBusinessPicker(false);
+      }
+      // 2. If single-business user, skip picker screen entirely
+      else if (userMappedIds.length === 1) {
+        businessId = userMappedIds[0];
+        if (typeof window !== "undefined" && user?.id) {
+          localStorage.setItem(`tapx_selected_bId_${user.id}`, userMappedIds[0]);
+        }
+        setShowBusinessPicker(false);
+      }
+      // 3. If multi-business user has a valid saved preference in localStorage, use it
+      else if (savedBId && userMappedIds.includes(savedBId)) {
+        businessId = savedBId;
+        setShowBusinessPicker(false);
+      }
+      // 4. Multi-business user with no saved preference -> show business picker screen/modal
+      else {
+        setShowBusinessPicker(true);
+        setLoading(false);
         return;
       }
 
@@ -1242,6 +1285,183 @@ export default function ClientPortalPage() {
     );
   }
 
+  if (showBusinessPicker) {
+    return (
+      <div className="picker-screen">
+        <div className="picker-card">
+          <div className="picker-header">
+            <div className="picker-logo">T</div>
+            <h2>Which business would you like to manage?</h2>
+            <p>
+              Signed in as <strong>{currentUserEmail}</strong>
+            </p>
+          </div>
+
+          <div className="picker-list">
+            {userBusinesses.map((biz) => (
+              <div
+                key={biz.id}
+                className="picker-item"
+                onClick={() => handleSelectBusiness(biz.id)}
+              >
+                <div className="picker-item-avatar">
+                  {getInitials(biz.name)}
+                </div>
+                <div className="picker-item-info">
+                  <h3>{biz.name}</h3>
+                  <span>{prettyName(biz.category)}</span>
+                </div>
+                <button
+                  type="button"
+                  className="picker-item-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSelectBusiness(biz.id);
+                  }}
+                >
+                  Manage Business →
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="picker-footer">
+            <button type="button" className="logout-btn" onClick={logout}>
+              Sign out
+            </button>
+          </div>
+        </div>
+
+        <style jsx>{`
+          .picker-screen {
+            min-height: 100vh;
+            background: #0f172a;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            font-family:
+              Inter,
+              ui-sans-serif,
+              system-ui,
+              sans-serif;
+          }
+          .picker-card {
+            width: min(520px, 100%);
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 20px;
+            padding: 32px;
+            color: #f8fafc;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+          }
+          .picker-header {
+            text-align: center;
+            margin-bottom: 24px;
+          }
+          .picker-logo {
+            width: 48px;
+            height: 48px;
+            background: #6366f1;
+            color: white;
+            font-size: 24px;
+            font-weight: 800;
+            border-radius: 12px;
+            display: grid;
+            place-items: center;
+            margin: 0 auto 16px;
+          }
+          .picker-header h2 {
+            margin: 0 0 8px;
+            font-size: 22px;
+            font-weight: 700;
+            color: #f8fafc;
+          }
+          .picker-header p {
+            margin: 0;
+            font-size: 14px;
+            color: #94a3b8;
+          }
+          .picker-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 24px;
+          }
+          .picker-item {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 16px 20px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+          }
+          .picker-item:hover {
+            border-color: #6366f1;
+            background: #182238;
+            transform: translateY(-1px);
+          }
+          .picker-item-avatar {
+            width: 42px;
+            height: 42px;
+            border-radius: 10px;
+            background: #312e81;
+            color: #818cf8;
+            font-weight: 700;
+            font-size: 15px;
+            display: grid;
+            place-items: center;
+          }
+          .picker-item-info {
+            flex: 1;
+          }
+          .picker-item-info h3 {
+            margin: 0 0 4px;
+            font-size: 16px;
+            font-weight: 600;
+            color: #f8fafc;
+          }
+          .picker-item-info span {
+            font-size: 13px;
+            color: #94a3b8;
+          }
+          .picker-item-btn {
+            background: #312e81;
+            color: #c7d2fe;
+            border: none;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+          }
+          .picker-item:hover .picker-item-btn {
+            background: #4f46e5;
+            color: white;
+          }
+          .picker-footer {
+            text-align: center;
+            border-top: 1px solid #334155;
+            padding-top: 20px;
+          }
+          .logout-btn {
+            background: transparent;
+            border: none;
+            color: #94a3b8;
+            font-size: 14px;
+            cursor: pointer;
+            text-decoration: underline;
+          }
+          .logout-btn:hover {
+            color: #f8fafc;
+          }
+        `}</style>
+      </div>
+    );
+  }
+
   if (error || !business) {
     return (
       <div className="error-screen">
@@ -1375,31 +1595,46 @@ export default function ClientPortalPage() {
 
           <div className="business-info" style={{ flex: 1, minWidth: 0 }}>
             {userBusinesses.length > 1 ? (
-              <select
-                value={business.id}
-                onChange={(e) => {
-                  const newBId = e.target.value;
-                  router.push(`/client?bId=${newBId}`);
-                }}
-                style={{
-                  width: "100%",
-                  padding: "6px 8px",
-                  borderRadius: "8px",
-                  border: "1px solid #334155",
-                  background: "#1e293b",
-                  color: "#f8fafc",
-                  fontSize: "12px",
-                  fontWeight: 700,
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                {userBusinesses.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name} ({prettyName(b.category)})
-                  </option>
-                ))}
-              </select>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <select
+                  value={business.id}
+                  onChange={(e) => handleSelectBusiness(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "6px 8px",
+                    borderRadius: "8px",
+                    border: "1px solid #334155",
+                    background: "#1e293b",
+                    color: "#f8fafc",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    outline: "none",
+                    cursor: "pointer",
+                  }}
+                >
+                  {userBusinesses.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({prettyName(b.category)})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowBusinessPicker(true)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#818cf8",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    textAlign: "left",
+                    padding: 0,
+                    cursor: "pointer",
+                  }}
+                >
+                  Switch Business ⇄
+                </button>
+              </div>
             ) : (
               <>
                 <strong>{business.name}</strong>
