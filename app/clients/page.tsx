@@ -66,6 +66,10 @@ export default function ClientsPage() {
   const [deletingBusinessId, setDeletingBusinessId] =
     useState<string | null>(null);
 
+  // Owner login email state
+  const [ownerEmails, setOwnerEmails] = useState<Record<string, string>>({});
+  const [ownerLoginEmail, setOwnerLoginEmail] = useState("");
+
   useEffect(() => {
     loadClients();
   }, []);
@@ -103,6 +107,25 @@ export default function ClientsPage() {
 
       setBusinesses((businessData || []) as Business[]);
       setDevices((deviceData || []) as Device[]);
+
+      // Fetch owner emails via admin API
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (session?.access_token) {
+        const ownersRes = await fetch("/api/admin/client-owners", {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        });
+        if (ownersRes.ok) {
+          const ownersData = await ownersRes.json();
+          if (ownersData.owners) {
+            setOwnerEmails(ownersData.owners);
+          }
+        }
+      }
     } catch (err) {
       console.error("Error loading clients:", err);
 
@@ -166,6 +189,7 @@ export default function ClientsPage() {
       whatsapp_number: business.whatsapp_number || "",
     });
 
+    setOwnerLoginEmail(ownerEmails[business.id] || "");
     setSaveMessage("");
     setError("");
   }
@@ -214,6 +238,44 @@ export default function ClientsPage() {
 
       if (updateError) {
         throw updateError;
+      }
+
+      // -------------------------------------------------------
+      // OWNER LOGIN EMAIL UPDATE
+      // -------------------------------------------------------
+      const currentOwnerEmail = (ownerEmails[selectedBusiness.id] || "").trim().toLowerCase();
+      const cleanNewOwnerEmail = ownerLoginEmail.trim().toLowerCase();
+
+      if (cleanNewOwnerEmail && cleanNewOwnerEmail !== currentOwnerEmail) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session?.access_token) {
+          throw new Error("Admin session token unavailable. Please sign in again.");
+        }
+
+        const ownerRes = await fetch("/api/admin/create-owner", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            businessId: selectedBusiness.id,
+            ownerEmail: cleanNewOwnerEmail,
+          }),
+        });
+
+        const ownerData = await ownerRes.json();
+        if (!ownerRes.ok) {
+          throw new Error(ownerData.error || "Failed to update owner email.");
+        }
+
+        setOwnerEmails((prev) => ({
+          ...prev,
+          [selectedBusiness.id]: cleanNewOwnerEmail,
+        }));
       }
 
       // Update local business list immediately
@@ -1242,6 +1304,116 @@ export default function ClientsPage() {
                     selectedBusiness.state ||
                     "—"
                   }
+                />
+              </div>
+
+              {/* =================================================
+                  CLIENT PORTAL ACCESS
+              ================================================= */}
+
+              <SectionTitle
+                title="Client Portal Access"
+                description="Manage the account email used by the business owner to log into the TAPX Client Portal."
+              />
+
+              <div
+                style={{
+                  background: "#fff",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: "12px",
+                  padding: "18px",
+                  marginBottom: "28px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "12px",
+                    alignItems: "flex-start",
+                    marginBottom: "14px",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "40px",
+                      height: "40px",
+                      borderRadius: "10px",
+                      background: "#f1f5f9",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "19px",
+                      flexShrink: 0,
+                    }}
+                  >
+                    👤
+                  </div>
+
+                  <div style={{ flex: 1 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <strong style={{ fontSize: "15px", color: "#111827" }}>
+                        Owner Login Email
+                      </strong>
+                      <span
+                        style={{
+                          fontSize: "11px",
+                          fontWeight: 600,
+                          padding: "3px 7px",
+                          borderRadius: "20px",
+                          background: ownerEmails[selectedBusiness.id]
+                            ? "#dcfce7"
+                            : "#fee2e2",
+                          color: ownerEmails[selectedBusiness.id]
+                            ? "#15803d"
+                            : "#991b1b",
+                        }}
+                      >
+                        {ownerEmails[selectedBusiness.id]
+                          ? "Linked Account"
+                          : "No Owner Account"}
+                      </span>
+                    </div>
+
+                    <p
+                      style={{
+                        margin: "4px 0 0",
+                        color: "#64748b",
+                        fontSize: "13px",
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      Current owner email:{" "}
+                      <strong style={{ color: "#0f172a" }}>
+                        {ownerEmails[selectedBusiness.id] || "None linked"}
+                      </strong>
+                      . Updating this field re-maps portal access to the new account without altering public business details.
+                    </p>
+                  </div>
+                </div>
+
+                <input
+                  type="email"
+                  value={ownerLoginEmail}
+                  placeholder="owner@business.com"
+                  onChange={(event) => setOwnerLoginEmail(event.target.value)}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "8px",
+                    padding: "11px 12px",
+                    fontSize: "14px",
+                    outline: "none",
+                    color: "#111827",
+                    background: "#fff",
+                  }}
                 />
               </div>
 

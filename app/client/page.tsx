@@ -377,6 +377,8 @@ export default function ClientPortalPage() {
   const [currentUserEmail, setCurrentUserEmail] =
     useState("");
 
+  const [userBusinesses, setUserBusinesses] = useState<Array<{ id: string; name: string; category: string | null }>>([]);
+
   const loadPortal = useCallback(async () => {
     try {
       setError("");
@@ -390,23 +392,48 @@ export default function ClientPortalPage() {
       } = await supabase.auth.getUser();
 
       let businessId: string | null = null;
+      let userMappedIds: string[] = [];
 
       if (user) {
         setCurrentUserEmail(user.email || "");
-        const { data: mapping } = await supabase
+
+        // 1. Fetch businesses mapped via tapx_client_users
+        const { data: mappings } = await supabase
           .from("tapx_client_users")
           .select("business_id, role")
-          .eq("user_id", user.id)
-          .limit(1)
-          .maybeSingle();
+          .eq("user_id", user.id);
 
-        if (mapping?.business_id) {
-          businessId = mapping.business_id;
+        const cuMappedIds = (mappings || []).map((m) => m.business_id);
+
+        // 2. Fetch businesses mapped via owner login email
+        const { data: bizByEmail } = await supabase
+          .from("businesses")
+          .select("id, name, category")
+          .ilike("email", user.email || "");
+
+        const emailMappedIds = (bizByEmail || []).map((b) => b.id);
+
+        userMappedIds = Array.from(new Set([...cuMappedIds, ...emailMappedIds]));
+
+        if (userMappedIds.length > 0) {
+          const { data: bList } = await supabase
+            .from("businesses")
+            .select("id, name, category")
+            .in("id", userMappedIds);
+          setUserBusinesses(bList || []);
+        } else {
+          setUserBusinesses([]);
         }
       }
 
-      if (!businessId && bIdParam) {
+      // MULTI-BUSINESS RESOLUTION:
+      // 1. If bIdParam is provided and valid for user, use it
+      if (bIdParam && (userMappedIds.includes(bIdParam) || userMappedIds.length === 0)) {
         businessId = bIdParam;
+      }
+      // 2. Otherwise default to user's first mapped business
+      else if (userMappedIds.length > 0) {
+        businessId = userMappedIds[0];
       }
 
       if (!businessId) {
@@ -1346,11 +1373,41 @@ export default function ClientPortalPage() {
             )}
           </div>
 
-          <div className="business-info">
-            <strong>{business.name}</strong>
-            <span>
-              {prettyName(business.category)}
-            </span>
+          <div className="business-info" style={{ flex: 1, minWidth: 0 }}>
+            {userBusinesses.length > 1 ? (
+              <select
+                value={business.id}
+                onChange={(e) => {
+                  const newBId = e.target.value;
+                  router.push(`/client?bId=${newBId}`);
+                }}
+                style={{
+                  width: "100%",
+                  padding: "6px 8px",
+                  borderRadius: "8px",
+                  border: "1px solid #334155",
+                  background: "#1e293b",
+                  color: "#f8fafc",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                  outline: "none",
+                  cursor: "pointer",
+                }}
+              >
+                {userBusinesses.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({prettyName(b.category)})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <>
+                <strong>{business.name}</strong>
+                <span>
+                  {prettyName(business.category)}
+                </span>
+              </>
+            )}
           </div>
         </div>
 
