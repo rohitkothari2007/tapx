@@ -339,20 +339,52 @@ export default function ClientsPage() {
     setError("");
 
     try {
-      const { error: deleteError } = await supabase.rpc(
-        "delete_tapx_business",
-        {
-          p_business_id: business.id,
-        }
-      );
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (deleteError) {
-        console.error(
-          "TAPX client deletion error:",
-          deleteError
+      if (session?.access_token) {
+        const res = await fetch("/api/admin/delete-business", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ businessId: business.id }),
+        });
+
+        const resData = await res.json();
+        if (!res.ok || resData.error) {
+          throw new Error(resData.error || "Unable to delete client.");
+        }
+      } else {
+        // Fallback: unassign devices first to avoid status check constraint violation
+        await supabase
+          .from("devices")
+          .update({
+            business_id: null,
+            status: "unassigned",
+            assigned_at: null,
+          })
+          .eq("business_id", business.id);
+
+        const { error: deleteError } = await supabase.rpc(
+          "delete_tapx_business",
+          {
+            p_business_id: business.id,
+          }
         );
 
-        throw deleteError;
+        if (deleteError) {
+          console.error(
+            "TAPX client deletion RPC error:",
+            deleteError
+          );
+          throw deleteError;
+        }
+
+        // Direct fallback delete if RPC did not clear business table
+        await supabase.from("businesses").delete().eq("id", business.id);
       }
 
       // -------------------------------------------------------
@@ -396,17 +428,19 @@ export default function ClientsPage() {
       alert(
         `"${business.name}" has been deleted successfully.`
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error(
         "Unable to delete TAPX client:",
         err
       );
 
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to delete client."
-      );
+      const realErrorMsg =
+        err?.message ||
+        err?.details ||
+        err?.hint ||
+        (typeof err === "string" ? err : "Unable to delete client.");
+
+      setError(realErrorMsg);
     } finally {
       setDeletingBusinessId(null);
     }
