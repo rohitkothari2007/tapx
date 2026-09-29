@@ -429,12 +429,27 @@ export default function ClientPortalPage() {
         error: userError,
       } = await supabase.auth.getUser();
 
+      if (!user) {
+        router.replace("/client/login");
+        return;
+      }
+
       let businessId: string | null = null;
       let userMappedIds: string[] = [];
 
+      let isAdminUser = false;
       if (user) {
         setCurrentUserEmail(user.email || "");
         setCurrentUserId(user.id);
+
+        // Check if caller is TAPX Admin
+        const { data: adminRow } = await supabase
+          .from("tapx_admin_users")
+          .select("id")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        isAdminUser = !!adminRow;
 
         // 1. Fetch businesses mapped via tapx_client_users
         const { data: mappings } = await supabase
@@ -454,7 +469,19 @@ export default function ClientPortalPage() {
 
         userMappedIds = Array.from(new Set([...cuMappedIds, ...emailMappedIds]));
 
-        if (userMappedIds.length > 0) {
+        if (isAdminUser) {
+          // Admin gets access to all registered businesses in dropdown switcher
+          const { data: allBList } = await supabase
+            .from("businesses")
+            .select("id, name, category")
+            .order("name", { ascending: true });
+          setUserBusinesses(allBList || []);
+          if (allBList) {
+            allBList.forEach((b) => {
+              if (!userMappedIds.includes(b.id)) userMappedIds.push(b.id);
+            });
+          }
+        } else if (userMappedIds.length > 0) {
           const { data: bList } = await supabase
             .from("businesses")
             .select("id, name, category")
@@ -462,6 +489,23 @@ export default function ClientPortalPage() {
           setUserBusinesses(bList || []);
         } else {
           setUserBusinesses([]);
+        }
+      }
+
+      // If bIdParam is passed in URL (e.g. /client?bId=...), fetch target business
+      if (bIdParam && !userMappedIds.includes(bIdParam)) {
+        const { data: targetB } = await supabase
+          .from("businesses")
+          .select("id, name, category")
+          .eq("id", bIdParam)
+          .maybeSingle();
+
+        if (targetB) {
+          userMappedIds.push(targetB.id);
+          setUserBusinesses((prev) => {
+            const exists = prev.some((p) => p.id === targetB.id);
+            return exists ? prev : [...prev, targetB];
+          });
         }
       }
 
@@ -474,7 +518,7 @@ export default function ClientPortalPage() {
       const savedBId = typeof window !== "undefined" ? localStorage.getItem(`tapx_selected_bId_${user?.id}`) : null;
 
       // MULTI-BUSINESS RESOLUTION:
-      // 1. If bIdParam is provided and valid for user, use it
+      // 1. If bIdParam is provided, use it
       if (bIdParam && userMappedIds.includes(bIdParam)) {
         businessId = bIdParam;
         if (typeof window !== "undefined" && user?.id) {

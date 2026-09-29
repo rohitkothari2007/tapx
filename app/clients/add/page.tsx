@@ -145,6 +145,7 @@ export default function AddClientPage() {
     useState<ActivatedClient | null>(null);
   const [copied, setCopied] = useState(false);
   const [copiedPortal, setCopiedPortal] = useState(false);
+  const [copiedMsg, setCopiedMsg] = useState(false);
 
   // =========================================================
   // LOAD TAPX ONBOARDING DATA
@@ -780,6 +781,37 @@ export default function AddClientPage() {
     }
   }
 
+  async function copyWelcomeMessage() {
+    if (!activatedClient) return;
+    const ownerLoginUrl = `${window.location.origin}/client/login`;
+    const msg = `🎉 Welcome to TAPX, ${activatedClient.name}!
+
+Your business touchpoint & owner dashboard are ready:
+
+📱 Customer Touchpoint URL (NFC / QR):
+${activatedClient.customerUrl}
+
+🔑 Owner Login Portal:
+${ownerLoginUrl}
+Registered Owner Email: ${activatedClient.ownerEmail || "Not assigned"}
+
+✉️ PASSWORD SETUP INSTRUCTION:
+Please check your email inbox for an invitation email from TAPX to set your account password before logging in.
+
+Assigned Device: ${activatedClient.deviceCode}
+Category: ${activatedClient.category}
+
+Click the Owner Login link above to sign in once your password is set!`;
+
+    try {
+      await navigator.clipboard.writeText(msg);
+      setCopiedMsg(true);
+      setTimeout(() => setCopiedMsg(false), 2500);
+    } catch (err) {
+      console.error("Clipboard copy error:", err);
+    }
+  }
+
   async function copyCustomerUrl() {
     if (!activatedClient?.customerUrl) {
       return;
@@ -852,7 +884,8 @@ export default function AddClientPage() {
   // =========================================================
 
   if (activatedClient) {
-    const portalUrl = `${window.location.origin}/client`;
+    const portalUrl = `${window.location.origin}/client?bId=${activatedClient.id}`;
+    const ownerLoginUrl = `${window.location.origin}/client/login`;
 
     return (
       <main style={pageStyle}>
@@ -1142,28 +1175,37 @@ export default function AddClientPage() {
                       No owner email was assigned during setup. Without an owner email, nobody will be able to log in to access this client's portal. Please assign an owner email in Client Settings.
                     </div>
                   )}
+
+                  {activatedClient.ownerEmail && !activatedClient.ownerAccessCreated && (
+                    <div style={{ fontSize: "12px", color: "#854d0e", marginTop: "6px", background: "#fef9c3", padding: "8px 10px", borderRadius: "6px", border: "1px solid #fef08a", lineHeight: "1.4" }}>
+                      ⚠️ <strong>INVITE UNACCEPTED / PENDING SETUP:</strong> An invitation email was sent to <strong>{activatedClient.ownerEmail}</strong>. The owner must open their invitation email and click the setup link to set a password before logging into <strong>/client/login</strong>.
+                    </div>
+                  )}
                 </div>
 
                 <div>
-                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>SHARED CLIENT PORTAL ROUTE</div>
+                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>UNIVERSAL OWNER LOGIN ROUTE</div>
                   <div style={{ fontSize: "14px", fontWeight: 600, color: "#2563eb", marginTop: "2px" }}>
-                    /client
+                    /client/login
                   </div>
                   <div style={{ fontSize: "12px", color: "#475569", marginTop: "4px", lineHeight: "1.5" }}>
-                    <strong>/client</strong> is the universal login route for all client owners. When an owner logs in with their email, the system automatically resolves their business workspace.
-                    {activatedClient.ownerEmail ? (
-                      <span> Only logging in as <strong>{activatedClient.ownerEmail}</strong> will access <strong>{activatedClient.name}</strong>. If you visit <strong>/client</strong> while logged in as another account, you will see that account's workspace instead.</span>
-                    ) : (
-                      <span> Assign an owner email to allow login.</span>
-                    )}
+                    <strong>/client/login</strong> is the login portal for all business owners. When an owner signs in with their credentials, the system automatically resolves their mapped business workspace.
                   </div>
                 </div>
               </div>
 
-              {/* Copy Portal Link */}
+              {/* Copy Owner Login Link */}
               <div>
-                <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", marginBottom: "6px" }}>
-                  OWNER DASHBOARD LINK
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", marginBottom: "6px", display: "flex", justifyContent: "space-between" }}>
+                  <span>OWNER LOGIN PORTAL LINK</span>
+                  <a
+                    href={ownerLoginUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: "#2563eb", textDecoration: "underline", fontWeight: 700 }}
+                  >
+                    Owner login link ↗
+                  </a>
                 </div>
                 <div
                   style={{
@@ -1184,11 +1226,11 @@ export default function AddClientPage() {
                       fontWeight: 600,
                     }}
                   >
-                    {portalUrl}
+                    {ownerLoginUrl}
                   </span>
                   <button
                     type="button"
-                    onClick={() => copyToClipboard(portalUrl, "portal")}
+                    onClick={() => copyToClipboard(ownerLoginUrl, "portal")}
                     style={{
                       padding: "6px 12px",
                       background: "#0f172a",
@@ -1201,7 +1243,7 @@ export default function AddClientPage() {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {copiedPortal ? "✓ Copied Dashboard URL" : "Copy Dashboard URL"}
+                    {copiedPortal ? "✓ Copied Owner Login URL" : "Copy Owner Login URL"}
                   </button>
                 </div>
               </div>
@@ -1209,7 +1251,29 @@ export default function AddClientPage() {
               <div style={{ display: "flex", gap: "10px", marginTop: "auto", flexDirection: "column" }}>
                 <button
                   type="button"
-                  onClick={() => router.push(`/clients/${activatedClient.id}`)}
+                  onClick={copyWelcomeMessage}
+                  style={{
+                    width: "100%",
+                    padding: "12px 18px",
+                    background: "#059669",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "8px",
+                    fontWeight: 700,
+                    fontSize: "14px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    boxShadow: "0 2px 4px rgba(5, 150, 105, 0.2)",
+                  }}
+                >
+                  <span>📋</span> {copiedMsg ? "✓ Welcome Message Copied!" : "Copy Welcome Message (WhatsApp / Email)"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.open(portalUrl, "_blank", "noopener,noreferrer")}
                   style={{
                     width: "100%",
                     padding: "13px 18px",
@@ -1227,7 +1291,28 @@ export default function AddClientPage() {
                     boxShadow: "0 2px 4px rgba(37, 99, 235, 0.2)",
                   }}
                 >
-                  <span>↗</span> Open {activatedClient.name}'s Dashboard (Admin Side)
+                  <span>↗</span> Open {activatedClient.name}'s Business Dashboard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/clients/${activatedClient.id}`)}
+                  style={{
+                    width: "100%",
+                    padding: "11px 18px",
+                    background: "#f8fafc",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: "8px",
+                    color: "#0f172a",
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <span>⚙️</span> Manage Client Settings & Features
                 </button>
                 <button
                   type="button"
@@ -1236,9 +1321,9 @@ export default function AddClientPage() {
                     width: "100%",
                     padding: "11px 18px",
                     background: "white",
-                    border: "1px solid #cbd5e1",
+                    border: "1px solid #e2e8f0",
                     borderRadius: "8px",
-                    color: "#334155",
+                    color: "#64748b",
                     fontWeight: 600,
                     fontSize: "13px",
                     cursor: "pointer",

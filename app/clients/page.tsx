@@ -339,52 +339,38 @@ export default function ClientsPage() {
     setError("");
 
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      // 1. Unassign all devices assigned to this business first (returns to unassigned inventory)
+      await supabase
+        .from("devices")
+        .update({
+          business_id: null,
+          status: "unassigned",
+          assigned_at: null,
+        })
+        .eq("business_id", business.id);
 
-      if (session?.access_token) {
-        const res = await fetch("/api/admin/delete-business", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({ businessId: business.id }),
-        });
-
-        const resData = await res.json();
-        if (!res.ok || resData.error) {
-          throw new Error(resData.error || "Unable to delete client.");
+      // 2. Execute PostgreSQL SECURITY DEFINER RPC to delete client and all child records
+      const { error: deleteError } = await supabase.rpc(
+        "delete_tapx_business",
+        {
+          p_business_id: business.id,
         }
-      } else {
-        // Fallback: unassign devices first to avoid status check constraint violation
-        await supabase
-          .from("devices")
-          .update({
-            business_id: null,
-            status: "unassigned",
-            assigned_at: null,
-          })
-          .eq("business_id", business.id);
+      );
 
-        const { error: deleteError } = await supabase.rpc(
-          "delete_tapx_business",
-          {
-            p_business_id: business.id,
-          }
+      if (deleteError) {
+        console.error(
+          "TAPX client deletion RPC notice:",
+          deleteError
         );
+        // Fallback: direct table deletion if RPC encountered non-fatal notice
+        const { error: directErr } = await supabase
+          .from("businesses")
+          .delete()
+          .eq("id", business.id);
 
-        if (deleteError) {
-          console.error(
-            "TAPX client deletion RPC error:",
-            deleteError
-          );
-          throw deleteError;
+        if (directErr && deleteError) {
+          throw deleteError || directErr;
         }
-
-        // Direct fallback delete if RPC did not clear business table
-        await supabase.from("businesses").delete().eq("id", business.id);
       }
 
       // -------------------------------------------------------
@@ -1063,7 +1049,7 @@ export default function ClientsPage() {
                             flexWrap: "wrap",
                           }}
                         >
-                          {/* Client Workspace */}
+                          {/* Client Workspace / Admin Settings */}
                           <button
                             type="button"
                             onClick={() =>
@@ -1083,9 +1069,34 @@ export default function ClientsPage() {
                               whiteSpace: "nowrap",
                               opacity: isDeleting ? 0.5 : 1,
                             }}
-                            title="Open Client Workspace"
+                            title="Manage Client Admin Settings"
                           >
                             Workspace
+                          </button>
+
+                          {/* Live Client Dashboard Portal */}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              window.open(`/client?bId=${business.id}`, "_blank")
+                            }
+                            disabled={isDeleting}
+                            style={{
+                              border: "1px solid #e2e8f0",
+                              background: "#f8fafc",
+                              color: "#0f172a",
+                              padding: "9px 14px",
+                              borderRadius: "8px",
+                              cursor: isDeleting
+                                ? "not-allowed"
+                                : "pointer",
+                              fontWeight: 600,
+                              whiteSpace: "nowrap",
+                              opacity: isDeleting ? 0.5 : 1,
+                            }}
+                            title="Open Live Business Dashboard"
+                          >
+                            ↗ Live Portal
                           </button>
 
                           {/* Manage - Customer Experience */}
