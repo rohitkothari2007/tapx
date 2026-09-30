@@ -467,6 +467,22 @@ export default function ClientPortalPage() {
 
         const emailMappedIds = (bizByEmail || []).map((b) => b.id);
 
+        // Auto-link owner account in tapx_client_users if not mapped yet
+        if (bizByEmail && bizByEmail.length > 0 && !isAdminUser) {
+          for (const b of bizByEmail) {
+            if (!cuMappedIds.includes(b.id)) {
+              await supabase.from("tapx_client_users").upsert(
+                {
+                  user_id: user.id,
+                  business_id: b.id,
+                  role: "owner",
+                },
+                { onConflict: "user_id,business_id" }
+              );
+            }
+          }
+        }
+
         userMappedIds = Array.from(new Set([...cuMappedIds, ...emailMappedIds]));
 
         if (isAdminUser) {
@@ -1842,7 +1858,7 @@ export default function ClientPortalPage() {
 
               <div className="account-details">
                 <strong>{business.name}</strong>
-                <span>{currentUserEmail}</span>
+                <span>{business.email || currentUserEmail}</span>
               </div>
             </div>
           </div>

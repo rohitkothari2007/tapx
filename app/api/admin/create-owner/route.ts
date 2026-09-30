@@ -126,10 +126,6 @@ export async function POST(req: NextRequest) {
       console.warn("Auth admin lookup skipped:", err);
     }
 
-    if (!targetUserId) {
-      targetUserId = caller.id;
-    }
-
     // 6. RE-MAP USER TO BUSINESS IN tapx_client_users
     // Clear old mappings for this business first
     try {
@@ -138,13 +134,15 @@ export async function POST(req: NextRequest) {
         .delete()
         .eq("business_id", businessId);
 
-      await supabaseAdmin
-        .from("tapx_client_users")
-        .insert({
-          user_id: targetUserId,
-          business_id: businessId,
-          role: "owner",
-        });
+      if (targetUserId) {
+        await supabaseAdmin
+          .from("tapx_client_users")
+          .insert({
+            user_id: targetUserId,
+            business_id: businessId,
+            role: "owner",
+          });
+      }
     } catch (mapErr) {
       console.warn("Client user mapping table update:", mapErr);
     }
