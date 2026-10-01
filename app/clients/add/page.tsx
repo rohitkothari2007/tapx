@@ -885,7 +885,7 @@ Click the Owner Login link above to sign in once your password is set!`;
 
   if (activatedClient) {
     const portalUrl = `${window.location.origin}/client?bId=${activatedClient.id}`;
-    const ownerLoginUrl = `${window.location.origin}/client/login`;
+    const ownerLoginUrl = `${window.location.origin}/client/login?bId=${activatedClient.id}`;
 
     return (
       <main style={pageStyle}>

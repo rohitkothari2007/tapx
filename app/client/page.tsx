@@ -430,7 +430,10 @@ export default function ClientPortalPage() {
       } = await supabase.auth.getUser();
 
       if (!user) {
-        router.replace("/client/login");
+        const loginUrl = bIdParam
+          ? `/client/login?bId=${encodeURIComponent(bIdParam)}`
+          : "/client/login";
+        router.replace(loginUrl);
         return;
       }
 
@@ -508,20 +511,26 @@ export default function ClientPortalPage() {
         }
       }
 
-      // If bIdParam is passed in URL (e.g. /client?bId=...), fetch target business
+      // If bIdParam is passed in URL (e.g. /client?bId=...), handle authorization & resolution
       if (bIdParam && !userMappedIds.includes(bIdParam)) {
-        const { data: targetB } = await supabase
-          .from("businesses")
-          .select("id, name, category")
-          .eq("id", bIdParam)
-          .maybeSingle();
+        if (isAdminUser) {
+          const { data: targetB } = await supabase
+            .from("businesses")
+            .select("id, name, category")
+            .eq("id", bIdParam)
+            .maybeSingle();
 
-        if (targetB) {
-          userMappedIds.push(targetB.id);
-          setUserBusinesses((prev) => {
-            const exists = prev.some((p) => p.id === targetB.id);
-            return exists ? prev : [...prev, targetB];
-          });
+          if (targetB) {
+            userMappedIds.push(targetB.id);
+            setUserBusinesses((prev) => {
+              const exists = prev.some((p) => p.id === targetB.id);
+              return exists ? prev : [...prev, targetB];
+            });
+          }
+        } else {
+          setError("Access Denied: You do not have permission to view this business workspace.");
+          setLoading(false);
+          return;
         }
       }
 

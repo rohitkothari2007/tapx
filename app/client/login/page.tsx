@@ -19,10 +19,35 @@ export default function ClientLoginPage() {
   const [loggingIn, setLoggingIn] = useState(false);
   const [error, setError] = useState("");
 
+  const [targetBusinessName, setTargetBusinessName] = useState<string | null>(null);
+  const [bIdParam, setBIdParam] = useState<string | null>(null);
+
   useEffect(() => {
     let active = true;
 
-    const checkSession = async () => {
+    const checkSessionAndTarget = async () => {
+      const searchParams =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search)
+          : null;
+      const bId = searchParams?.get("bId");
+
+      if (bId) {
+        setBIdParam(bId);
+        const { data: bData } = await supabase
+          .from("businesses")
+          .select("name, email")
+          .eq("id", bId)
+          .maybeSingle();
+
+        if (bData && active) {
+          setTargetBusinessName(bData.name);
+          if (bData.email) {
+            setEmail((prev) => prev || bData.email || "");
+          }
+        }
+      }
+
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -30,13 +55,16 @@ export default function ClientLoginPage() {
       if (!active) return;
 
       if (session) {
-        router.replace("/client");
+        const targetUrl = bId
+          ? `/client?bId=${encodeURIComponent(bId)}`
+          : "/client";
+        router.replace(targetUrl);
       } else {
         setLoading(false);
       }
     };
 
-    checkSession();
+    checkSessionAndTarget();
 
     return () => {
       active = false;
@@ -92,7 +120,10 @@ export default function ClientLoginPage() {
         return;
       }
 
-      router.replace("/client");
+      const targetUrl = bIdParam
+        ? `/client?bId=${encodeURIComponent(bIdParam)}`
+        : "/client";
+      router.replace(targetUrl);
     } catch (err) {
       console.error(err);
       setError("Something went wrong. Please try again.");
@@ -243,10 +274,16 @@ export default function ClientLoginPage() {
 
           <h2>Welcome back</h2>
 
-          <p className="login-description">
-            Sign in to manage your TAPX business
-            workspace.
-          </p>
+          {targetBusinessName ? (
+            <div className="target-business-badge">
+              <span>🏢</span> Sign in to access <strong>{targetBusinessName}</strong> portal
+            </div>
+          ) : (
+            <p className="login-description">
+              Sign in to manage your TAPX business
+              workspace.
+            </p>
+          )}
 
           <form onSubmit={handleLogin}>
             <label>Business email</label>
@@ -567,6 +604,21 @@ export default function ClientLoginPage() {
           color: #52735e;
           font-size: 10px;
           font-weight: 750;
+        }
+
+        .target-business-badge {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 14px;
+          margin-top: 12px;
+          margin-bottom: 8px;
+          border-radius: 10px;
+          background: #eff6ff;
+          border: 1px solid #c7d2fe;
+          color: #1e40af;
+          font-size: 13px;
+          font-weight: 600;
         }
 
         .login-card h2 {
