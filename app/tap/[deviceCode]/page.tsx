@@ -3280,13 +3280,40 @@ function AppointmentBookingSection({
     ? config.working_days
     : [];
 
-  const timeToMinutes = (value: string) => {
-    const match = value.match(/^(\d{1,2}):(\d{2})/);
-    if (!match) return 0;
-    return Number(match[1]) * 60 + Number(match[2]);
+  const timeToMinutes = (value: string | null | undefined): number => {
+    if (!value) return -1;
+    const str = String(value).trim().toUpperCase();
+    if (!str) return -1;
+
+    const isPM = str.includes("PM");
+    const isAM = str.includes("AM");
+
+    const match = str.match(/(\d{1,2}):(\d{2})/);
+    if (!match) {
+      const singleMatch = str.match(/^(\d{1,2})$/);
+      if (singleMatch) {
+        let h = parseInt(singleMatch[1], 10);
+        if (isPM && h < 12) h += 12;
+        else if (isAM && h === 12) h = 0;
+        return h * 60;
+      }
+      return -1;
+    }
+
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+
+    if (isPM && hours < 12) {
+      hours += 12;
+    } else if (isAM && hours === 12) {
+      hours = 0;
+    }
+
+    return hours * 60 + minutes;
   };
 
   const formatTime = (minutes: number) => {
+    if (minutes < 0) return "";
     const hour24 = Math.floor(minutes / 60);
     const minute = minutes % 60;
     const suffix = hour24 >= 12 ? "PM" : "AM";
@@ -3295,13 +3322,17 @@ function AppointmentBookingSection({
   };
 
   const availableTimes = (() => {
-    const opening = timeToMinutes(config.opening_time || "10:00");
-    const closing = timeToMinutes(config.closing_time || "20:00");
+    let opening = timeToMinutes(config.opening_time);
+    let closing = timeToMinutes(config.closing_time);
+
+    if (opening < 0) opening = 10 * 60; // Default 10:00 AM
+    if (closing < 0 || closing <= opening) closing = 20 * 60; // Default 8:00 PM (20:00)
+
     const slots: string[] = [];
 
     for (
       let minutes = opening;
-      minutes + durationMinutes <= closing;
+      minutes + 15 <= closing;
       minutes += 30
     ) {
       const hour = Math.floor(minutes / 60);
@@ -3309,6 +3340,14 @@ function AppointmentBookingSection({
       slots.push(
         `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`
       );
+    }
+
+    if (slots.length === 0) {
+      for (let m = 600; m <= 1170; m += 30) {
+        const h = Math.floor(m / 60);
+        const min = m % 60;
+        slots.push(`${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`);
+      }
     }
 
     return slots;
@@ -3342,21 +3381,21 @@ function AppointmentBookingSection({
     }
 
     const intervals: BookedInterval[] = (data || []).map((row: any) => {
-      const timeStr = String(row.appointment_time).slice(0, 5);
-      const [h, m] = timeStr.split(":").map(Number);
-      const startMin = (h || 0) * 60 + (m || 0);
+      const rawStr = String(row.appointment_time || "").trim();
+      const startMin = timeToMinutes(rawStr);
       const duration = Number(row.duration_minutes || 30);
-      return { startMin, endMin: startMin + duration, timeStr };
+      return { startMin: startMin >= 0 ? startMin : 0, endMin: (startMin >= 0 ? startMin : 0) + duration, timeStr: rawStr };
     });
 
     setBookedIntervals(intervals);
     setBookedTimes(intervals.map((i) => i.timeStr));
   }
 
-  function isSlotOverlapping(slotTimeStr: string, durationMinutes: number = 30) {
-    const [sh, sm] = slotTimeStr.split(":").map(Number);
-    const slotStart = sh * 60 + sm;
-    const slotEnd = slotStart + durationMinutes;
+  function isSlotOverlapping(slotTimeStr: string, slotDurationOverride?: number) {
+    const slotStart = timeToMinutes(slotTimeStr);
+    if (slotStart < 0) return false;
+    const dur = slotDurationOverride || durationMinutes || 30;
+    const slotEnd = slotStart + dur;
 
     return bookedIntervals.some(
       (existing) => slotStart < existing.endMin && slotEnd > existing.startMin
