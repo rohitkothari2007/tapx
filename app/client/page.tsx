@@ -5166,6 +5166,449 @@ function ModulePage({
   );
 }
 
+function getBezierPath(points: { x: number; y: number }[]) {
+  if (points.length === 0) return "";
+  if (points.length === 1) return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+
+  let path = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i === 0 ? i : i - 1];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2 < points.length ? i + 2 : i + 1];
+
+    const cp1x = p1.x + (p2.x - p0.x) * 0.18;
+    const cp1y = p1.y + (p2.y - p0.y) * 0.18;
+    const cp2x = p2.x - (p3.x - p1.x) * 0.18;
+    const cp2y = p2.y - (p3.y - p1.y) * 0.18;
+
+    path += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+
+  return path;
+}
+
+function getAreaPath(points: { x: number; y: number }[], bottomY: number) {
+  if (points.length === 0) return "";
+  const linePath = getBezierPath(points);
+  const firstX = points[0].x.toFixed(1);
+  const lastX = points[points.length - 1].x.toFixed(1);
+  return `${linePath} L ${lastX} ${bottomY} L ${firstX} ${bottomY} Z`;
+}
+
+function ProfessionalWeeklySVGChart({
+  data,
+  maxVal,
+}: {
+  data: Array<{
+    dateStr: string;
+    label: string;
+    dayName: string;
+    taps: number;
+    reviews: number;
+    insta: number;
+    payments: number;
+    contact: number;
+    total: number;
+  }>;
+  maxVal: number;
+}) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
+  const viewBoxWidth = 600;
+  const viewBoxHeight = 220;
+  const leftMargin = 40;
+  const rightMargin = 20;
+  const topMargin = 30;
+  const bottomMargin = 175;
+  const chartWidth = viewBoxWidth - leftMargin - rightMargin;
+  const chartHeight = bottomMargin - topMargin;
+
+  const yMax = Math.max(maxVal, 5);
+  const colWidth = chartWidth / 7;
+
+  const gridSteps = [0, 0.33, 0.66, 1];
+
+  const points = data.map((day, i) => {
+    const x = leftMargin + (i + 0.5) * colWidth;
+    const y = bottomMargin - (day.total / yMax) * chartHeight;
+    return { x, y, day };
+  });
+
+  const lineD = getBezierPath(points);
+  const areaD = getAreaPath(points, bottomMargin);
+
+  const hoveredPoint = hoveredIndex !== null ? points[hoveredIndex] : null;
+
+  return (
+    <div style={{ position: "relative", width: "100%" }}>
+      <svg
+        viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
+        style={{ width: "100%", height: "auto", overflow: "visible" }}
+      >
+        <defs>
+          <linearGradient id="weeklyAreaGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+          </linearGradient>
+
+          <linearGradient id="weeklyBarGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.9" />
+            <stop offset="100%" stopColor="#1d4ed8" stopOpacity="1" />
+          </linearGradient>
+
+          <linearGradient id="weeklyBarGradInactive" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#cbd5e1" stopOpacity="0.6" />
+            <stop offset="100%" stopColor="#94a3b8" stopOpacity="0.85" />
+          </linearGradient>
+
+          <filter id="shadowWeekly" x="-10%" y="-10%" width="120%" height="120%">
+            <feDropShadow dx="0" dy="4" stdDeviation="4" floodOpacity="0.12" />
+          </filter>
+        </defs>
+
+        {/* HORIZONTAL GRID LINES & Y-AXIS LABELS */}
+        {gridSteps.map((step) => {
+          const val = Math.round(yMax * step);
+          const lineY = bottomMargin - step * chartHeight;
+          return (
+            <g key={step}>
+              <line
+                x1={leftMargin}
+                y1={lineY}
+                x2={viewBoxWidth - rightMargin}
+                y2={lineY}
+                stroke="#e2e8f0"
+                strokeDasharray="4 4"
+                strokeWidth="1"
+              />
+              <text
+                x={leftMargin - 8}
+                y={lineY + 4}
+                fill="#94a3b8"
+                fontSize="11"
+                fontWeight="600"
+                textAnchor="end"
+              >
+                {val}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* CURVED AREA FILL */}
+        <path d={areaD} fill="url(#weeklyAreaGrad)" />
+
+        {/* 3D ROUNDED BARS FOR EACH DAY */}
+        {data.map((day, i) => {
+          const pt = points[i];
+          const barW = Math.min(colWidth * 0.45, 32);
+          const barX = pt.x - barW / 2;
+          const barH = Math.max(bottomMargin - pt.y, 4);
+          const isToday = i === 6;
+          const isHovered = hoveredIndex === i;
+
+          return (
+            <g
+              key={day.dateStr}
+              onMouseEnter={() => setHoveredIndex(i)}
+              onMouseLeave={() => setHoveredIndex(null)}
+              style={{ cursor: "pointer" }}
+            >
+              <rect
+                x={barX}
+                y={pt.y}
+                width={barW}
+                height={barH}
+                rx="6"
+                ry="6"
+                fill={
+                  isToday
+                    ? "url(#weeklyBarGrad)"
+                    : isHovered
+                    ? "#2563eb"
+                    : "url(#weeklyBarGradInactive)"
+                }
+                style={{ transition: "all 0.2s ease" }}
+              />
+
+              {/* X-AXIS DAY LABELS */}
+              <text
+                x={pt.x}
+                y={bottomMargin + 20}
+                fill={isToday ? "#2563eb" : "#64748b"}
+                fontSize="12"
+                fontWeight={isToday ? "800" : "600"}
+                textAnchor="middle"
+              >
+                {day.dayName}
+              </text>
+
+              {/* BAR TOP VALUE BADGE */}
+              <text
+                x={pt.x}
+                y={Math.max(pt.y - 8, topMargin - 5)}
+                fill={isToday ? "#1d4ed8" : "#334155"}
+                fontSize="11"
+                fontWeight="800"
+                textAnchor="middle"
+              >
+                {day.total}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* SMOOTH SPLINE CURVE LINE */}
+        <path
+          d={lineD}
+          fill="none"
+          stroke="#2563eb"
+          strokeWidth="3.5"
+          strokeLinecap="round"
+          filter="url(#shadowWeekly)"
+        />
+
+        {/* DATA NODE CIRCLES */}
+        {points.map((pt, i) => (
+          <circle
+            key={i}
+            cx={pt.x}
+            cy={pt.y}
+            r={hoveredIndex === i ? "6.5" : "4.5"}
+            fill="#ffffff"
+            stroke="#2563eb"
+            strokeWidth="3"
+            style={{ transition: "all 0.2s ease" }}
+          />
+        ))}
+
+        {/* FLOATING HOVER TOOLTIP */}
+        {hoveredPoint && (
+          <g
+            transform={`translate(${Math.max(
+              15,
+              Math.min(hoveredPoint.x - 70, viewBoxWidth - 160)
+            )}, ${Math.max(10, hoveredPoint.y - 95)})`}
+            style={{ pointerEvents: "none" }}
+          >
+            <rect
+              width="145"
+              height="85"
+              rx="10"
+              ry="10"
+              fill="#0f172a"
+              opacity="0.95"
+              filter="url(#shadowWeekly)"
+            />
+            <text x="12" y="20" fill="#94a3b8" fontSize="11" fontWeight="700">
+              {hoveredPoint.day.label}
+            </text>
+            <text x="12" y="38" fill="#ffffff" fontSize="13" fontWeight="800">
+              Total: {hoveredPoint.day.total} interactions
+            </text>
+            <text x="12" y="54" fill="#34d399" fontSize="10" fontWeight="600">
+              ⭐ Reviews: {hoveredPoint.day.reviews}
+            </text>
+            <text x="12" y="68" fill="#fbbf24" fontSize="10" fontWeight="600">
+              📸 Insta: {hoveredPoint.day.insta} | 💳 Payment: {hoveredPoint.day.payments}
+            </text>
+          </g>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+function ProfessionalMonthlySVGChart({
+  data,
+  maxVal,
+}: {
+  data: Array<{
+    dateStr: string;
+    dayLabel: string;
+    dayName: string;
+    taps: number;
+    reviews: number;
+    insta: number;
+    payments: number;
+    contact: number;
+    total: number;
+  }>;
+  maxVal: number;
+}) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
+  const viewBoxWidth = 650;
+  const viewBoxHeight = 220;
+  const leftMargin = 40;
+  const rightMargin = 20;
+  const topMargin = 30;
+  const bottomMargin = 175;
+  const chartWidth = viewBoxWidth - leftMargin - rightMargin;
+  const chartHeight = bottomMargin - topMargin;
+
+  const yMax = Math.max(maxVal, 5);
+
+  const points = data.map((day, i) => {
+    const x = leftMargin + (i / Math.max(data.length - 1, 1)) * chartWidth;
+    const y = bottomMargin - (day.total / yMax) * chartHeight;
+    return { x, y, day };
+  });
+
+  const lineD = getBezierPath(points);
+  const areaD = getAreaPath(points, bottomMargin);
+
+  const gridSteps = [0, 0.33, 0.66, 1];
+  const hoveredPoint = hoveredIndex !== null ? points[hoveredIndex] : null;
+
+  return (
+    <div style={{ position: "relative", width: "100%" }}>
+      <svg
+        viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
+        style={{ width: "100%", height: "auto", overflow: "visible" }}
+      >
+        <defs>
+          <linearGradient id="monthlyAreaGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.4" />
+            <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.0" />
+          </linearGradient>
+
+          <filter id="shadowPurple" x="-10%" y="-10%" width="120%" height="120%">
+            <feDropShadow dx="0" dy="4" stdDeviation="4" floodOpacity="0.15" />
+          </filter>
+        </defs>
+
+        {/* HORIZONTAL GRID LINES & Y-AXIS LABELS */}
+        {gridSteps.map((step) => {
+          const val = Math.round(yMax * step);
+          const lineY = bottomMargin - step * chartHeight;
+          return (
+            <g key={step}>
+              <line
+                x1={leftMargin}
+                y1={lineY}
+                x2={viewBoxWidth - rightMargin}
+                y2={lineY}
+                stroke="#e2e8f0"
+                strokeDasharray="4 4"
+                strokeWidth="1"
+              />
+              <text
+                x={leftMargin - 8}
+                y={lineY + 4}
+                fill="#94a3b8"
+                fontSize="11"
+                fontWeight="600"
+                textAnchor="end"
+              >
+                {val}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* SMOOTH SPLINE AREA GRADIENT */}
+        <path d={areaD} fill="url(#monthlyAreaGrad)" />
+
+        {/* SMOOTH SPLINE CURVE LINE */}
+        <path
+          d={lineD}
+          fill="none"
+          stroke="#7c3aed"
+          strokeWidth="3.5"
+          strokeLinecap="round"
+          filter="url(#shadowPurple)"
+        />
+
+        {/* INTERACTIVE HOVER TOUCHPOINTS & X-AXIS TICKS */}
+        {data.map((day, i) => {
+          const pt = points[i];
+          const isTickLabel = i % 7 === 0 || i === data.length - 1;
+
+          return (
+            <g
+              key={day.dateStr}
+              onMouseEnter={() => setHoveredIndex(i)}
+              onMouseLeave={() => setHoveredIndex(null)}
+              style={{ cursor: "pointer" }}
+            >
+              {/* Invisible wide hit area for hover */}
+              <rect
+                x={pt.x - chartWidth / 60}
+                y={topMargin}
+                width={chartWidth / 30}
+                height={chartHeight + 20}
+                fill="transparent"
+              />
+
+              {/* X-AXIS LABELS AT REGULAR INTERVALS */}
+              {isTickLabel && (
+                <text
+                  x={pt.x}
+                  y={bottomMargin + 20}
+                  fill={i === data.length - 1 ? "#7c3aed" : "#64748b"}
+                  fontSize="11"
+                  fontWeight={i === data.length - 1 ? "800" : "600"}
+                  textAnchor="middle"
+                >
+                  {day.dayLabel}
+                </text>
+              )}
+
+              {/* NODE DOT ON CURVE */}
+              {(day.total > 0 || hoveredIndex === i || isTickLabel) && (
+                <circle
+                  cx={pt.x}
+                  cy={pt.y}
+                  r={hoveredIndex === i ? "6.5" : day.total > 0 ? "4.5" : "2.5"}
+                  fill={hoveredIndex === i ? "#7c3aed" : "#ffffff"}
+                  stroke="#7c3aed"
+                  strokeWidth="2.5"
+                />
+              )}
+            </g>
+          );
+        })}
+
+        {/* FLOATING HOVER TOOLTIP */}
+        {hoveredPoint && (
+          <g
+            transform={`translate(${Math.max(
+              15,
+              Math.min(hoveredPoint.x - 70, viewBoxWidth - 160)
+            )}, ${Math.max(10, hoveredPoint.y - 95)})`}
+            style={{ pointerEvents: "none" }}
+          >
+            <rect
+              width="145"
+              height="85"
+              rx="10"
+              ry="10"
+              fill="#0f172a"
+              opacity="0.95"
+              filter="url(#shadowPurple)"
+            />
+            <text x="12" y="20" fill="#a78bfa" fontSize="11" fontWeight="700">
+              {hoveredPoint.day.dayLabel} ({hoveredPoint.day.dayName})
+            </text>
+            <text x="12" y="38" fill="#ffffff" fontSize="13" fontWeight="800">
+              Total: {hoveredPoint.day.total} interactions
+            </text>
+            <text x="12" y="54" fill="#34d399" fontSize="10" fontWeight="600">
+              ⭐ Reviews: {hoveredPoint.day.reviews}
+            </text>
+            <text x="12" y="68" fill="#fbbf24" fontSize="10" fontWeight="600">
+              📸 Insta: {hoveredPoint.day.insta} | 💳 Payment: {hoveredPoint.day.payments}
+            </text>
+          </g>
+        )}
+      </svg>
+    </div>
+  );
+}
+
 function AnalyticsPage({
   orders,
   todayOrders,
@@ -5199,6 +5642,8 @@ function AnalyticsPage({
   hasOrders?: boolean;
   rawInteractions?: InteractionLog[];
 }) {
+  const [activeTab, setActiveTab] = useState<"both" | "weekly" | "monthly">("both");
+
   const averageOrderValue =
     completedOrders.length > 0
       ? completedRevenue /
@@ -5222,27 +5667,13 @@ function AnalyticsPage({
 
     const sevenDaysAgo = new Date(now.getTime() - 7 * msInDay);
     const fourteenDaysAgo = new Date(now.getTime() - 14 * msInDay);
-
     const thirtyDaysAgo = new Date(now.getTime() - 30 * msInDay);
     const sixtyDaysAgo = new Date(now.getTime() - 60 * msInDay);
 
     let thisWeekTaps = 0;
     let lastWeekTaps = 0;
-    let thisWeekReviews = 0;
-    let lastWeekReviews = 0;
-    let thisWeekInsta = 0;
-    let lastWeekInsta = 0;
-    let thisWeekPayments = 0;
-    let lastWeekPayments = 0;
-
     let thisMonthTaps = 0;
     let lastMonthTaps = 0;
-    let thisMonthReviews = 0;
-    let lastMonthReviews = 0;
-    let thisMonthInsta = 0;
-    let lastMonthInsta = 0;
-    let thisMonthPayments = 0;
-    let lastMonthPayments = 0;
 
     const channelCounts = {
       taps: 0,
@@ -5257,37 +5688,22 @@ function AnalyticsPage({
       const date = new Date(item.created_at);
       const type = (item.interaction_type || "").toLowerCase();
 
-      // Channel Totals
       if (type === "nfc_tap") channelCounts.taps++;
       else if (type === "google_review_click") channelCounts.reviews++;
       else if (type === "instagram_click") channelCounts.insta++;
       else if (type === "payment_click") channelCounts.payments++;
       else if (["whatsapp_click", "call_click", "location_click"].includes(type)) channelCounts.contact++;
 
-      // Weekly Buckets
       if (date >= sevenDaysAgo && date <= now) {
         if (type === "nfc_tap") thisWeekTaps++;
-        else if (type === "google_review_click") thisWeekReviews++;
-        else if (type === "instagram_click") thisWeekInsta++;
-        else if (type === "payment_click") thisWeekPayments++;
       } else if (date >= fourteenDaysAgo && date < sevenDaysAgo) {
         if (type === "nfc_tap") lastWeekTaps++;
-        else if (type === "google_review_click") lastWeekReviews++;
-        else if (type === "instagram_click") lastWeekInsta++;
-        else if (type === "payment_click") lastWeekPayments++;
       }
 
-      // Monthly Buckets
       if (date >= thirtyDaysAgo && date <= now) {
         if (type === "nfc_tap") thisMonthTaps++;
-        else if (type === "google_review_click") thisMonthReviews++;
-        else if (type === "instagram_click") thisMonthInsta++;
-        else if (type === "payment_click") thisMonthPayments++;
       } else if (date >= sixtyDaysAgo && date < thirtyDaysAgo) {
         if (type === "nfc_tap") lastMonthTaps++;
-        else if (type === "google_review_click") lastMonthReviews++;
-        else if (type === "instagram_click") lastMonthInsta++;
-        else if (type === "payment_click") lastMonthPayments++;
       }
     });
 
@@ -5304,18 +5720,14 @@ function AnalyticsPage({
       channelCounts.payments +
       channelCounts.contact;
 
-    // 1. Daily Breakdown for Last 7 Days (for Visual Bar Graph)
-    const last7DaysData = Array.from({ length: 7 }).map((_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (6 - i));
+    // 1. Continuous 30-Day Daily Dataset
+    const last30DaysData = Array.from({ length: 30 }).map((_, i) => {
+      const d = new Date(now.getTime() - (29 - i) * msInDay);
       const dateStr = d.toISOString().split("T")[0];
+      const dayLabel = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
       const dayName = d.toLocaleDateString("en-US", { weekday: "short" });
-      const dayNumber = d.getDate();
 
-      let taps = 0;
-      let reviews = 0;
-      let insta = 0;
-      let payments = 0;
+      let taps = 0, reviews = 0, insta = 0, payments = 0, contact = 0;
 
       interactions.forEach((item) => {
         if (!item.created_at) return;
@@ -5325,88 +5737,53 @@ function AnalyticsPage({
           else if (type === "google_review_click") reviews++;
           else if (type === "instagram_click") insta++;
           else if (type === "payment_click") payments++;
+          else if (["whatsapp_click", "call_click", "location_click"].includes(type)) contact++;
         }
       });
 
       return {
         dateStr,
-        label: `${dayName} ${dayNumber}`,
+        dayLabel,
         dayName,
+        label: `${dayName} ${d.getDate()}`,
         taps,
         reviews,
         insta,
         payments,
-        total: taps + reviews + insta + payments,
+        contact,
+        total: taps + reviews + insta + payments + contact,
       };
     });
 
-    const maxWeeklyTotal = Math.max(...last7DaysData.map((d) => d.total), 1);
+    const max30DaysTotal = Math.max(...last30DaysData.map((d) => d.total), 1);
 
-    // 2. 30-Day Monthly Trend Graph (4 Weeks)
-    const monthlyWeeksData = Array.from({ length: 4 }).map((_, i) => {
-      const weekIndex = 4 - i; // 4, 3, 2, 1
-      const startDaysAgo = weekIndex * 7;
-      const endDaysAgo = (weekIndex - 1) * 7;
+    // 2. 7-Day Dataset (last 7 days of 30d)
+    const last7DaysData = last30DaysData.slice(-7);
+    const max7DaysTotal = Math.max(...last7DaysData.map((d) => d.total), 1);
 
-      const startDate = new Date(now.getTime() - startDaysAgo * msInDay);
-      const endDate = new Date(now.getTime() - endDaysAgo * msInDay);
-
-      let total = 0;
-      let taps = 0;
-      let reviews = 0;
-      let insta = 0;
-      let payments = 0;
-
-      interactions.forEach((item) => {
-        if (!item.created_at) return;
-        const date = new Date(item.created_at);
-        if (date >= startDate && date < endDate) {
-          const type = (item.interaction_type || "").toLowerCase();
-          if (type === "nfc_tap") taps++;
-          else if (type === "google_review_click") reviews++;
-          else if (type === "instagram_click") insta++;
-          else if (type === "payment_click") payments++;
-          total++;
-        }
-      });
-
-      return {
-        label: i === 3 ? "This Week" : `Week ${i + 1}`,
-        total,
-        taps,
-        reviews,
-        insta,
-        payments,
-      };
-    });
-
+    // 3. 4-Week Breakdown
+    const monthlyWeeksData = [
+      { label: "Week 1 (28-21d ago)", total: last30DaysData.slice(0, 7).reduce((acc, d) => acc + d.total, 0) },
+      { label: "Week 2 (21-14d ago)", total: last30DaysData.slice(7, 14).reduce((acc, d) => acc + d.total, 0) },
+      { label: "Week 3 (14-7d ago)", total: last30DaysData.slice(14, 21).reduce((acc, d) => acc + d.total, 0) },
+      { label: "This Week (Last 7d)", total: last30DaysData.slice(21, 30).reduce((acc, d) => acc + d.total, 0) },
+    ];
     const maxMonthlyTotal = Math.max(...monthlyWeeksData.map((w) => w.total), 1);
 
     return {
       thisWeekTaps,
       lastWeekTaps,
       weeklyTapsGrowth: calcGrowth(thisWeekTaps, lastWeekTaps),
-      thisWeekReviews,
-      weeklyReviewsGrowth: calcGrowth(thisWeekReviews, lastWeekReviews),
-      thisWeekInsta,
-      weeklyInstaGrowth: calcGrowth(thisWeekInsta, lastWeekInsta),
-      thisWeekPayments,
-      weeklyPaymentsGrowth: calcGrowth(thisWeekPayments, lastWeekPayments),
-
       thisMonthTaps,
       lastMonthTaps,
       monthlyTapsGrowth: calcGrowth(thisMonthTaps, lastMonthTaps),
-      thisMonthReviews,
-      monthlyReviewsGrowth: calcGrowth(thisMonthReviews, lastMonthReviews),
-      thisMonthInsta,
-      monthlyInstaGrowth: calcGrowth(thisMonthInsta, lastMonthInsta),
-      thisMonthPayments,
-      monthlyPaymentsGrowth: calcGrowth(thisMonthPayments, lastMonthPayments),
 
       channelCounts,
       totalChannelInteractions: totalChannelInteractions || 1,
       last7DaysData,
-      maxWeeklyTotal,
+      max7DaysTotal,
+      last30DaysData,
+      max30DaysTotal,
       monthlyWeeksData,
       maxMonthlyTotal,
     };
@@ -5414,17 +5791,76 @@ function AnalyticsPage({
 
   return (
     <div className="analytics-page">
-      <div className="analytics-intro">
+      <div className="analytics-intro" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "16px" }}>
         <div>
-          <div className="eyebrow">
-            BUSINESS PERFORMANCE & GROWTH
+          <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span>BUSINESS PERFORMANCE & GROWTH</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", background: "#dcfce7", color: "#15803d", padding: "2px 8px", borderRadius: "12px", fontSize: "10px", fontWeight: "800" }}>
+              <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#22c55e", display: "inline-block" }} />
+              LIVE REALTIME
+            </span>
           </div>
 
           <h1>Analytics & Growth Dashboard</h1>
 
           <p>
-            Track daily customer touchpoints and monitor your weekly & monthly business growth.
+            Real-time analytics powered by live NFC taps, QR scans, and customer interactions.
           </p>
+        </div>
+
+        {/* TAB CONTROLS */}
+        <div style={{ display: "flex", background: "#e2e8f0", padding: "4px", borderRadius: "12px", gap: "4px" }}>
+          <button
+            type="button"
+            onClick={() => setActiveTab("both")}
+            style={{
+              border: 0,
+              padding: "8px 14px",
+              borderRadius: "8px",
+              fontSize: "12px",
+              fontWeight: 700,
+              cursor: "pointer",
+              background: activeTab === "both" ? "white" : "transparent",
+              color: activeTab === "both" ? "#0f172a" : "#64748b",
+              boxShadow: activeTab === "both" ? "0 2px 4px rgba(0,0,0,0.06)" : "none",
+            }}
+          >
+            ⚡ Both Graphs
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("weekly")}
+            style={{
+              border: 0,
+              padding: "8px 14px",
+              borderRadius: "8px",
+              fontSize: "12px",
+              fontWeight: 700,
+              cursor: "pointer",
+              background: activeTab === "weekly" ? "white" : "transparent",
+              color: activeTab === "weekly" ? "#2563eb" : "#64748b",
+              boxShadow: activeTab === "weekly" ? "0 2px 4px rgba(0,0,0,0.06)" : "none",
+            }}
+          >
+            📊 7-Day Weekly
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("monthly")}
+            style={{
+              border: 0,
+              padding: "8px 14px",
+              borderRadius: "8px",
+              fontSize: "12px",
+              fontWeight: 700,
+              cursor: "pointer",
+              background: activeTab === "monthly" ? "white" : "transparent",
+              color: activeTab === "monthly" ? "#7c3aed" : "#64748b",
+              boxShadow: activeTab === "monthly" ? "0 2px 4px rgba(0,0,0,0.06)" : "none",
+            }}
+          >
+            📈 30-Day Monthly
+          </button>
         </div>
       </div>
 
@@ -5464,123 +5900,88 @@ function AnalyticsPage({
           Weekly & Monthly Visual Trend Graphs
         </h2>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "20px" }}>
-          {/* 7-DAY DAILY VISUAL BAR CHART */}
-          <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "22px", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <div>
-                <span style={{ fontSize: "11px", fontWeight: 800, color: "#2563eb", background: "#eff6ff", padding: "4px 10px", borderRadius: "20px" }}>
-                  📊 7-DAY DAILY TREND
-                </span>
-                <h3 style={{ margin: "6px 0 0", fontSize: "16px", fontWeight: 800, color: "#0f172a" }}>
-                  Daily Activity Graph
-                </h3>
+        <div style={{ display: "grid", gridTemplateColumns: activeTab === "both" ? "repeat(auto-fit, minmax(360px, 1fr))" : "1fr", gap: "20px" }}>
+          {/* 7-DAY DAILY VISUAL SVG BAR & LINE CHART */}
+          {(activeTab === "both" || activeTab === "weekly") && (
+            <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: "18px", padding: "22px", boxShadow: "0 4px 16px rgba(0,0,0,0.04)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                <div>
+                  <span style={{ fontSize: "11px", fontWeight: 800, color: "#2563eb", background: "#eff6ff", padding: "4px 10px", borderRadius: "20px" }}>
+                    📊 7-DAY DAILY TREND
+                  </span>
+                  <h3 style={{ margin: "6px 0 0", fontSize: "17px", fontWeight: 800, color: "#0f172a" }}>
+                    Weekly Activity Curve & Daily Bars
+                  </h3>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <span style={{ fontSize: "20px", fontWeight: 800, color: "#2563eb" }}>{growthStats.thisWeekTaps}</span>
+                  <div style={{ fontSize: "11px", color: "#64748b" }}>Taps this week ({growthStats.weeklyTapsGrowth})</div>
+                </div>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <span style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>{growthStats.thisWeekTaps}</span>
-                <div style={{ fontSize: "11px", color: "#64748b" }}>Taps this week</div>
-              </div>
-            </div>
 
-            {/* BARS CONTAINER */}
-            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", height: "180px", paddingTop: "20px", paddingBottom: "10px", borderBottom: "1px solid #e2e8f0" }}>
-              {growthStats.last7DaysData.map((day, idx) => {
-                const heightPct = Math.max(Math.round((day.total / growthStats.maxWeeklyTotal) * 100), 10);
-                const isToday = idx === 6;
+              {/* PROFESSIONAL SVG CHART */}
+              <ProfessionalWeeklySVGChart data={growthStats.last7DaysData} maxVal={growthStats.max7DaysTotal} />
 
-                return (
-                  <div key={day.dateStr} style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1, gap: "6px" }}>
-                    <span style={{ fontSize: "11px", fontWeight: 800, color: isToday ? "#2563eb" : "#475569" }}>
-                      {day.total}
-                    </span>
-                    <div style={{ width: "24px", height: "120px", background: "#f1f5f9", borderRadius: "6px", display: "flex", alignItems: "flex-end", overflow: "hidden" }}>
-                      <div
-                        title={`${day.label}: ${day.total} total interactions`}
-                        style={{
-                          width: "100%",
-                          height: `${heightPct}%`,
-                          background: isToday ? "linear-gradient(180deg, #3b82f6 0%, #1d4ed8 100%)" : "linear-gradient(180deg, #94a3b8 0%, #475569 100%)",
-                          borderRadius: "4px",
-                          transition: "height 0.4s ease",
-                        }}
-                      />
-                    </div>
-                    <span style={{ fontSize: "10px", fontWeight: isToday ? 800 : 600, color: isToday ? "#2563eb" : "#64748b" }}>
-                      {day.dayName}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* LEGEND */}
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "12px", fontSize: "11px", color: "#64748b" }}>
-              <span>🔹 Active tracking on device</span>
-              <span>⚡ Real-time updates</span>
-            </div>
-          </div>
-
-          {/* 30-DAY MONTHLY TREND BAR CHART */}
-          <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "22px", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <div>
-                <span style={{ fontSize: "11px", fontWeight: 800, color: "#7c3aed", background: "#f3e8ff", padding: "4px 10px", borderRadius: "20px" }}>
-                  📈 30-DAY MONTHLY TREND
-                </span>
-                <h3 style={{ margin: "6px 0 0", fontSize: "16px", fontWeight: 800, color: "#0f172a" }}>
-                  4-Week Performance Progress
-                </h3>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <span style={{ fontSize: "18px", fontWeight: 800, color: "#7c3aed" }}>{growthStats.thisMonthTaps}</span>
-                <div style={{ fontSize: "11px", color: "#64748b" }}>Taps this month</div>
+              {/* FOOTER LEGEND */}
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: "16px", paddingTop: "12px", borderTop: "1px solid #f1f5f9", fontSize: "11px", color: "#64748b" }}>
+                <span>🔹 Hover on bars or curve nodes for details</span>
+                <span>⚡ Real-time updates</span>
               </div>
             </div>
+          )}
 
-            {/* HORIZONTAL WEEKLY PROGRESS BARS */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "14px", height: "180px", justifyContent: "center" }}>
-              {growthStats.monthlyWeeksData.map((week, idx) => {
-                const widthPct = Math.max(Math.round((week.total / growthStats.maxMonthlyTotal) * 100), 8);
-                const isCurrentWeek = idx === 3;
+          {/* 30-DAY MONTHLY TREND CONTINUOUS AREA CHART & 4-WEEK BREAKDOWN */}
+          {(activeTab === "both" || activeTab === "monthly") && (
+            <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: "18px", padding: "22px", boxShadow: "0 4px 16px rgba(0,0,0,0.04)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                <div>
+                  <span style={{ fontSize: "11px", fontWeight: 800, color: "#7c3aed", background: "#f3e8ff", padding: "4px 10px", borderRadius: "20px" }}>
+                    📈 30-DAY MONTHLY TREND
+                  </span>
+                  <h3 style={{ margin: "6px 0 0", fontSize: "17px", fontWeight: 800, color: "#0f172a" }}>
+                    30-Day Spline Trend Area Graph
+                  </h3>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <span style={{ fontSize: "20px", fontWeight: 800, color: "#7c3aed" }}>{growthStats.thisMonthTaps}</span>
+                  <div style={{ fontSize: "11px", color: "#64748b" }}>Taps this month ({growthStats.monthlyTapsGrowth})</div>
+                </div>
+              </div>
 
-                return (
-                  <div key={week.label} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", fontWeight: 700 }}>
-                      <span style={{ color: isCurrentWeek ? "#7c3aed" : "#334155" }}>{week.label}</span>
-                      <span style={{ color: isCurrentWeek ? "#7c3aed" : "#64748b" }}>{week.total} taps</span>
-                    </div>
-                    <div style={{ height: "12px", width: "100%", background: "#f1f5f9", borderRadius: "6px", overflow: "hidden" }}>
-                      <div
-                        style={{
-                          height: "100%",
-                          width: `${widthPct}%`,
-                          background: isCurrentWeek ? "linear-gradient(90deg, #8b5cf6 0%, #6d28d9 100%)" : "linear-gradient(90deg, #cbd5e1 0%, #94a3b8 100%)",
-                          borderRadius: "6px",
-                          transition: "width 0.5s ease",
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
+              {/* PROFESSIONAL SVG CONTINUOUS MONTHLY CHART */}
+              <ProfessionalMonthlySVGChart data={growthStats.last30DaysData} maxVal={growthStats.max30DaysTotal} />
+
+              {/* 4-WEEK SUMMARY COMPARISON BARS BELOW */}
+              <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: "1px solid #f1f5f9" }}>
+                <div style={{ fontSize: "12px", fontWeight: 800, color: "#475569", marginBottom: "10px" }}>
+                  4-Week Aggregated Comparison
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px" }}>
+                  {growthStats.monthlyWeeksData.map((week, idx) => {
+                    const widthPct = Math.max(Math.round((week.total / growthStats.maxMonthlyTotal) * 100), 8);
+                    const isCurrentWeek = idx === 3;
+
+                    return (
+                      <div key={week.label} style={{ background: isCurrentWeek ? "#f3e8ff" : "#f8fafc", padding: "10px", borderRadius: "10px", border: isCurrentWeek ? "1px solid #c084fc" : "1px solid #e2e8f0" }}>
+                        <div style={{ fontSize: "10px", fontWeight: 700, color: isCurrentWeek ? "#7c3aed" : "#64748b" }}>{week.label}</div>
+                        <div style={{ fontSize: "16px", fontWeight: 800, color: isCurrentWeek ? "#7c3aed" : "#0f172a", marginTop: "2px" }}>{week.total} <small style={{ fontSize: "10px", fontWeight: 400 }}>taps</small></div>
+                        <div style={{ height: "4px", background: "#e2e8f0", borderRadius: "4px", marginTop: "6px", overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${widthPct}%`, background: isCurrentWeek ? "#7c3aed" : "#94a3b8", borderRadius: "4px" }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
-
-            {/* LEGEND */}
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "12px", fontSize: "11px", color: "#64748b" }}>
-              <span>🚀 Month-over-Month Growth</span>
-              <span>{growthStats.monthlyTapsGrowth} growth rate</span>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
-      {/* WEEKLY & MONTHLY GROWTH GRAPHS OVERVIEW SUMMARY */}
-      {/* Visual Graphs above cleanly display the weekly & monthly growth metrics */}
-
       {/* CHANNEL DISTRIBUTION & ALL-TIME BREAKDOWN */}
-      <div style={{ marginTop: "28px", background: "white", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "22px" }}>
+      <div style={{ marginTop: "28px", background: "white", border: "1px solid #e2e8f0", borderRadius: "18px", padding: "22px", boxShadow: "0 4px 16px rgba(0,0,0,0.04)" }}>
         <div className="eyebrow">CHANNEL BREAKDOWN</div>
-        <h3 style={{ fontSize: "16px", fontWeight: 800, margin: "2px 0 16px", color: "#0f172a" }}>
+        <h3 style={{ fontSize: "17px", fontWeight: 800, margin: "2px 0 16px", color: "#0f172a" }}>
           Customer Action Distribution
         </h3>
 
