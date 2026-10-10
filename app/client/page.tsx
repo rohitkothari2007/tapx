@@ -5525,7 +5525,8 @@ function ProfessionalMonthlySVGChart({
         {/* INTERACTIVE HOVER TOUCHPOINTS & X-AXIS TICKS */}
         {data.map((day, i) => {
           const pt = points[i];
-          const isTickLabel = i % 7 === 0 || i === data.length - 1;
+          // Show ticks at 0 (29d ago), 7 (22d ago), 14 (15d ago), 21 (8d ago), and 29 (Today) to prevent text overlap
+          const isTickLabel = i === 0 || i === 7 || i === 14 || i === 21 || i === data.length - 1;
 
           return (
             <g
@@ -5543,7 +5544,7 @@ function ProfessionalMonthlySVGChart({
                 fill="transparent"
               />
 
-              {/* X-AXIS LABELS AT REGULAR INTERVALS */}
+              {/* X-AXIS LABELS AT EVENLY SPACED INTERVALS */}
               {isTickLabel && (
                 <text
                   x={pt.x}
@@ -5910,7 +5911,7 @@ function AnalyticsPage({
                     📊 7-DAY DAILY TREND
                   </span>
                   <h3 style={{ margin: "6px 0 0", fontSize: "17px", fontWeight: 800, color: "#0f172a" }}>
-                    Weekly Activity Curve & Daily Bars
+                    Weekly Growth Graph
                   </h3>
                 </div>
                 <div style={{ textAlign: "right" }}>
@@ -5939,7 +5940,7 @@ function AnalyticsPage({
                     📈 30-DAY MONTHLY TREND
                   </span>
                   <h3 style={{ margin: "6px 0 0", fontSize: "17px", fontWeight: 800, color: "#0f172a" }}>
-                    30-Day Spline Trend Area Graph
+                    Monthly Growth Graph
                   </h3>
                 </div>
                 <div style={{ textAlign: "right" }}>
