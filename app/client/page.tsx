@@ -1763,6 +1763,7 @@ export default function ClientPortalPage() {
                 todayCompletedOrdersCount
               }
               hasOrders={hasOrders}
+              rawInteractions={rawInteractions}
             />
           )}
 
@@ -5176,6 +5177,7 @@ function AnalyticsPage({
   todayActionCounts,
   todayCompletedOrdersCount = 0,
   hasOrders = false,
+  rawInteractions = [],
 }: {
   orders: Order[];
   todayOrders: Order[];
@@ -5195,6 +5197,7 @@ function AnalyticsPage({
   };
   todayCompletedOrdersCount?: number;
   hasOrders?: boolean;
+  rawInteractions?: InteractionLog[];
 }) {
   const averageOrderValue =
     completedOrders.length > 0
@@ -5212,19 +5215,215 @@ function AnalyticsPage({
     paymentClicks: 0,
   };
 
+  const growthStats = useMemo(() => {
+    const interactions = rawInteractions || [];
+    const now = new Date();
+    const msInDay = 24 * 60 * 60 * 1000;
+
+    const sevenDaysAgo = new Date(now.getTime() - 7 * msInDay);
+    const fourteenDaysAgo = new Date(now.getTime() - 14 * msInDay);
+
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * msInDay);
+    const sixtyDaysAgo = new Date(now.getTime() - 60 * msInDay);
+
+    let thisWeekTaps = 0;
+    let lastWeekTaps = 0;
+    let thisWeekReviews = 0;
+    let lastWeekReviews = 0;
+    let thisWeekInsta = 0;
+    let lastWeekInsta = 0;
+    let thisWeekPayments = 0;
+    let lastWeekPayments = 0;
+
+    let thisMonthTaps = 0;
+    let lastMonthTaps = 0;
+    let thisMonthReviews = 0;
+    let lastMonthReviews = 0;
+    let thisMonthInsta = 0;
+    let lastMonthInsta = 0;
+    let thisMonthPayments = 0;
+    let lastMonthPayments = 0;
+
+    const channelCounts = {
+      taps: 0,
+      reviews: 0,
+      insta: 0,
+      payments: 0,
+      contact: 0,
+    };
+
+    interactions.forEach((item) => {
+      if (!item.created_at) return;
+      const date = new Date(item.created_at);
+      const type = (item.interaction_type || "").toLowerCase();
+
+      // Channel Totals
+      if (type === "nfc_tap") channelCounts.taps++;
+      else if (type === "google_review_click") channelCounts.reviews++;
+      else if (type === "instagram_click") channelCounts.insta++;
+      else if (type === "payment_click") channelCounts.payments++;
+      else if (["whatsapp_click", "call_click", "location_click"].includes(type)) channelCounts.contact++;
+
+      // Weekly Buckets
+      if (date >= sevenDaysAgo && date <= now) {
+        if (type === "nfc_tap") thisWeekTaps++;
+        else if (type === "google_review_click") thisWeekReviews++;
+        else if (type === "instagram_click") thisWeekInsta++;
+        else if (type === "payment_click") thisWeekPayments++;
+      } else if (date >= fourteenDaysAgo && date < sevenDaysAgo) {
+        if (type === "nfc_tap") lastWeekTaps++;
+        else if (type === "google_review_click") lastWeekReviews++;
+        else if (type === "instagram_click") lastWeekInsta++;
+        else if (type === "payment_click") lastWeekPayments++;
+      }
+
+      // Monthly Buckets
+      if (date >= thirtyDaysAgo && date <= now) {
+        if (type === "nfc_tap") thisMonthTaps++;
+        else if (type === "google_review_click") thisMonthReviews++;
+        else if (type === "instagram_click") thisMonthInsta++;
+        else if (type === "payment_click") thisMonthPayments++;
+      } else if (date >= sixtyDaysAgo && date < thirtyDaysAgo) {
+        if (type === "nfc_tap") lastMonthTaps++;
+        else if (type === "google_review_click") lastMonthReviews++;
+        else if (type === "instagram_click") lastMonthInsta++;
+        else if (type === "payment_click") lastMonthPayments++;
+      }
+    });
+
+    const calcGrowth = (curr: number, prev: number) => {
+      if (prev === 0) return curr > 0 ? "+100%" : "0%";
+      const pct = Math.round(((curr - prev) / prev) * 100);
+      return (pct >= 0 ? "+" : "") + pct + "%";
+    };
+
+    const totalChannelInteractions =
+      channelCounts.taps +
+      channelCounts.reviews +
+      channelCounts.insta +
+      channelCounts.payments +
+      channelCounts.contact;
+
+    // 1. Daily Breakdown for Last 7 Days (for Visual Bar Graph)
+    const last7DaysData = Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      const dateStr = d.toISOString().split("T")[0];
+      const dayName = d.toLocaleDateString("en-US", { weekday: "short" });
+      const dayNumber = d.getDate();
+
+      let taps = 0;
+      let reviews = 0;
+      let insta = 0;
+      let payments = 0;
+
+      interactions.forEach((item) => {
+        if (!item.created_at) return;
+        if (item.created_at.startsWith(dateStr)) {
+          const type = (item.interaction_type || "").toLowerCase();
+          if (type === "nfc_tap") taps++;
+          else if (type === "google_review_click") reviews++;
+          else if (type === "instagram_click") insta++;
+          else if (type === "payment_click") payments++;
+        }
+      });
+
+      return {
+        dateStr,
+        label: `${dayName} ${dayNumber}`,
+        dayName,
+        taps,
+        reviews,
+        insta,
+        payments,
+        total: taps + reviews + insta + payments,
+      };
+    });
+
+    const maxWeeklyTotal = Math.max(...last7DaysData.map((d) => d.total), 1);
+
+    // 2. 30-Day Monthly Trend Graph (4 Weeks)
+    const monthlyWeeksData = Array.from({ length: 4 }).map((_, i) => {
+      const weekIndex = 4 - i; // 4, 3, 2, 1
+      const startDaysAgo = weekIndex * 7;
+      const endDaysAgo = (weekIndex - 1) * 7;
+
+      const startDate = new Date(now.getTime() - startDaysAgo * msInDay);
+      const endDate = new Date(now.getTime() - endDaysAgo * msInDay);
+
+      let total = 0;
+      let taps = 0;
+      let reviews = 0;
+      let insta = 0;
+      let payments = 0;
+
+      interactions.forEach((item) => {
+        if (!item.created_at) return;
+        const date = new Date(item.created_at);
+        if (date >= startDate && date < endDate) {
+          const type = (item.interaction_type || "").toLowerCase();
+          if (type === "nfc_tap") taps++;
+          else if (type === "google_review_click") reviews++;
+          else if (type === "instagram_click") insta++;
+          else if (type === "payment_click") payments++;
+          total++;
+        }
+      });
+
+      return {
+        label: i === 3 ? "This Week" : `Week ${i + 1}`,
+        total,
+        taps,
+        reviews,
+        insta,
+        payments,
+      };
+    });
+
+    const maxMonthlyTotal = Math.max(...monthlyWeeksData.map((w) => w.total), 1);
+
+    return {
+      thisWeekTaps,
+      lastWeekTaps,
+      weeklyTapsGrowth: calcGrowth(thisWeekTaps, lastWeekTaps),
+      thisWeekReviews,
+      weeklyReviewsGrowth: calcGrowth(thisWeekReviews, lastWeekReviews),
+      thisWeekInsta,
+      weeklyInstaGrowth: calcGrowth(thisWeekInsta, lastWeekInsta),
+      thisWeekPayments,
+      weeklyPaymentsGrowth: calcGrowth(thisWeekPayments, lastWeekPayments),
+
+      thisMonthTaps,
+      lastMonthTaps,
+      monthlyTapsGrowth: calcGrowth(thisMonthTaps, lastMonthTaps),
+      thisMonthReviews,
+      monthlyReviewsGrowth: calcGrowth(thisMonthReviews, lastMonthReviews),
+      thisMonthInsta,
+      monthlyInstaGrowth: calcGrowth(thisMonthInsta, lastMonthInsta),
+      thisMonthPayments,
+      monthlyPaymentsGrowth: calcGrowth(thisMonthPayments, lastMonthPayments),
+
+      channelCounts,
+      totalChannelInteractions: totalChannelInteractions || 1,
+      last7DaysData,
+      maxWeeklyTotal,
+      monthlyWeeksData,
+      maxMonthlyTotal,
+    };
+  }, [rawInteractions]);
+
   return (
     <div className="analytics-page">
       <div className="analytics-intro">
         <div>
           <div className="eyebrow">
-            BUSINESS PERFORMANCE
+            BUSINESS PERFORMANCE & GROWTH
           </div>
 
-          <h1>Analytics</h1>
+          <h1>Analytics & Growth Dashboard</h1>
 
           <p>
-            A clear view of your TAPX business
-            activity.
+            Track daily customer touchpoints and monitor your weekly & monthly business growth.
           </p>
         </div>
       </div>
@@ -5250,13 +5449,258 @@ function AnalyticsPage({
             value={String(actionCounts.instagramClicks)}
             note="Instagram profile visits"
           />
-          {hasOrders && (
-            <AnalyticsCard
-              title="Payments Today"
-              value={String(todayCompletedOrdersCount)}
-              note="Confirmed completed payments"
-            />
-          )}
+          <AnalyticsCard
+            title="Payment Visits Today"
+            value={String(actionCounts.paymentClicks)}
+            note="Payment page visits today"
+          />
+        </div>
+      </div>
+
+      {/* VISUAL GRAPH REPRESENTATION FOR WEEKLY & MONTHLY PERFORMANCE */}
+      <div style={{ marginTop: "28px" }}>
+        <div className="eyebrow">VISUAL GROWTH ANALYTICS</div>
+        <h2 style={{ fontSize: "18px", fontWeight: 800, margin: "2px 0 14px", color: "#0f172a" }}>
+          Weekly & Monthly Visual Trend Graphs
+        </h2>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: "20px" }}>
+          {/* 7-DAY DAILY VISUAL BAR CHART */}
+          <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "22px", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div>
+                <span style={{ fontSize: "11px", fontWeight: 800, color: "#2563eb", background: "#eff6ff", padding: "4px 10px", borderRadius: "20px" }}>
+                  📊 7-DAY DAILY TREND
+                </span>
+                <h3 style={{ margin: "6px 0 0", fontSize: "16px", fontWeight: 800, color: "#0f172a" }}>
+                  Daily Activity Graph
+                </h3>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>{growthStats.thisWeekTaps}</span>
+                <div style={{ fontSize: "11px", color: "#64748b" }}>Taps this week</div>
+              </div>
+            </div>
+
+            {/* BARS CONTAINER */}
+            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", height: "180px", paddingTop: "20px", paddingBottom: "10px", borderBottom: "1px solid #e2e8f0" }}>
+              {growthStats.last7DaysData.map((day, idx) => {
+                const heightPct = Math.max(Math.round((day.total / growthStats.maxWeeklyTotal) * 100), 10);
+                const isToday = idx === 6;
+
+                return (
+                  <div key={day.dateStr} style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1, gap: "6px" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 800, color: isToday ? "#2563eb" : "#475569" }}>
+                      {day.total}
+                    </span>
+                    <div style={{ width: "24px", height: "120px", background: "#f1f5f9", borderRadius: "6px", display: "flex", alignItems: "flex-end", overflow: "hidden" }}>
+                      <div
+                        title={`${day.label}: ${day.total} total interactions`}
+                        style={{
+                          width: "100%",
+                          height: `${heightPct}%`,
+                          background: isToday ? "linear-gradient(180deg, #3b82f6 0%, #1d4ed8 100%)" : "linear-gradient(180deg, #94a3b8 0%, #475569 100%)",
+                          borderRadius: "4px",
+                          transition: "height 0.4s ease",
+                        }}
+                      />
+                    </div>
+                    <span style={{ fontSize: "10px", fontWeight: isToday ? 800 : 600, color: isToday ? "#2563eb" : "#64748b" }}>
+                      {day.dayName}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* LEGEND */}
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "12px", fontSize: "11px", color: "#64748b" }}>
+              <span>🔹 Active tracking on device</span>
+              <span>⚡ Real-time updates</span>
+            </div>
+          </div>
+
+          {/* 30-DAY MONTHLY TREND BAR CHART */}
+          <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "22px", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div>
+                <span style={{ fontSize: "11px", fontWeight: 800, color: "#7c3aed", background: "#f3e8ff", padding: "4px 10px", borderRadius: "20px" }}>
+                  📈 30-DAY MONTHLY TREND
+                </span>
+                <h3 style={{ margin: "6px 0 0", fontSize: "16px", fontWeight: 800, color: "#0f172a" }}>
+                  4-Week Performance Progress
+                </h3>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: "18px", fontWeight: 800, color: "#7c3aed" }}>{growthStats.thisMonthTaps}</span>
+                <div style={{ fontSize: "11px", color: "#64748b" }}>Taps this month</div>
+              </div>
+            </div>
+
+            {/* HORIZONTAL WEEKLY PROGRESS BARS */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "14px", height: "180px", justifyContent: "center" }}>
+              {growthStats.monthlyWeeksData.map((week, idx) => {
+                const widthPct = Math.max(Math.round((week.total / growthStats.maxMonthlyTotal) * 100), 8);
+                const isCurrentWeek = idx === 3;
+
+                return (
+                  <div key={week.label} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", fontWeight: 700 }}>
+                      <span style={{ color: isCurrentWeek ? "#7c3aed" : "#334155" }}>{week.label}</span>
+                      <span style={{ color: isCurrentWeek ? "#7c3aed" : "#64748b" }}>{week.total} taps</span>
+                    </div>
+                    <div style={{ height: "12px", width: "100%", background: "#f1f5f9", borderRadius: "6px", overflow: "hidden" }}>
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${widthPct}%`,
+                          background: isCurrentWeek ? "linear-gradient(90deg, #8b5cf6 0%, #6d28d9 100%)" : "linear-gradient(90deg, #cbd5e1 0%, #94a3b8 100%)",
+                          borderRadius: "6px",
+                          transition: "width 0.5s ease",
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* LEGEND */}
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "12px", fontSize: "11px", color: "#64748b" }}>
+              <span>🚀 Month-over-Month Growth</span>
+              <span>{growthStats.monthlyTapsGrowth} growth rate</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* WEEKLY & MONTHLY GROWTH REPORTS */}
+      <div style={{ marginTop: "28px" }}>
+        <div className="eyebrow">GROWTH SUMMARY STATS</div>
+        <h2 style={{ fontSize: "18px", fontWeight: 800, margin: "2px 0 14px", color: "#0f172a" }}>
+          Weekly & Monthly Performance Breakdown
+        </h2>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "16px" }}>
+          {/* WEEKLY REPORT CARD */}
+          <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <span style={{ fontSize: "12px", fontWeight: 800, color: "#2563eb", background: "#eff6ff", padding: "4px 10px", borderRadius: "20px" }}>
+                📅 7-DAY WEEKLY REPORT
+              </span>
+              <span style={{ fontSize: "13px", fontWeight: 700, color: growthStats.weeklyTapsGrowth.startsWith("+") ? "#16a34a" : "#dc2626" }}>
+                {growthStats.weeklyTapsGrowth} vs last week
+              </span>
+            </div>
+
+            <h3 style={{ margin: "0 0 16px", fontSize: "16px", fontWeight: 800, color: "#0f172a" }}>
+              Weekly Growth Snapshot
+            </h3>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Total Device Taps (7 Days)</span>
+                <span style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a" }}>{growthStats.thisWeekTaps} <small style={{ color: "#64748b", fontWeight: 400 }}>(was {growthStats.lastWeekTaps})</small></span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Google Review Taps</span>
+                <span style={{ fontSize: "14px", fontWeight: 800, color: "#059669" }}>{growthStats.thisWeekReviews} <small style={{ color: "#16a34a", fontWeight: 700 }}>({growthStats.weeklyReviewsGrowth})</small></span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Instagram Profile Visits</span>
+                <span style={{ fontSize: "14px", fontWeight: 800, color: "#d97706" }}>{growthStats.thisWeekInsta} <small style={{ color: "#d97706", fontWeight: 700 }}>({growthStats.weeklyInstaGrowth})</small></span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Payment Option Visits</span>
+                <span style={{ fontSize: "14px", fontWeight: 800, color: "#2563eb" }}>{growthStats.thisWeekPayments} <small style={{ color: "#2563eb", fontWeight: 700 }}>({growthStats.weeklyPaymentsGrowth})</small></span>
+              </div>
+            </div>
+          </div>
+
+          {/* MONTHLY REPORT CARD */}
+          <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <span style={{ fontSize: "12px", fontWeight: 800, color: "#7c3aed", background: "#f3e8ff", padding: "4px 10px", borderRadius: "20px" }}>
+                🗓️ 30-DAY MONTHLY REPORT
+              </span>
+              <span style={{ fontSize: "13px", fontWeight: 700, color: growthStats.monthlyTapsGrowth.startsWith("+") ? "#16a34a" : "#dc2626" }}>
+                {growthStats.monthlyTapsGrowth} vs last month
+              </span>
+            </div>
+
+            <h3 style={{ margin: "0 0 16px", fontSize: "16px", fontWeight: 800, color: "#0f172a" }}>
+              Monthly Growth Snapshot
+            </h3>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Total Device Taps (30 Days)</span>
+                <span style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a" }}>{growthStats.thisMonthTaps} <small style={{ color: "#64748b", fontWeight: 400 }}>(was {growthStats.lastMonthTaps})</small></span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Google Review Taps</span>
+                <span style={{ fontSize: "14px", fontWeight: 800, color: "#059669" }}>{growthStats.thisMonthReviews} <small style={{ color: "#16a34a", fontWeight: 700 }}>({growthStats.monthlyReviewsGrowth})</small></span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Instagram Profile Visits</span>
+                <span style={{ fontSize: "14px", fontWeight: 800, color: "#d97706" }}>{growthStats.thisMonthInsta} <small style={{ color: "#d97706", fontWeight: 700 }}>({growthStats.monthlyInstaGrowth})</small></span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Payment Option Visits</span>
+                <span style={{ fontSize: "14px", fontWeight: 800, color: "#2563eb" }}>{growthStats.thisMonthPayments} <small style={{ color: "#2563eb", fontWeight: 700 }}>({growthStats.monthlyPaymentsGrowth})</small></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* CHANNEL DISTRIBUTION & ALL-TIME BREAKDOWN */}
+      <div style={{ marginTop: "28px", background: "white", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "22px" }}>
+        <div className="eyebrow">CHANNEL BREAKDOWN</div>
+        <h3 style={{ fontSize: "16px", fontWeight: 800, margin: "2px 0 16px", color: "#0f172a" }}>
+          Customer Action Distribution
+        </h3>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", fontWeight: 700, marginBottom: "6px" }}>
+              <span style={{ color: "#059669" }}>⭐ Google Review Taps</span>
+              <span>{growthStats.channelCounts.reviews} ({Math.round((growthStats.channelCounts.reviews / growthStats.totalChannelInteractions) * 100)}%)</span>
+            </div>
+            <div style={{ height: "8px", background: "#f1f5f9", borderRadius: "10px", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${Math.round((growthStats.channelCounts.reviews / growthStats.totalChannelInteractions) * 100)}%`, background: "#059669", borderRadius: "10px" }} />
+            </div>
+          </div>
+
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", fontWeight: 700, marginBottom: "6px" }}>
+              <span style={{ color: "#d97706" }}>📸 Instagram Visits</span>
+              <span>{growthStats.channelCounts.insta} ({Math.round((growthStats.channelCounts.insta / growthStats.totalChannelInteractions) * 100)}%)</span>
+            </div>
+            <div style={{ height: "8px", background: "#f1f5f9", borderRadius: "10px", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${Math.round((growthStats.channelCounts.insta / growthStats.totalChannelInteractions) * 100)}%`, background: "#d97706", borderRadius: "10px" }} />
+            </div>
+          </div>
+
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", fontWeight: 700, marginBottom: "6px" }}>
+              <span style={{ color: "#2563eb" }}>💳 Payment Option Visits</span>
+              <span>{growthStats.channelCounts.payments} ({Math.round((growthStats.channelCounts.payments / growthStats.totalChannelInteractions) * 100)}%)</span>
+            </div>
+            <div style={{ height: "8px", background: "#f1f5f9", borderRadius: "10px", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${Math.round((growthStats.channelCounts.payments / growthStats.totalChannelInteractions) * 100)}%`, background: "#2563eb", borderRadius: "10px" }} />
+            </div>
+          </div>
+
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", fontWeight: 700, marginBottom: "6px" }}>
+              <span style={{ color: "#7c3aed" }}>💬 Direct Contact (WhatsApp & Calls)</span>
+              <span>{growthStats.channelCounts.contact} ({Math.round((growthStats.channelCounts.contact / growthStats.totalChannelInteractions) * 100)}%)</span>
+            </div>
+            <div style={{ height: "8px", background: "#f1f5f9", borderRadius: "10px", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${Math.round((growthStats.channelCounts.contact / growthStats.totalChannelInteractions) * 100)}%`, background: "#7c3aed", borderRadius: "10px" }} />
+            </div>
+          </div>
         </div>
       </div>
 

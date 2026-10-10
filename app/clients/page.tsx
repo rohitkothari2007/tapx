@@ -70,6 +70,16 @@ export default function ClientsPage() {
   const [ownerEmails, setOwnerEmails] = useState<Record<string, string>>({});
   const [ownerLoginEmail, setOwnerLoginEmail] = useState("");
 
+  // Password reset requests state
+  const [resetRequests, setResetRequests] = useState<Array<{
+    id: string;
+    business_id: string | null;
+    customer_name: string | null;
+    customer_phone: string | null;
+    status: string;
+    created_at: string;
+  }>>([]);
+
   useEffect(() => {
     loadClients();
   }, []);
@@ -86,6 +96,7 @@ export default function ClientsPage() {
       const [
         { data: businessData, error: businessError },
         { data: deviceData, error: deviceError },
+        { data: reqData },
       ] = await Promise.all([
         supabase
           .from("businesses")
@@ -95,6 +106,13 @@ export default function ClientsPage() {
         supabase
           .from("devices")
           .select("*"),
+
+        supabase
+          .from("customer_requests")
+          .select("id, business_id, customer_name, customer_phone, status, created_at")
+          .eq("request_type", "password_reset")
+          .eq("status", "pending")
+          .order("created_at", { ascending: false }),
       ]);
 
       if (businessError) {
@@ -107,6 +125,7 @@ export default function ClientsPage() {
 
       setBusinesses((businessData || []) as Business[]);
       setDevices((deviceData || []) as Device[]);
+      setResetRequests((reqData || []) as any[]);
 
       // Fetch owner emails via admin API
       const {
@@ -586,6 +605,118 @@ export default function ClientsPage() {
             }}
           >
             {error}
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================
+          PASSWORD RESET REQUESTS QUEUE
+      ===================================================== */}
+      {resetRequests.length > 0 && (
+        <div
+          style={{
+            background: "#fff7ed",
+            border: "1px solid #fed7aa",
+            borderRadius: "14px",
+            padding: "20px",
+            marginBottom: "24px",
+            boxShadow: "0 4px 14px rgba(234, 88, 12, 0.08)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
+            <span style={{ fontSize: "20px" }}>🔑</span>
+            <div>
+              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 800, color: "#9a3412" }}>
+                Client Password Reset Requests ({resetRequests.length})
+              </h3>
+              <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#c2410c" }}>
+                The following client business owners requested password assistance.
+              </p>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {resetRequests.map((req) => {
+              const matchedBiz = businesses.find(
+                (b) => b.id === req.business_id || (b.email && b.email.toLowerCase() === req.customer_phone?.toLowerCase())
+              );
+              const targetEmail = req.customer_phone || matchedBiz?.email || "Unknown Email";
+
+              return (
+                <div
+                  key={req.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    background: "white",
+                    padding: "12px 16px",
+                    borderRadius: "10px",
+                    border: "1px solid #ffedd5",
+                    flexWrap: "wrap",
+                    gap: "12px",
+                  }}
+                >
+                  <div>
+                    <strong style={{ fontSize: "14px", color: "#0f172a" }}>
+                      {matchedBiz?.name || req.customer_name || "Client Owner"}
+                    </strong>
+                    <span style={{ color: "#c2410c", fontSize: "13px", marginLeft: "10px", fontWeight: 600 }}>
+                      ({targetEmail})
+                    </span>
+                    <div style={{ fontSize: "11px", color: "#9a3412", marginTop: "3px" }}>
+                      Requested: {new Date(req.created_at).toLocaleString("en-IN")}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const newPwd = window.prompt(
+                        `Reset Password for ${matchedBiz?.name || targetEmail}:\n\nEnter a new password (or leave blank to send email reset link only):`
+                      );
+                      if (newPwd === null) return;
+                      try {
+                        const { data: { session } } = await supabase.auth.getSession();
+                        if (!session?.access_token) throw new Error("Admin session token missing.");
+
+                        const res = await fetch("/api/admin/reset-password", {
+                          method: "POST",
+                          headers: {
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${session.access_token}`,
+                          },
+                          body: JSON.stringify({
+                            email: targetEmail,
+                            newPassword: newPwd.trim() || undefined,
+                            requestId: req.id,
+                          }),
+                        });
+                        const resData = await res.json();
+                        if (!res.ok) throw new Error(resData.error || "Failed to process reset.");
+                        alert(resData.message || "Password reset complete.");
+                        setResetRequests((prev) => prev.filter((r) => r.id !== req.id));
+                      } catch (err: any) {
+                        alert("Reset Error: " + (err.message || err));
+                      }
+                    }}
+                    style={{
+                      background: "#ea580c",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "8px",
+                      padding: "9px 16px",
+                      fontSize: "13px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      boxShadow: "0 2px 6px rgba(234, 88, 12, 0.3)",
+                    }}
+                  >
+                    Action Password Reset →
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1097,6 +1228,58 @@ export default function ClientsPage() {
                             title="Open Live Business Dashboard"
                           >
                             ↗ Live Portal
+                          </button>
+
+                          {/* Reset Password */}
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const targetEmail = (ownerEmails[business.id] || business.email || "").trim().toLowerCase();
+                              if (!targetEmail) {
+                                alert("No owner email assigned to this business.");
+                                return;
+                              }
+                              const newPwd = window.prompt(
+                                `Reset Password for ${business.name} (${targetEmail}):\n\nEnter a new password (or leave blank to send email reset link only):`
+                              );
+                              if (newPwd === null) return;
+                              try {
+                                const { data: { session } } = await supabase.auth.getSession();
+                                if (!session?.access_token) throw new Error("Admin session token missing.");
+
+                                const res = await fetch("/api/admin/reset-password", {
+                                  method: "POST",
+                                  headers: {
+                                    "Content-Type": "application/json",
+                                    Authorization: `Bearer ${session.access_token}`,
+                                  },
+                                  body: JSON.stringify({
+                                    email: targetEmail,
+                                    newPassword: newPwd.trim() || undefined,
+                                  }),
+                                });
+                                const resData = await res.json();
+                                if (!res.ok) throw new Error(resData.error || "Failed to reset password.");
+                                alert(resData.message || "Password reset complete.");
+                              } catch (err: any) {
+                                alert("Reset Error: " + (err.message || err));
+                              }
+                            }}
+                            disabled={isDeleting}
+                            style={{
+                              border: "1px solid #fed7aa",
+                              background: "#fff7ed",
+                              color: "#c2410c",
+                              padding: "9px 14px",
+                              borderRadius: "8px",
+                              cursor: isDeleting ? "not-allowed" : "pointer",
+                              fontWeight: 600,
+                              whiteSpace: "nowrap",
+                              opacity: isDeleting ? 0.5 : 1,
+                            }}
+                            title="Reset Owner Password"
+                          >
+                            🔑 Reset Password
                           </button>
 
                           {/* Manage - Customer Experience */}

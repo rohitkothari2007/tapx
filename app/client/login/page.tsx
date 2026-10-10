@@ -18,6 +18,8 @@ export default function ClientLoginPage() {
   const [loading, setLoading] = useState(true);
   const [loggingIn, setLoggingIn] = useState(false);
   const [error, setError] = useState("");
+  const [forgotSuccess, setForgotSuccess] = useState("");
+  const [requestingReset, setRequestingReset] = useState(false);
 
   const [targetBusinessName, setTargetBusinessName] = useState<string | null>(null);
   const [bIdParam, setBIdParam] = useState<string | null>(null);
@@ -341,15 +343,75 @@ export default function ClientLoginPage() {
 
               <button
                 type="button"
-                onClick={() =>
-                  setError(
-                    "Please contact your TAPX administrator to reset your password."
-                  )
-                }
+                disabled={requestingReset}
+                onClick={async () => {
+                  const cleanEmail = email.trim().toLowerCase();
+                  if (!cleanEmail || !cleanEmail.includes("@")) {
+                    setError("Please enter your business email address in the field above first.");
+                    return;
+                  }
+                  setRequestingReset(true);
+                  setError("");
+                  setForgotSuccess("");
+                  try {
+                    const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+                    await supabase.auth.resetPasswordForEmail(cleanEmail, {
+                      redirectTo: `${origin}/client/set-password`,
+                    });
+                    
+                    let matchedBizId: string | null = null;
+                    const { data: biz } = await supabase
+                      .from("businesses")
+                      .select("id, name")
+                      .ilike("email", cleanEmail)
+                      .maybeSingle();
+
+                    if (biz) matchedBizId = biz.id;
+
+                    await supabase.from("customer_requests").insert({
+                      business_id: matchedBizId,
+                      customer_name: biz?.name || cleanEmail,
+                      customer_phone: cleanEmail,
+                      request_type: "password_reset",
+                      status: "pending",
+                      payload: {
+                        email: cleanEmail,
+                        requested_at: new Date().toISOString(),
+                      },
+                    });
+
+                    setForgotSuccess(
+                      `Password reset request sent for ${cleanEmail}! Check your email inbox or contact TAPX Admin.`
+                    );
+                  } catch (resetErr: any) {
+                    setError(resetErr?.message || "Unable to send password reset request.");
+                  } finally {
+                    setRequestingReset(false);
+                  }
+                }}
               >
-                Forgot password?
+                {requestingReset ? "Requesting reset..." : "Forgot password?"}
               </button>
             </div>
+
+            {forgotSuccess && (
+              <div style={{
+                display: "flex",
+                gap: "9px",
+                alignItems: "flex-start",
+                padding: "11px 12px",
+                marginBottom: "14px",
+                borderRadius: "10px",
+                background: "#f0fdf4",
+                border: "1px solid #bbf7d0",
+                color: "#166534",
+                fontSize: "12px",
+                lineHeight: "1.5"
+              }}>
+                <span>✓</span>
+                <span>{forgotSuccess}</span>
+              </div>
+            )}
 
             {error && (
               <div className="error-message">

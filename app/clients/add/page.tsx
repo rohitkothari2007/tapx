@@ -34,6 +34,7 @@ type BusinessForm = {
   category: string;
   phone: string;
   email: string;
+  password?: string;
   address: string;
   city: string;
   state: string;
@@ -50,6 +51,7 @@ type ActivatedClient = {
   deviceCode: string;
   customerUrl: string;
   ownerEmail?: string;
+  ownerPassword?: string;
   ownerAccessCreated?: boolean;
   qrDataUrl?: string;
 };
@@ -678,6 +680,7 @@ export default function AddClientPage() {
             body: JSON.stringify({
               businessId: business.id,
               ownerEmail,
+              password: form.password?.trim() || undefined,
             }),
           });
 
@@ -699,6 +702,7 @@ export default function AddClientPage() {
         deviceCode: device.device_code,
         customerUrl,
         ownerEmail: ownerEmail || undefined,
+        ownerPassword: form.password?.trim() || undefined,
         ownerAccessCreated,
         qrDataUrl,
       };
@@ -1433,11 +1437,20 @@ Click the Owner Login link above to sign in once your password is set!`;
           />
 
           <InputField
-            label="Email"
-            placeholder="business@example.com"
+            label="Email (Owner Login)"
+            placeholder="owner@business.com"
             value={form.email}
             onChange={(value) =>
               updateField("email", value)
+            }
+          />
+
+          <InputField
+            label="Owner Login Password"
+            placeholder="e.g. Gyanu@123"
+            value={form.password || ""}
+            onChange={(value) =>
+              updateField("password", value)
             }
           />
 
