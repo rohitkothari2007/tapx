@@ -5574,85 +5574,8 @@ function AnalyticsPage({
         </div>
       </div>
 
-      {/* WEEKLY & MONTHLY GROWTH REPORTS */}
-      <div style={{ marginTop: "28px" }}>
-        <div className="eyebrow">GROWTH SUMMARY STATS</div>
-        <h2 style={{ fontSize: "18px", fontWeight: 800, margin: "2px 0 14px", color: "#0f172a" }}>
-          Weekly & Monthly Performance Breakdown
-        </h2>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "16px" }}>
-          {/* WEEKLY REPORT CARD */}
-          <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-              <span style={{ fontSize: "12px", fontWeight: 800, color: "#2563eb", background: "#eff6ff", padding: "4px 10px", borderRadius: "20px" }}>
-                📅 7-DAY WEEKLY REPORT
-              </span>
-              <span style={{ fontSize: "13px", fontWeight: 700, color: growthStats.weeklyTapsGrowth.startsWith("+") ? "#16a34a" : "#dc2626" }}>
-                {growthStats.weeklyTapsGrowth} vs last week
-              </span>
-            </div>
-
-            <h3 style={{ margin: "0 0 16px", fontSize: "16px", fontWeight: 800, color: "#0f172a" }}>
-              Weekly Growth Snapshot
-            </h3>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
-                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Total Device Taps (7 Days)</span>
-                <span style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a" }}>{growthStats.thisWeekTaps} <small style={{ color: "#64748b", fontWeight: 400 }}>(was {growthStats.lastWeekTaps})</small></span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
-                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Google Review Taps</span>
-                <span style={{ fontSize: "14px", fontWeight: 800, color: "#059669" }}>{growthStats.thisWeekReviews} <small style={{ color: "#16a34a", fontWeight: 700 }}>({growthStats.weeklyReviewsGrowth})</small></span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
-                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Instagram Profile Visits</span>
-                <span style={{ fontSize: "14px", fontWeight: 800, color: "#d97706" }}>{growthStats.thisWeekInsta} <small style={{ color: "#d97706", fontWeight: 700 }}>({growthStats.weeklyInstaGrowth})</small></span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Payment Option Visits</span>
-                <span style={{ fontSize: "14px", fontWeight: 800, color: "#2563eb" }}>{growthStats.thisWeekPayments} <small style={{ color: "#2563eb", fontWeight: 700 }}>({growthStats.weeklyPaymentsGrowth})</small></span>
-              </div>
-            </div>
-          </div>
-
-          {/* MONTHLY REPORT CARD */}
-          <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-              <span style={{ fontSize: "12px", fontWeight: 800, color: "#7c3aed", background: "#f3e8ff", padding: "4px 10px", borderRadius: "20px" }}>
-                🗓️ 30-DAY MONTHLY REPORT
-              </span>
-              <span style={{ fontSize: "13px", fontWeight: 700, color: growthStats.monthlyTapsGrowth.startsWith("+") ? "#16a34a" : "#dc2626" }}>
-                {growthStats.monthlyTapsGrowth} vs last month
-              </span>
-            </div>
-
-            <h3 style={{ margin: "0 0 16px", fontSize: "16px", fontWeight: 800, color: "#0f172a" }}>
-              Monthly Growth Snapshot
-            </h3>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
-                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Total Device Taps (30 Days)</span>
-                <span style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a" }}>{growthStats.thisMonthTaps} <small style={{ color: "#64748b", fontWeight: 400 }}>(was {growthStats.lastMonthTaps})</small></span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
-                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Google Review Taps</span>
-                <span style={{ fontSize: "14px", fontWeight: 800, color: "#059669" }}>{growthStats.thisMonthReviews} <small style={{ color: "#16a34a", fontWeight: 700 }}>({growthStats.monthlyReviewsGrowth})</small></span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "8px", borderBottom: "1px solid #f1f5f9" }}>
-                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Instagram Profile Visits</span>
-                <span style={{ fontSize: "14px", fontWeight: 800, color: "#d97706" }}>{growthStats.thisMonthInsta} <small style={{ color: "#d97706", fontWeight: 700 }}>({growthStats.monthlyInstaGrowth})</small></span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: "13px", color: "#475569", fontWeight: 600 }}>Payment Option Visits</span>
-                <span style={{ fontSize: "14px", fontWeight: 800, color: "#2563eb" }}>{growthStats.thisMonthPayments} <small style={{ color: "#2563eb", fontWeight: 700 }}>({growthStats.monthlyPaymentsGrowth})</small></span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* WEEKLY & MONTHLY GROWTH GRAPHS OVERVIEW SUMMARY */}
+      {/* Visual Graphs above cleanly display the weekly & monthly growth metrics */}
 
       {/* CHANNEL DISTRIBUTION & ALL-TIME BREAKDOWN */}
       <div style={{ marginTop: "28px", background: "white", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "22px" }}>
