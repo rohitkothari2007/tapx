@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import RestaurantExperience from "../../components/RestaurantExperience";
 
 type Device = {
   id: string;
@@ -1243,6 +1244,42 @@ export default function TapPage({
         key === "hotelservices" ||
         key === "hotel_facilities"
     );
+
+  const isRestaurantDining =
+    (business.category === "restaurant" ||
+      business.category === "cafe" ||
+      (business.category === "hotel" && tableOrderingEnabled) ||
+      tableOrderingEnabled) &&
+    digitalMenuItems.length > 0;
+
+  if (
+    isRestaurantDining &&
+    (activeModule === null ||
+      activeModule === "table-ordering" ||
+      activeModule === "digital-menu")
+  ) {
+    return (
+      <main style={styles.page}>
+        <RestaurantExperience
+          business={business}
+          device={device}
+          categories={digitalMenuCategories}
+          items={digitalMenuItems}
+          offers={offerItems}
+          initialTab={
+            activeModule === "table-ordering" || activeModule === "digital-menu"
+              ? "menu"
+              : "home"
+          }
+          loyaltyEnabled={loyaltyEnabled}
+          feedbackEnabled={feedbackEnabled}
+          onOpenFeedback={() => setActiveModule("feedback")}
+          onOpenLoyalty={() => setActiveModule("loyalty")}
+          onTrackAction={(type) => void trackActionClick(type)}
+        />
+      </main>
+    );
+  }
 
   return (
     <main style={styles.page}>
