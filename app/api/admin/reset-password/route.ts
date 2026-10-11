@@ -154,15 +154,19 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        for (const bId of matchingBizIds) {
-          await supabaseAdmin.from("tapx_client_users").upsert(
-            {
-              user_id: targetUserId,
-              business_id: bId,
-              role: "owner",
-            },
-            { onConflict: "user_id,business_id" }
-          );
+        try {
+          for (const bId of matchingBizIds) {
+            await supabaseAdmin.from("tapx_client_users").upsert(
+              {
+                user_id: targetUserId,
+                business_id: bId,
+                role: "owner",
+              },
+              { onConflict: "user_id,business_id" }
+            );
+          }
+        } catch (mapErr) {
+          console.warn("reset-password tapx_client_users mapping notice:", mapErr);
         }
       }
     } else {

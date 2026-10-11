@@ -1,66 +1,46 @@
-const supabaseUrl = "https://nzxmwerhrauqidinktgp.supabase.co";
-const supabaseAnonKey = "sb_publishable_GrBbQ2JntO_aq1hSGajPYA_xoEpxR8Q";
+import { createClient } from "@supabase/supabase-js";
+import ws from "ws";
 
-async function testAdminQuery(email, password) {
-  console.log(`\n========================================`);
-  console.log(`  TAPX ADMIN LOGIN & RLS QUERY TEST  `);
-  console.log(`========================================`);
-  console.log(`Target Email: ${email}`);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://nzxmwerhrauqidinktgp.supabase.co";
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_GrBbQ2JntO_aq1hSGajPYA_xoEpxR8Q";
 
-  // 1. Authenticate via Supabase Auth REST API
-  const authRes = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": supabaseAnonKey,
-    },
-    body: JSON.stringify({ email, password }),
+const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: false },
+  realtime: { transport: ws }
+});
+
+async function testAdminLogin() {
+  const adminEmail = "rohitjkothari12+dwarka@gmail.com";
+  const password = "Password123!";
+
+  console.log("Signing in as Admin:", adminEmail);
+  const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+    email: adminEmail,
+    password
   });
 
-  const authData = await authRes.json();
-
-  if (!authRes.ok) {
-    console.log(`\n❌ Auth Error (${authRes.status}): ${authData.error_description || authData.msg || authData.message || JSON.stringify(authData)}`);
+  if (authErr) {
+    console.error("Admin Login Error:", authErr);
     return;
   }
 
-  console.log(`\n✅ Step 1: Auth Successful!`);
-  console.log(`   User ID: ${authData.user.id}`);
-  console.log(`   Email:   ${authData.user.email}`);
+  console.log("Admin Login SUCCESS! User ID:", authData.user.id);
+  console.log("Access Token present:", !!authData.session?.access_token);
 
-  const accessToken = authData.access_token;
+  // Check tapx_admin_users table
+  const adminClient = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: `Bearer ${authData.session.access_token}` } },
+    realtime: { transport: ws }
+  });
 
-  // 2. Query tapx_admin_users via Supabase REST API with the authenticated user's JWT
-  const restRes = await fetch(
-    `${supabaseUrl}/rest/v1/tapx_admin_users?select=id,user_id,created_at&user_id=eq.${authData.user.id}`,
-    {
-      method: "GET",
-      headers: {
-        "apikey": supabaseAnonKey,
-        "Authorization": `Bearer ${accessToken}`,
-        "Accept": "application/json",
-      },
-    }
-  );
+  const { data: adminRow, error: adminCheckErr } = await adminClient
+    .from("tapx_admin_users")
+    .select("*")
+    .eq("user_id", authData.user.id)
+    .single();
 
-  const restData = await restRes.json();
-
-  if (!restRes.ok) {
-    console.log(`\n❌ Step 2: Admin RLS Query Failed (${restRes.status}): ${JSON.stringify(restData)}`);
-  } else if (!Array.isArray(restData) || restData.length === 0) {
-    console.log(`\n⚠️ Step 2: Admin RLS Query returned [] (EMPTY ARRAY)`);
-    console.log(`   Reason: Row not found or RLS policy blocking SELECT for user_id = ${authData.user.id}`);
-  } else {
-    console.log(`\n🎉 Step 2: Admin Check SUCCESS! Found tapx_admin_users row:`);
-    console.log(JSON.stringify(restData[0], null, 2));
-  }
+  console.log("tapx_admin_users check result:", adminRow, adminCheckErr);
 }
 
-const testEmail = process.argv[2];
-const testPassword = process.argv[3];
-
-if (testEmail && testPassword) {
-  testAdminQuery(testEmail, testPassword);
-} else {
-  console.log("Usage: node scratch/test_admin_login.mjs <email> <password>");
-}
+testAdminLogin().catch(console.error);

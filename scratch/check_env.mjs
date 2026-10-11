@@ -1,4 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
+import fs from "fs";
 
-console.log("NEXT_PUBLIC_SUPABASE_URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
-console.log("SUPABASE_SERVICE_ROLE_KEY exists:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+console.log("ENV KEYS:", Object.keys(process.env).filter(k => k.includes("SUPABASE") || k.includes("TAPX") || k.includes("NEXT")));
