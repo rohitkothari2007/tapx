@@ -53,6 +53,7 @@ type ActivatedClient = {
   ownerEmail?: string;
   ownerPassword?: string;
   ownerAccessCreated?: boolean;
+  ownerAccessError?: string;
   qrDataUrl?: string;
 };
 
@@ -145,9 +146,46 @@ export default function AddClientPage() {
   const [showPreview, setShowPreview] = useState(false);
   const [activatedClient, setActivatedClient] =
     useState<ActivatedClient | null>(null);
+  const [retryingOwnerSetup, setRetryingOwnerSetup] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copiedPortal, setCopiedPortal] = useState(false);
   const [copiedMsg, setCopiedMsg] = useState(false);
+
+  const handleRetryOwnerAccess = async () => {
+    if (!activatedClient?.id || !activatedClient.ownerEmail) return;
+    setRetryingOwnerSetup(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      const res = await fetch("/api/admin/create-owner", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: token ? `Bearer ${token}` : "",
+        },
+        body: JSON.stringify({
+          businessId: activatedClient.id,
+          ownerEmail: activatedClient.ownerEmail,
+          password: activatedClient.ownerPassword || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.userId) {
+        setActivatedClient((prev) => prev ? {
+          ...prev,
+          ownerAccessCreated: true,
+          ownerAccessError: undefined,
+        } : null);
+        alert(`✓ Owner account successfully activated for ${activatedClient.ownerEmail}!`);
+      } else {
+        alert(`Unable to initialize owner account: ${data?.error || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Setup Error: ${err.message || err}`);
+    } finally {
+      setRetryingOwnerSetup(false);
+    }
+  };
 
   // =========================================================
   // LOAD TAPX ONBOARDING DATA
@@ -664,6 +702,7 @@ export default function AddClientPage() {
       }
 
       let ownerAccessCreated = false;
+      let ownerAccessError = "";
       const ownerEmail = form.email.trim();
 
       if (ownerEmail) {
@@ -684,13 +723,16 @@ export default function AddClientPage() {
             }),
           });
 
-          if (ownerRes.ok) {
+          const ownerJson = await ownerRes.json().catch(() => null);
+
+          if (ownerRes.ok && ownerJson?.userId) {
             ownerAccessCreated = true;
           } else {
-            const errJson = await ownerRes.json();
-            console.warn("Owner access creation notice:", errJson.error);
+            ownerAccessError = ownerJson?.error || `HTTP ${ownerRes.status} Error`;
+            console.warn("Owner access creation notice:", ownerAccessError);
           }
-        } catch (authErr) {
+        } catch (authErr: any) {
+          ownerAccessError = authErr?.message || "Failed to contact owner activation API";
           console.error("Owner access call failed:", authErr);
         }
       }
@@ -704,6 +746,7 @@ export default function AddClientPage() {
         ownerEmail: ownerEmail || undefined,
         ownerPassword: form.password?.trim() || undefined,
         ownerAccessCreated,
+        ownerAccessError: ownerAccessError || undefined,
         qrDataUrl,
       };
 
@@ -1181,8 +1224,36 @@ Click the Owner Login link above to sign in once your password is set!`;
                   )}
 
                   {activatedClient.ownerEmail && !activatedClient.ownerAccessCreated && (
-                    <div style={{ fontSize: "12px", color: "#854d0e", marginTop: "6px", background: "#fef9c3", padding: "8px 10px", borderRadius: "6px", border: "1px solid #fef08a", lineHeight: "1.4" }}>
-                      ⚠️ <strong>INVITE UNACCEPTED / PENDING SETUP:</strong> An invitation email was sent to <strong>{activatedClient.ownerEmail}</strong>. The owner must open their invitation email and click the setup link to set a password before logging into <strong>/client/login</strong>.
+                    <div style={{ fontSize: "12px", color: "#991b1b", marginTop: "8px", background: "#fef2f2", padding: "12px 14px", borderRadius: "8px", border: "1px solid #fecaca", lineHeight: "1.5" }}>
+                      <div style={{ fontWeight: 700, marginBottom: "4px" }}>
+                        ⚠️ OWNER CREDENTIALS SETUP INCOMPLETE
+                      </div>
+                      <div style={{ color: "#7f1d1d" }}>
+                        {activatedClient.ownerAccessError || "The owner account was not automatically activated in Supabase Auth."}
+                      </div>
+                      <div style={{ marginTop: "10px" }}>
+                        <button
+                          type="button"
+                          disabled={retryingOwnerSetup}
+                          onClick={handleRetryOwnerAccess}
+                          style={{
+                            background: "#dc2626",
+                            color: "white",
+                            border: "none",
+                            borderRadius: "6px",
+                            padding: "7px 14px",
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            cursor: retryingOwnerSetup ? "not-allowed" : "pointer",
+                            opacity: retryingOwnerSetup ? 0.7 : 1,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                          }}
+                        >
+                          {retryingOwnerSetup ? "Activating Credentials..." : "↻ Retry Creating Owner Credentials"}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

@@ -26,11 +26,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const supabaseAuthClient = createClient(supabaseUrl, supabaseAnonKey);
+    // Authenticated client representing the caller (TAPX admin)
+    const callerClient = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+
     const {
       data: { user: caller },
       error: authError,
-    } = await supabaseAuthClient.auth.getUser(token);
+    } = await callerClient.auth.getUser(token);
 
     if (authError || !caller) {
       return NextResponse.json(
@@ -40,7 +45,9 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. ADMIN CHECK: Check membership in tapx_admin_users
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
 
     const { data: adminRow, error: adminLookupError } = await supabaseAdmin
       .from("tapx_admin_users")
@@ -75,14 +82,29 @@ export async function POST(req: NextRequest) {
 
     const cleanEmail = ownerEmail.trim().toLowerCase();
 
-    // Verify target business exists
-    const { data: business, error: businessError } = await supabaseAdmin
+    // Verify target business exists using callerClient (authenticated admin) or supabaseAdmin
+    let business: { id: string; name: string } | null = null;
+
+    const { data: bCaller } = await callerClient
       .from("businesses")
       .select("id, name")
       .eq("id", businessId)
       .maybeSingle();
 
-    if (businessError || !business) {
+    if (bCaller) {
+      business = bCaller;
+    } else {
+      const { data: bAdmin } = await supabaseAdmin
+        .from("businesses")
+        .select("id, name")
+        .eq("id", businessId)
+        .maybeSingle();
+      if (bAdmin) {
+        business = bAdmin;
+      }
+    }
+
+    if (!business) {
       return NextResponse.json(
         { error: "Business not found." },
         { status: 404 }
@@ -90,130 +112,122 @@ export async function POST(req: NextRequest) {
     }
 
     // Always update business table email field
-    await supabaseAdmin
+    await callerClient
       .from("businesses")
       .update({ email: cleanEmail })
       .eq("id", businessId);
 
-    // 4. FIND OR RESOLVE AUTH USER
+    // 4. FIND OR CREATE AUTH USER IN SUPABASE AUTH
     let targetUserId: string | null = null;
     let isNewUser = false;
+    const cleanPassword = password && typeof password === "string" && password.trim().length > 0
+      ? password.trim()
+      : "Password123!";
 
-    // A) Service Role Client (if SUPABASE_SERVICE_ROLE_KEY is present)
-    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      try {
-        const { data: listData } = await supabaseAdmin.auth.admin.listUsers({
+    // Query auth users list
+    const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+
+    if (listError) {
+      console.warn("listUsers notice:", listError);
+    }
+
+    const existingUser = (listData?.users || []).find(
+      (u: any) => u.email?.toLowerCase() === cleanEmail
+    );
+
+    if (existingUser) {
+      targetUserId = existingUser.id;
+      const updatePayload: any = { email_confirm: true };
+      if (cleanPassword) {
+        updatePayload.password = cleanPassword;
+      }
+      const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(
+        existingUser.id,
+        updatePayload
+      );
+      if (updateErr) {
+        console.error("updateUserById error:", updateErr);
+        return NextResponse.json(
+          { error: `Failed to update owner credentials: ${updateErr.message}` },
+          { status: 500 }
+        );
+      }
+    } else {
+      isNewUser = true;
+      const { data: createdData, error: createError } = await supabaseAdmin.auth.admin.createUser({
+        email: cleanEmail,
+        password: cleanPassword,
+        email_confirm: true,
+        user_metadata: { role: "owner", business_id: businessId },
+      });
+
+      if (createdData?.user?.id) {
+        targetUserId = createdData.user.id;
+      } else if (createError) {
+        console.warn("createUser error, attempting recovery:", createError);
+        // If user already exists (race condition or duplicate email in auth)
+        const { data: retryList } = await supabaseAdmin.auth.admin.listUsers({
           page: 1,
           perPage: 1000,
         });
-
-        const existingUser = (listData?.users || []).find(
+        const retryUser = (retryList?.users || []).find(
           (u: any) => u.email?.toLowerCase() === cleanEmail
         );
-
-        if (existingUser) {
-          targetUserId = existingUser.id;
-          const updatePayload: any = { email_confirm: true };
-          if (password && typeof password === "string" && password.trim().length > 0) {
-            updatePayload.password = password.trim();
-          }
-          await supabaseAdmin.auth.admin.updateUserById(existingUser.id, updatePayload);
-        } else {
-          isNewUser = true;
-          const initialPassword = password || "Password123!";
-          const { data: createdData } = await supabaseAdmin.auth.admin.createUser({
-            email: cleanEmail,
-            password: initialPassword,
+        if (retryUser) {
+          targetUserId = retryUser.id;
+          await supabaseAdmin.auth.admin.updateUserById(retryUser.id, {
             email_confirm: true,
-            user_metadata: { role: "owner", business_id: businessId },
+            password: cleanPassword,
           });
-
-          if (createdData?.user?.id) {
-            targetUserId = createdData.user.id;
-          }
-        }
-      } catch (adminAuthErr) {
-        console.warn("Admin Auth API notice:", adminAuthErr);
-      }
-    }
-
-    // B) Try signInWithPassword (for existing users with known password)
-    if (!targetUserId) {
-      const initialPassword = password || "Password123!";
-      const { data: signInData } = await supabaseAuthClient.auth.signInWithPassword({
-        email: cleanEmail,
-        password: initialPassword,
-      });
-
-      if (signInData?.user?.id) {
-        targetUserId = signInData.user.id;
-      }
-    }
-
-    // C) Try signUp (for new users)
-    if (!targetUserId) {
-      const initialPassword = password || "Password123!";
-      const { data: signUpData } = await supabaseAuthClient.auth.signUp({
-        email: cleanEmail,
-        password: initialPassword,
-      });
-
-      if (signUpData?.user?.id) {
-        targetUserId = signUpData.user.id;
-        isNewUser = true;
-      }
-    }
-
-    // D) Fallback: Check existing mappings in tapx_client_users for any matching business
-    if (!targetUserId) {
-      const { data: existingBiz } = await supabaseAdmin
-        .from("businesses")
-        .select("id")
-        .ilike("email", cleanEmail);
-
-      if (existingBiz && existingBiz.length > 0) {
-        const bizIds = existingBiz.map((b) => b.id);
-        const { data: existingMap } = await supabaseAdmin
-          .from("tapx_client_users")
-          .select("user_id")
-          .in("business_id", bizIds)
-          .maybeSingle();
-
-        if (existingMap?.user_id) {
-          targetUserId = existingMap.user_id;
+        } else {
+          return NextResponse.json(
+            { error: `Failed to create owner user: ${createError.message}` },
+            { status: 500 }
+          );
         }
       }
     }
 
-    // E) If targetUserId is resolved, map it in tapx_client_users
-    if (targetUserId) {
-      // Clear old mappings for this business first to prevent duplicate owners
-      await supabaseAdmin
-        .from("tapx_client_users")
-        .delete()
-        .eq("business_id", businessId);
+    if (!targetUserId) {
+      return NextResponse.json(
+        { error: "Could not create or resolve owner account in Supabase Auth." },
+        { status: 500 }
+      );
+    }
 
-      const { error: mapError } = await supabaseAdmin
-        .from("tapx_client_users")
-        .upsert(
-          {
-            user_id: targetUserId,
-            business_id: businessId,
-            role: "owner",
-          },
-          { onConflict: "user_id,business_id" }
-        );
+    // 5. MAP USER TO BUSINESS IN tapx_client_users (using supabaseAdmin service role)
+    await supabaseAdmin
+      .from("tapx_client_users")
+      .delete()
+      .eq("business_id", businessId);
 
-      if (mapError) {
-        console.warn("Client user mapping notice:", mapError.message);
-      }
+    const { error: mapError } = await supabaseAdmin
+      .from("tapx_client_users")
+      .upsert(
+        {
+          user_id: targetUserId,
+          business_id: businessId,
+          role: "owner",
+        },
+        { onConflict: "user_id,business_id" }
+      );
+
+    if (mapError) {
+      console.error("Client user mapping error:", mapError);
+      return NextResponse.json(
+        { error: `Owner auth prepared, but linking to business workspace failed: ${mapError.message}` },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
       success: true,
-      message: targetUserId
-        ? (isNewUser ? `Owner account created for ${cleanEmail}.` : `Owner login email updated to ${cleanEmail} for ${business.name}.`)
-        : `Owner email set to ${cleanEmail} for ${business.name}. Account will auto-link on first login.`,
+      message: isNewUser
+        ? `Owner account created and activated for ${cleanEmail}.`
+        : `Owner login email and password updated for ${cleanEmail} (${business.name}).`,
       userId: targetUserId,
       isNewUser,
       businessId,

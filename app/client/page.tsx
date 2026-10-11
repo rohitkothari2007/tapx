@@ -453,19 +453,30 @@ export default function ClientPortalPage() {
 
         const emailMappedIds = (bizByEmail || []).map((b) => b.id);
 
-        // Auto-link owner account in tapx_client_users if not mapped yet
-        if (bizByEmail && bizByEmail.length > 0 && !isAdminUser) {
-          for (const b of bizByEmail) {
-            if (!cuMappedIds.includes(b.id)) {
-              await supabase.from("tapx_client_users").upsert(
-                {
-                  user_id: user.id,
-                  business_id: b.id,
-                  role: "owner",
+        // Auto-link owner account in tapx_client_users via secure backend service-role API
+        if (!isAdminUser && user.email) {
+          try {
+            const { data: sessionData } = await supabase.auth.getSession();
+            const token = sessionData.session?.access_token;
+            if (token) {
+              const syncRes = await fetch("/api/client/sync-mapping", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`,
                 },
-                { onConflict: "user_id,business_id" }
-              );
+              });
+              if (syncRes.ok) {
+                const syncData = await syncRes.json();
+                if (syncData.syncedBusinessIds?.length) {
+                  syncData.syncedBusinessIds.forEach((id: string) => {
+                    if (!cuMappedIds.includes(id)) cuMappedIds.push(id);
+                  });
+                }
+              }
             }
+          } catch (syncErr) {
+            console.warn("Client auto-sync mapping notice:", syncErr);
           }
         }
 
