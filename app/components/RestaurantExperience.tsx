@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import UpiPaymentModal from "./UpiPaymentModal";
 
 export type RestaurantExperienceProps = {
   business: {
@@ -115,6 +116,8 @@ export default function RestaurantExperience({
   const [currentOrder, setCurrentOrder] = useState<ActiveOrder | null>(null);
   const [currentOrderItems, setCurrentOrderItems] = useState<ActiveOrderItem[]>([]);
   const [cancellingOrder, setCancellingOrder] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentModalAmount, setPaymentModalAmount] = useState<number | null>(null);
 
   // Available items
   const availableItems = useMemo(
@@ -497,19 +500,28 @@ export default function RestaurantExperience({
               )}
 
               {business.payment_enabled && (business.payment_url || business.upi_id) && (
-                <a
-                  href={business.payment_url || `upi://pay?pa=${encodeURIComponent(business.upi_id || "")}&pn=${encodeURIComponent(business.name)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => onTrackAction && onTrackAction("payment_click")}
-                  style={styles.actionCard}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaymentModalAmount(null);
+                    setShowPaymentModal(true);
+                    if (onTrackAction) onTrackAction("payment_click");
+                  }}
+                  style={{
+                    ...styles.actionCard,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    width: "100%",
+                    border: "1px solid #f1f5f9",
+                    background: "#ffffff",
+                  }}
                 >
                   <span style={styles.actionIcon}>💳</span>
                   <div>
                     <div style={styles.actionTitle}>Pay Online</div>
                     <div style={styles.actionSub}>Instant UPI Payment</div>
                   </div>
-                </a>
+                </button>
               )}
 
               {feedbackEnabled && onOpenFeedback && (
@@ -868,6 +880,36 @@ export default function RestaurantExperience({
                     </span>
                   </div>
 
+                  {business.payment_enabled && (business.payment_url || business.upi_id) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentModalAmount(Number(currentOrder.total || 0));
+                        setShowPaymentModal(true);
+                        if (onTrackAction) onTrackAction("payment_click");
+                      }}
+                      style={{
+                        marginTop: "12px",
+                        width: "100%",
+                        padding: "13px 16px",
+                        borderRadius: "14px",
+                        background: "#0f172a",
+                        color: "#ffffff",
+                        border: "none",
+                        fontWeight: 700,
+                        fontSize: "14px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "8px",
+                        cursor: "pointer",
+                        boxShadow: "0 4px 14px rgba(15, 23, 42, 0.12)",
+                      }}
+                    >
+                      <span>💳 Pay ₹{Number(currentOrder.total || 0).toFixed(0)} via UPI</span>
+                    </button>
+                  )}
+
                   {/* Support Contact Row */}
                   <div style={styles.orderHelpBanner}>
                     <span style={styles.helpText}>Check your order status here.</span>
@@ -1146,6 +1188,24 @@ export default function RestaurantExperience({
           )}
         </button>
       </nav>
+
+      {/* 7. UPI PAYMENT MODAL */}
+      <UpiPaymentModal
+        isOpen={showPaymentModal}
+        onClose={() => setShowPaymentModal(false)}
+        businessName={business.name}
+        upiId={business.upi_id}
+        paymentUrl={business.payment_url}
+        upiQrUrl={business.upi_qr_url}
+        initialAmount={paymentModalAmount}
+        orderNumber={
+          currentOrder
+            ? currentOrder.order_number
+              ? String(currentOrder.order_number)
+              : currentOrder.id.slice(0, 6)
+            : null
+        }
+      />
     </div>
   );
 }

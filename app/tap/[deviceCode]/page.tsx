@@ -9,6 +9,7 @@ import {
 import { useParams } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import RestaurantExperience from "../../components/RestaurantExperience";
+import UpiPaymentModal from "../../components/UpiPaymentModal";
 
 type Device = {
   id: string;
@@ -277,6 +278,7 @@ export default function TapPage({
 
   const [activeModule, setActiveModule] =
     useState<ActiveModule>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
 
   const [loyaltyConfig, setLoyaltyConfig] =
     useState<LoyaltyConfig>({});
@@ -1461,10 +1463,12 @@ export default function TapPage({
                   subtitle={
                     paymentSubtitle
                   }
-                  href={
-                    paymentLink
-                  }
-                  onClick={() => void trackActionClick("payment_click")}
+                  onClick={() => {
+                    void trackActionClick("payment_click");
+                    if (business.payment_enabled && (business.payment_url || business.upi_id)) {
+                      setShowPaymentModal(true);
+                    }
+                  }}
                 />
 
                 <ActionCard
@@ -2054,6 +2058,17 @@ export default function TapPage({
           </div>
         </footer>
       </div>
+
+      {business && (
+        <UpiPaymentModal
+          isOpen={showPaymentModal}
+          onClose={() => setShowPaymentModal(false)}
+          businessName={business.name}
+          upiId={business.upi_id}
+          paymentUrl={business.payment_url}
+          upiQrUrl={business.upi_qr_url}
+        />
+      )}
     </main>
   );
 }
@@ -5489,6 +5504,33 @@ function ActionCard({
       >
         {content}
       </a>
+    );
+  }
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        onTouchStart={() => setIsPressed(true)}
+        onTouchEnd={() => setIsPressed(false)}
+        onTouchCancel={() => setIsPressed(false)}
+        onMouseDown={() => setIsPressed(true)}
+        onMouseUp={() => setIsPressed(false)}
+        onMouseLeave={() => setIsPressed(false)}
+        style={{
+          ...styles.actionCard,
+          cursor: "pointer",
+          textAlign: "inherit",
+          background: "#ffffff",
+          border: "1px solid #f1f5f9",
+          transform: isPressed ? "scale(0.97)" : "scale(1.0)",
+          transition:
+            "transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms ease",
+        }}
+      >
+        {content}
+      </button>
     );
   }
 
