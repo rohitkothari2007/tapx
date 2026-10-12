@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { getPublicSiteUrl } from "../lib/siteUrl";
 import QRCode from "qrcode";
 import JSZip from "jszip";
 
@@ -543,7 +544,7 @@ export default function DevicesPage() {
   // Single QR Preview
   async function openQrModal(device: Device) {
     setQrModalDevice(device);
-    const customerUrl = `${window.location.origin}/tap/${device.device_code}`;
+    const customerUrl = `${getPublicSiteUrl()}/tap/${device.device_code}`;
     try {
       const url = await QRCode.toDataURL(customerUrl, { width: 600, margin: 2 });
       setQrDataUrl(url);
@@ -555,7 +556,7 @@ export default function DevicesPage() {
   // Download Single QR Code (PNG or SVG)
   async function downloadSingleQr(format: "png" | "svg") {
     if (!qrModalDevice) return;
-    const customerUrl = `${window.location.origin}/tap/${qrModalDevice.device_code}`;
+    const customerUrl = `${getPublicSiteUrl()}/tap/${qrModalDevice.device_code}`;
     const filename = `${qrModalDevice.label || qrModalDevice.device_code}_QR.${format}`
       .toLowerCase()
       .replace(/[\s/]+/g, "_");
@@ -585,7 +586,7 @@ export default function DevicesPage() {
 
     try {
       const zip = new JSZip();
-      const origin = window.location.origin;
+      const origin = getPublicSiteUrl();
 
       for (const device of devicesToExport) {
         const customerUrl = `${origin}/tap/${device.device_code}`;
@@ -1674,7 +1675,7 @@ export default function DevicesPage() {
               )}
 
               <div style={{ fontSize: "13px", color: "#475569", fontWeight: 700 }}>
-                URL: {window.location.origin}/tap/{qrModalDevice.device_code}
+                URL: {getPublicSiteUrl()}/tap/{qrModalDevice.device_code}
               </div>
 
               <div style={{ display: "flex", gap: "10px", width: "100%", justifyContent: "center" }}>

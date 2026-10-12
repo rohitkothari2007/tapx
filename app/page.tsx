@@ -250,6 +250,14 @@ export default function Home() {
   }
 
   useEffect(() => {
+    if (typeof window !== "undefined" && window.location.hash) {
+      const hash = window.location.hash;
+      if (hash.includes("type=recovery") || hash.includes("access_token")) {
+        router.replace(`/client/set-password${hash}`);
+        return;
+      }
+    }
+
     loadDashboard();
 
     // Push-based Supabase Realtime Channel

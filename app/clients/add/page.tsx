@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import { getPublicSiteUrl } from "../../lib/siteUrl";
 import QRCode from "qrcode";
 import ModuleConfigurator from "./ModuleConfigurator";
 
@@ -692,7 +693,7 @@ export default function AddClientPage() {
       // STEP 5: CREATE OWNER ACCESS & GENERATE QR
       // -----------------------------------------------------
 
-      const customerUrl = `${window.location.origin}/tap/${device.device_code}`;
+      const customerUrl = `${getPublicSiteUrl()}/tap/${device.device_code}`;
 
       let qrDataUrl = "";
       try {
@@ -830,7 +831,7 @@ export default function AddClientPage() {
 
   async function copyWelcomeMessage() {
     if (!activatedClient) return;
-    const ownerLoginUrl = `${window.location.origin}/client/login`;
+    const ownerLoginUrl = `${getPublicSiteUrl()}/client/login`;
     const msg = `🎉 Welcome to TAPX, ${activatedClient.name}!
 
 Your business touchpoint & owner dashboard are ready:
@@ -931,8 +932,8 @@ Click the Owner Login link above to sign in once your password is set!`;
   // =========================================================
 
   if (activatedClient) {
-    const portalUrl = `${window.location.origin}/client?bId=${activatedClient.id}`;
-    const ownerLoginUrl = `${window.location.origin}/client/login?bId=${activatedClient.id}`;
+    const portalUrl = `${getPublicSiteUrl()}/client?bId=${activatedClient.id}`;
+    const ownerLoginUrl = `${getPublicSiteUrl()}/client/login?bId=${activatedClient.id}`;
 
     return (
       <main style={pageStyle}>

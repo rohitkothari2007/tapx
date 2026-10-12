@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import { getPublicSiteUrl } from "../../lib/siteUrl";
 
 export default function ClientLoginPage() {
   const router = useRouter();
@@ -26,6 +27,14 @@ export default function ClientLoginPage() {
 
   useEffect(() => {
     let active = true;
+
+    if (typeof window !== "undefined" && window.location.hash) {
+      const hash = window.location.hash;
+      if (hash.includes("type=recovery") || hash.includes("access_token")) {
+        router.replace(`/client/set-password${hash}`);
+        return;
+      }
+    }
 
     const checkSessionAndTarget = async () => {
       const searchParams =
@@ -354,7 +363,7 @@ export default function ClientLoginPage() {
                   setError("");
                   setForgotSuccess("");
                   try {
-                    const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+                    const origin = getPublicSiteUrl();
                     await supabase.auth.resetPasswordForEmail(cleanEmail, {
                       redirectTo: `${origin}/client/set-password`,
                     });

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import { getPublicSiteUrl } from "../../lib/siteUrl";
 import QRCode from "qrcode";
 import JSZip from "jszip";
 import ModuleConfigurator, {
@@ -349,7 +350,7 @@ export default function ClientPage() {
 
   async function openDeviceQrModal(device: Device) {
     setQrPreviewDevice(device);
-    const customerUrl = `${window.location.origin}/tap/${device.device_code}`;
+    const customerUrl = `${getPublicSiteUrl()}/tap/${device.device_code}`;
     try {
       const url = await QRCode.toDataURL(customerUrl, { width: 600, margin: 2 });
       setQrPreviewDataUrl(url);
@@ -363,7 +364,7 @@ export default function ClientPage() {
     setZippingQrCodes(true);
     try {
       const zip = new JSZip();
-      const origin = window.location.origin;
+      const origin = getPublicSiteUrl();
 
       for (const dev of devices) {
         const customerUrl = `${origin}/tap/${dev.device_code}`;
@@ -970,7 +971,7 @@ export default function ClientPage() {
       return `/tap/${deviceCode}`;
     }
 
-    return `${window.location.origin}/tap/${deviceCode}`;
+    return `${getPublicSiteUrl()}/tap/${deviceCode}`;
   }
 
   function formatCategory(

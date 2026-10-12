@@ -14,12 +14,26 @@ export default function SetPasswordPage() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    // Check if session token exists in URL hash or session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        // Listening for auth state change in case hash is processed asynchronously
+    if (typeof window !== "undefined" && window.location.hash) {
+      const hashStr = window.location.hash.replace(/^#/, "?");
+      const params = new URLSearchParams(hashStr);
+      const errorDesc = params.get("error_description");
+      if (errorDesc) {
+        setError(errorDesc.replace(/\+/g, " "));
+      }
+    }
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setError("");
       }
     });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function handleSetPassword(e: React.FormEvent) {
@@ -221,6 +235,20 @@ export default function SetPasswordPage() {
             >
               {loading ? "Saving Password..." : "Set Password & Access Portal"}
             </button>
+
+            <div style={{ textAlign: "center", marginTop: "20px" }}>
+              <a
+                href="/client/login"
+                style={{
+                  fontSize: "13px",
+                  color: "#38bdf8",
+                  textDecoration: "none",
+                  fontWeight: 600,
+                }}
+              >
+                Already know your password? Log In to Client Portal →
+              </a>
+            </div>
           </form>
         )}
       </div>

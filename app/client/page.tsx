@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
+import { getPublicSiteUrl } from "../lib/siteUrl";
 import QRCode from "qrcode";
 
 type Business = {
@@ -403,6 +404,14 @@ export default function ClientPortalPage() {
   const loadPortal = useCallback(async () => {
     try {
       setError("");
+
+      if (typeof window !== "undefined" && window.location.hash) {
+        const hash = window.location.hash;
+        if (hash.includes("type=recovery") || hash.includes("access_token")) {
+          router.replace(`/client/set-password${hash}`);
+          return;
+        }
+      }
 
       const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
       const bIdParam = searchParams?.get("bId");
@@ -7029,7 +7038,7 @@ function ClientDevicesSection({
 function DeviceCardItem({ device, tapCount }: { device: ClientDevice; tapCount: number }) {
   const [qrUrl, setQrUrl] = useState<string>("");
   const [copied, setCopied] = useState(false);
-  const customerUrl = typeof window !== "undefined" ? `${window.location.origin}/tap/${device.device_code}` : `/tap/${device.device_code}`;
+  const customerUrl = `${getPublicSiteUrl()}/tap/${device.device_code}`;
 
   useEffect(() => {
     QRCode.toDataURL(customerUrl, { width: 400, margin: 2 })

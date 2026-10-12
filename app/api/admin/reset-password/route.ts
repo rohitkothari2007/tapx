@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getPublicSiteUrl } from "../../../lib/siteUrl";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -171,11 +172,9 @@ export async function POST(req: NextRequest) {
       }
     } else {
       // Send password reset email link via Supabase Auth
-      const origin =
-        req.headers.get("origin") ||
-        req.headers.get("referer") ||
-        process.env.NEXT_PUBLIC_SITE_URL ||
-        "http://localhost:3000";
+      const origin = getPublicSiteUrl(
+        req.headers.get("origin") || req.headers.get("referer")
+      );
 
       const { error: resetErr } = await supabaseAdmin.auth.resetPasswordForEmail(
         cleanEmail,
