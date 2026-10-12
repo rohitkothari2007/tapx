@@ -235,6 +235,8 @@ export default function ClientPage() {
     useState("");
   const [loyaltySavingCustomer, setLoyaltySavingCustomer] =
     useState<string | null>(null);
+  const [loyaltyRemovingCustomer, setLoyaltyRemovingCustomer] =
+    useState<string | null>(null);
 
   // Client Device Management State
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -602,6 +604,27 @@ export default function ClientPage() {
       );
     } finally {
       setLoyaltySavingCustomer(null);
+    }
+  }
+
+  async function removeLoyaltyMember(member: LoyaltyMember) {
+    if (!businessId) return;
+    const custName = member.customer?.name || "this customer";
+    if (!confirm(`Are you sure you want to remove "${custName}" from loyalty members?`)) return;
+
+    setLoyaltyRemovingCustomer(member.id);
+    setLoyaltyMessage("");
+    try {
+      await supabase.from("loyalty_rewards").delete().eq("membership_id", member.id);
+      const { error } = await supabase.from("loyalty_memberships").delete().eq("id", member.id);
+      if (error) throw error;
+      setLoyaltyMessage(`✓ Removed "${custName}" from loyalty members.`);
+      await loadLoyaltyMembers(businessId);
+    } catch (err: any) {
+      console.error("Error removing loyalty member:", err);
+      setLoyaltyMessage(err?.message || "Failed to remove loyalty member.");
+    } finally {
+      setLoyaltyRemovingCustomer(null);
     }
   }
 
@@ -2292,19 +2315,43 @@ export default function ClientPage() {
                           {member.visits} verified visit{member.visits === 1 ? "" : "s"}
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => recordLoyaltyVisit(member)}
-                        disabled={loyaltySavingCustomer === member.id}
-                        style={{
-                          ...primaryButton,
-                          opacity: loyaltySavingCustomer === member.id ? 0.6 : 1,
-                        }}
-                      >
-                        {loyaltySavingCustomer === member.id
-                          ? "Recording..."
-                          : "+ Record Visit"}
-                      </button>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          onClick={() => recordLoyaltyVisit(member)}
+                          disabled={loyaltySavingCustomer === member.id || loyaltyRemovingCustomer === member.id}
+                          style={{
+                            ...primaryButton,
+                            opacity: loyaltySavingCustomer === member.id ? 0.6 : 1,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {loyaltySavingCustomer === member.id
+                            ? "Recording..."
+                            : "+ Record Visit"}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => removeLoyaltyMember(member)}
+                          disabled={loyaltySavingCustomer === member.id || loyaltyRemovingCustomer === member.id}
+                          style={{
+                            padding: "8px 12px",
+                            background: "#fef2f2",
+                            color: "#dc2626",
+                            border: "1px solid #fecaca",
+                            borderRadius: "8px",
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            cursor: loyaltySavingCustomer === member.id || loyaltyRemovingCustomer === member.id ? "not-allowed" : "pointer",
+                            opacity: loyaltyRemovingCustomer === member.id ? 0.6 : 1,
+                            whiteSpace: "nowrap",
+                          }}
+                          title="Remove Member"
+                        >
+                          {loyaltyRemovingCustomer === member.id ? "Removing..." : "🗑️ Remove"}
+                        </button>
+                      </div>
                     </div>
                   ))}
               </div>

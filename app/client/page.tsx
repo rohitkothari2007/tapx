@@ -7502,6 +7502,7 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
   const [loading, setLoading] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
   const [recordingId, setRecordingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
 
@@ -7600,6 +7601,34 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
       setMessage(err?.message || "Failed to record visit.");
     } finally {
       setRecordingId(null);
+    }
+  }
+
+  async function removeMember(member: any) {
+    const custName = member.customer?.name || "this customer";
+    if (!confirm(`Are you sure you want to remove "${custName}" from loyalty members?`)) return;
+
+    setRemovingId(member.id);
+    setMessage("");
+    try {
+      // 1. Delete associated rewards for this membership if any
+      await supabase.from("loyalty_rewards").delete().eq("membership_id", member.id);
+
+      // 2. Delete the membership
+      const { error } = await supabase
+        .from("loyalty_memberships")
+        .delete()
+        .eq("id", member.id);
+
+      if (error) throw error;
+
+      setMessage(`✓ Removed "${custName}" from loyalty members.`);
+      await loadLoyaltyData();
+    } catch (err: any) {
+      console.error("Error removing member:", err);
+      setMessage(err?.message || "Failed to remove member.");
+    } finally {
+      setRemovingId(null);
     }
   }
 
@@ -7851,14 +7880,48 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => recordVisit(member)}
-                    disabled={recordingId === member.id}
-                    style={{ padding: "8px 14px", background: "#2563eb", color: "white", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: 700, cursor: recordingId === member.id ? "not-allowed" : "pointer", opacity: recordingId === member.id ? 0.6 : 1 }}
-                  >
-                    {recordingId === member.id ? "Recording..." : "+ Record Visit"}
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => recordVisit(member)}
+                      disabled={recordingId === member.id || removingId === member.id}
+                      style={{
+                        padding: "8px 14px",
+                        background: "#2563eb",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "8px",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        cursor: recordingId === member.id || removingId === member.id ? "not-allowed" : "pointer",
+                        opacity: recordingId === member.id ? 0.6 : 1,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {recordingId === member.id ? "Recording..." : "+ Record Visit"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => removeMember(member)}
+                      disabled={recordingId === member.id || removingId === member.id}
+                      style={{
+                        padding: "8px 12px",
+                        background: "#fef2f2",
+                        color: "#dc2626",
+                        border: "1px solid #fecaca",
+                        borderRadius: "8px",
+                        fontSize: "12px",
+                        fontWeight: 700,
+                        cursor: recordingId === member.id || removingId === member.id ? "not-allowed" : "pointer",
+                        opacity: removingId === member.id ? 0.6 : 1,
+                        whiteSpace: "nowrap",
+                      }}
+                      title="Remove Member"
+                    >
+                      {removingId === member.id ? "Removing..." : "🗑️ Remove"}
+                    </button>
+                  </div>
                 </div>
               ))}
           </div>
