@@ -7611,6 +7611,23 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
     setRemovingId(member.id);
     setMessage("");
     try {
+      // 1. Direct RPC invocation (matches record_tapx_loyalty_visit architecture)
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
+        "delete_tapx_loyalty_member",
+        {
+          p_membership_id: member.id,
+          p_business_id: businessId,
+        }
+      );
+
+      if (!rpcError) {
+        setMembers((prev) => prev.filter((m) => m.id !== member.id));
+        setMessage(`✓ Removed "${custName}" from loyalty members.`);
+        await loadLoyaltyData();
+        return;
+      }
+
+      // 2. Fallback to API route
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
 
@@ -7636,7 +7653,6 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
       // Optimistically remove from UI state immediately
       setMembers((prev) => prev.filter((m) => m.id !== member.id));
       setMessage(`✓ Removed "${custName}" from loyalty members.`);
-      alert(`✓ Removed "${custName}" from loyalty members.`);
       await loadLoyaltyData();
     } catch (err: any) {
       console.error("Error removing member:", err);

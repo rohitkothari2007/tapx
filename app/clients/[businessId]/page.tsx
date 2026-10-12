@@ -615,6 +615,23 @@ export default function ClientPage() {
     setLoyaltyRemovingCustomer(member.id);
     setLoyaltyMessage("");
     try {
+      // 1. Direct RPC invocation
+      const { error: rpcError } = await supabase.rpc(
+        "delete_tapx_loyalty_member",
+        {
+          p_membership_id: member.id,
+          p_business_id: businessId,
+        }
+      );
+
+      if (!rpcError) {
+        setLoyaltyMembers((prev) => prev.filter((m) => m.id !== member.id));
+        setLoyaltyMessage(`✓ Removed "${custName}" from loyalty members.`);
+        await loadLoyaltyMembers(businessId);
+        return;
+      }
+
+      // 2. Fallback to API route
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
       if (!token) throw new Error("Missing active session. Please log in again.");
@@ -637,7 +654,6 @@ export default function ClientPage() {
       // Optimistically remove from state immediately
       setLoyaltyMembers((prev) => prev.filter((m) => m.id !== member.id));
       setLoyaltyMessage(`✓ Removed "${custName}" from loyalty members.`);
-      alert(`✓ Removed "${custName}" from loyalty members.`);
       await loadLoyaltyMembers(businessId);
     } catch (err: any) {
       console.error("Error removing loyalty member:", err);
