@@ -7611,22 +7611,38 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
     setRemovingId(member.id);
     setMessage("");
     try {
-      // 1. Delete associated rewards for this membership if any
-      await supabase.from("loyalty_rewards").delete().eq("membership_id", member.id);
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
 
-      // 2. Delete the membership
-      const { error } = await supabase
-        .from("loyalty_memberships")
-        .delete()
-        .eq("id", member.id);
+      if (!token) {
+        throw new Error("Missing active session. Please log in again.");
+      }
 
-      if (error) throw error;
+      const res = await fetch("/api/client/loyalty/remove-member", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          membershipId: member.id,
+          businessId: businessId,
+        }),
+      });
 
+      const resData = await res.json();
+      if (!res.ok) throw new Error(resData.error || "Failed to remove member.");
+
+      // Optimistically remove from UI state immediately
+      setMembers((prev) => prev.filter((m) => m.id !== member.id));
       setMessage(`✓ Removed "${custName}" from loyalty members.`);
+      alert(`✓ Removed "${custName}" from loyalty members.`);
       await loadLoyaltyData();
     } catch (err: any) {
       console.error("Error removing member:", err);
-      setMessage(err?.message || "Failed to remove member.");
+      const errMsg = err?.message || "Failed to remove member.";
+      setMessage(errMsg);
+      alert("Error: " + errMsg);
     } finally {
       setRemovingId(null);
     }
