@@ -9,6 +9,7 @@ import {
 import { useParams } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import RestaurantExperience from "../../components/RestaurantExperience";
+import { InstagramIcon, WhatsAppIcon } from "../../components/BrandIcons";
 
 type Device = {
   id: string;
@@ -1425,16 +1426,9 @@ export default function TapPage({
                 />
 
                 <ActionCard
-                  icon={String.fromCodePoint(
-                    0x1f4f8
-                  )}
+                  icon={<InstagramIcon size={24} />}
                   title="Instagram"
                   subtitle="Follow us"
-                  socialProofText={
-                    socialProofCounts.instagram_click >= 5
-                      ? `${socialProofCounts.instagram_click} people have visited our Instagram`
-                      : undefined
-                  }
                   href={
                     business.instagram_url
                   }
@@ -1442,9 +1436,7 @@ export default function TapPage({
                 />
 
                 <ActionCard
-                  icon={String.fromCodePoint(
-                    0x1f4ac
-                  )}
+                  icon={<WhatsAppIcon size={24} />}
                   title="WhatsApp"
                   subtitle="Chat with us"
                   href={
@@ -5437,7 +5429,7 @@ function ActionCard({
   href,
   onClick,
 }: {
-  icon: string;
+  icon: React.ReactNode;
   title: string;
   subtitle: string;
   socialProofText?: string | null;

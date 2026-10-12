@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { InstagramIcon, WhatsAppIcon } from "./BrandIcons";
 
 export type RestaurantExperienceProps = {
   business: {
@@ -468,7 +469,9 @@ export default function RestaurantExperience({
                   onClick={() => onTrackAction && onTrackAction("instagram_click")}
                   style={styles.actionCard}
                 >
-                  <span style={styles.actionIcon}>📸</span>
+                  <span style={{ ...styles.actionIcon, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <InstagramIcon size={20} />
+                  </span>
                   <div>
                     <div style={styles.actionTitle}>Instagram</div>
                     <div style={styles.actionSub}>Tag @{business.name}</div>
@@ -488,7 +491,9 @@ export default function RestaurantExperience({
                   onClick={() => onTrackAction && onTrackAction("whatsapp_click")}
                   style={styles.actionCard}
                 >
-                  <span style={styles.actionIcon}>💬</span>
+                  <span style={{ ...styles.actionIcon, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <WhatsAppIcon size={20} />
+                  </span>
                   <div>
                     <div style={styles.actionTitle}>Call Staff</div>
                     <div style={styles.actionSub}>Need help at table?</div>
@@ -886,10 +891,10 @@ export default function RestaurantExperience({
                           href={`https://wa.me/${business.whatsapp_number.replace(/\D/g, "")}?text=${encodeURIComponent(`Hi, I am at Table ${tableNumber} (Order #${currentOrder.order_number || currentOrder.id.slice(0, 6)}). Need assistance.`)}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          style={styles.helpIconBtn}
+                          style={{ ...styles.helpIconBtn, display: "flex", alignItems: "center", justifyContent: "center" }}
                           title="WhatsApp staff"
                         >
-                          💬
+                          <WhatsAppIcon size={18} />
                         </a>
                       )}
                     </div>
