@@ -694,7 +694,23 @@ export default function ClientsPage() {
                         });
                         const resData = await res.json();
                         if (!res.ok) throw new Error(resData.error || "Failed to process reset.");
-                        alert(resData.message || "Password reset complete.");
+
+                        if (newPwd.trim()) {
+                          const loginMsg = `🎉 TAPX Owner Login Credentials:
+
+🌐 Login Portal: https://tapx-roan.vercel.app/client/login
+📧 Login Email: ${targetEmail}
+🔑 Password: ${newPwd.trim()}
+
+You can now log in to view your business workspace!`;
+                          try {
+                            await navigator.clipboard.writeText(loginMsg);
+                          } catch {}
+                          alert(`${resData.message}\n\n✓ Copied login message to clipboard! You can paste and send it directly to the owner.`);
+                        } else {
+                          alert(resData.message || "Password reset complete.");
+                        }
+
                         setResetRequests((prev) => prev.filter((r) => r.id !== req.id));
                       } catch (err: any) {
                         alert("Reset Error: " + (err.message || err));
@@ -1260,7 +1276,22 @@ export default function ClientsPage() {
                                 });
                                 const resData = await res.json();
                                 if (!res.ok) throw new Error(resData.error || "Failed to reset password.");
-                                alert(resData.message || "Password reset complete.");
+
+                                if (newPwd.trim()) {
+                                  const loginMsg = `🎉 TAPX Owner Login Credentials:
+
+🌐 Login Portal: https://tapx-roan.vercel.app/client/login
+📧 Login Email: ${targetEmail}
+🔑 Password: ${newPwd.trim()}
+
+You can now log in to view your business workspace!`;
+                                  try {
+                                    await navigator.clipboard.writeText(loginMsg);
+                                  } catch {}
+                                  alert(`${resData.message}\n\n✓ Copied login message to clipboard! You can paste and send it directly to the owner.`);
+                                } else {
+                                  alert(resData.message || "Password reset complete.");
+                                }
                               } catch (err: any) {
                                 alert("Reset Error: " + (err.message || err));
                               }
