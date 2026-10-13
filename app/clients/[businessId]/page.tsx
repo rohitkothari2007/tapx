@@ -590,22 +590,31 @@ export default function ClientPage() {
   async function loadLoyaltyMembers(targetBusinessId: string) {
     setLoyaltyLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("loyalty_memberships")
-        .select(`
-          id,
-          customer_id,
-          visits,
-          redemption_count,
-          reward_claimed,
-          updated_at,
-          customer:customers(name, phone)
-        `)
-        .eq("business_id", targetBusinessId)
-        .order("updated_at", { ascending: false });
+      const { data: rpcMembers, error: rpcErr } = await supabase.rpc(
+        "get_tapx_loyalty_members",
+        { p_business_id: targetBusinessId }
+      );
 
-      if (error) throw error;
-      setLoyaltyMembers((data || []) as unknown as LoyaltyMember[]);
+      if (!rpcErr && Array.isArray(rpcMembers)) {
+        setLoyaltyMembers(rpcMembers as unknown as LoyaltyMember[]);
+      } else {
+        const { data, error } = await supabase
+          .from("loyalty_memberships")
+          .select(`
+            id,
+            customer_id,
+            visits,
+            redemption_count,
+            reward_claimed,
+            updated_at,
+            customer:customers(name, phone)
+          `)
+          .eq("business_id", targetBusinessId)
+          .order("updated_at", { ascending: false });
+
+        if (error) throw error;
+        setLoyaltyMembers((data || []) as unknown as LoyaltyMember[]);
+      }
       await loadLoyaltyRewards(targetBusinessId);
       await loadLoyaltyConfig(targetBusinessId);
     } catch (err) {

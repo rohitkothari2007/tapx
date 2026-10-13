@@ -7544,14 +7544,24 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
   async function loadLoyaltyData() {
     setLoading(true);
     try {
-      // 1. Fetch Members
-      const { data: memberData } = await supabase
-        .from("loyalty_memberships")
-        .select("id, customer_id, visits, redemption_count, reward_claimed, updated_at, customer:customers(name, phone)")
-        .eq("business_id", businessId)
-        .order("updated_at", { ascending: false });
+      // 1. Fetch Members via atomic SECURITY DEFINER RPC (High-speed, zero RLS blocks)
+      const { data: rpcMembers, error: rpcErr } = await supabase.rpc(
+        "get_tapx_loyalty_members",
+        { p_business_id: businessId }
+      );
 
-      if (memberData) setMembers(memberData);
+      if (!rpcErr && Array.isArray(rpcMembers)) {
+        setMembers(rpcMembers);
+      } else {
+        // Fallback to direct table query
+        const { data: memberData } = await supabase
+          .from("loyalty_memberships")
+          .select("id, customer_id, visits, redemption_count, reward_claimed, updated_at, customer:customers(name, phone)")
+          .eq("business_id", businessId)
+          .order("updated_at", { ascending: false });
+
+        if (memberData) setMembers(memberData);
+      }
 
       // 2. Fetch Rewards
       const { data: rewardData } = await supabase
