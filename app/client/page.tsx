@@ -860,6 +860,14 @@ export default function ClientPortalPage() {
           loadPortal();
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "loyalty_memberships", filter: `business_id=eq.${bId}` },
+        () => {
+          triggerHighlight("loyalty");
+          loadPortal();
+        }
+      )
       .subscribe();
 
     // 25-Second Auto-Polling Interval for Lower-Urgency Aggregates
@@ -7508,6 +7516,29 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
 
   useEffect(() => {
     loadLoyaltyData();
+    if (!businessId) return;
+
+    const channel = supabase
+      .channel(`loyalty_realtime_${businessId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "loyalty_memberships", filter: `business_id=eq.${businessId}` },
+        () => {
+          loadLoyaltyData();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "loyalty_rewards", filter: `business_id=eq.${businessId}` },
+        () => {
+          loadLoyaltyData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [businessId]);
 
   async function loadLoyaltyData() {

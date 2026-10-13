@@ -400,6 +400,47 @@ export default function ClientPage() {
     }
 
     loadWorkspace();
+
+    const channel = supabase
+      .channel(`admin_client_realtime_${businessId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "interactions", filter: `business_id=eq.${businessId}` },
+        () => {
+          loadWorkspace();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "loyalty_memberships", filter: `business_id=eq.${businessId}` },
+        () => {
+          loadLoyaltyMembers(businessId);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "loyalty_rewards", filter: `business_id=eq.${businessId}` },
+        () => {
+          loadLoyaltyRewards(businessId);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tapx_orders", filter: `business_id=eq.${businessId}` },
+        () => {
+          loadWorkspace();
+        }
+      )
+      .subscribe();
+
+    const interval = setInterval(() => {
+      loadWorkspace();
+    }, 25000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, [businessId]);
 
   async function loadLoyaltyRewards(targetBusinessId: string) {

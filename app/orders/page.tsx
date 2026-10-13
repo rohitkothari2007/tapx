@@ -248,11 +248,30 @@ export default function OrdersPage() {
   useEffect(() => {
     void loadOrders();
 
+    const channel = supabase
+      .channel("admin_orders_realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tapx_orders" },
+        () => {
+          void loadOrders();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tapx_order_items" },
+        () => {
+          void loadOrders();
+        }
+      )
+      .subscribe();
+
     const timer = window.setInterval(() => {
       void loadOrders();
     }, 15000);
 
     return () => {
+      supabase.removeChannel(channel);
       window.clearInterval(timer);
     };
   }, []);
