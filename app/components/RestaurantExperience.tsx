@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { InstagramIcon, WhatsAppIcon } from "./BrandIcons";
+import UpiPaymentModal from "./UpiPaymentModal";
 
 export type RestaurantExperienceProps = {
   business: {
@@ -95,6 +96,7 @@ export default function RestaurantExperience({
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
 
   // Cart state
   const [cart, setCart] = useState<Record<string, number>>({});
@@ -502,19 +504,20 @@ export default function RestaurantExperience({
               )}
 
               {business.payment_enabled && (business.payment_url || business.upi_id) && (
-                <a
-                  href={business.payment_url || `upi://pay?pa=${encodeURIComponent(business.upi_id || "")}&pn=${encodeURIComponent(business.name)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => onTrackAction && onTrackAction("payment_click")}
-                  style={styles.actionCard}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onTrackAction) onTrackAction("payment_click");
+                    setIsPaymentModalOpen(true);
+                  }}
+                  style={{ ...styles.actionCard, cursor: "pointer", textAlign: "left" }}
                 >
                   <span style={styles.actionIcon}>💳</span>
                   <div>
                     <div style={styles.actionTitle}>Pay Online</div>
-                    <div style={styles.actionSub}>Instant UPI Payment</div>
+                    <div style={styles.actionSub}>Instant UPI &amp; QR</div>
                   </div>
-                </a>
+                </button>
               )}
 
               {feedbackEnabled && onOpenFeedback && (
@@ -1151,6 +1154,15 @@ export default function RestaurantExperience({
           )}
         </button>
       </nav>
+
+      <UpiPaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        businessName={business.name}
+        upiId={business.upi_id}
+        paymentUrl={business.payment_url}
+        onTrackAction={onTrackAction}
+      />
     </div>
   );
 }

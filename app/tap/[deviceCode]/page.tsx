@@ -10,6 +10,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import RestaurantExperience from "../../components/RestaurantExperience";
 import { InstagramIcon, WhatsAppIcon } from "../../components/BrandIcons";
+import UpiPaymentModal from "../../components/UpiPaymentModal";
 
 type Device = {
   id: string;
@@ -299,6 +300,8 @@ export default function TapPage({
 
   const [hotelServiceItems, setHotelServiceItems] =
     useState<HotelServiceItem[]>([]);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] =
+    useState(false);
 
   const categoryAccent = useMemo(
     () => getCategoryAccent(business?.category),
@@ -1144,27 +1147,13 @@ export default function TapPage({
         )}`
       : null;
 
-  const upiPaymentLink =
-    business.payment_enabled ===
-      true &&
-    business.upi_id
-      ? `upi://pay?pa=${encodeURIComponent(
-          business.upi_id
-        )}&pn=${encodeURIComponent(
-          business.name
-        )}&cu=INR`
-      : null;
+  const isPaymentActive =
+    business.payment_enabled !== false &&
+    Boolean(business.upi_id || business.payment_url);
 
-  const paymentLink =
-    business.payment_url ||
-    upiPaymentLink;
-
-  const paymentSubtitle =
-    business.payment_url
-      ? "Secure payment"
-      : upiPaymentLink
-        ? "Pay via UPI"
-        : "Payment not configured";
+  const paymentSubtitle = isPaymentActive
+    ? "Instant UPI & QR"
+    : "Payment not configured";
 
   const digitalMenuEnabled =
     enabledModuleKeys.includes(
@@ -1453,10 +1442,14 @@ export default function TapPage({
                   subtitle={
                     paymentSubtitle
                   }
-                  href={
-                    paymentLink
+                  onClick={
+                    isPaymentActive
+                      ? () => {
+                          void trackActionClick("payment_click");
+                          setIsPaymentModalOpen(true);
+                        }
+                      : undefined
                   }
-                  onClick={() => void trackActionClick("payment_click")}
                 />
 
                 <ActionCard
@@ -2045,6 +2038,15 @@ export default function TapPage({
             }
           </div>
         </footer>
+
+        <UpiPaymentModal
+          isOpen={isPaymentModalOpen}
+          onClose={() => setIsPaymentModalOpen(false)}
+          businessName={business.name}
+          upiId={business.upi_id}
+          paymentUrl={business.payment_url}
+          onTrackAction={(type) => void trackActionClick(type)}
+        />
       </div>
     </main>
   );
@@ -5481,6 +5483,29 @@ function ActionCard({
       >
         {content}
       </a>
+    );
+  }
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        onTouchStart={() => setIsPressed(true)}
+        onTouchEnd={() => setIsPressed(false)}
+        onTouchCancel={() => setIsPressed(false)}
+        onMouseDown={() => setIsPressed(true)}
+        onMouseUp={() => setIsPressed(false)}
+        onMouseLeave={() => setIsPressed(false)}
+        style={{
+          ...styles.actionButton,
+          transform: isPressed ? "scale(0.97)" : "scale(1.0)",
+          transition:
+            "transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms ease",
+        }}
+      >
+        {content}
+      </button>
     );
   }
 
