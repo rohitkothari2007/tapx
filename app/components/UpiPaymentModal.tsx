@@ -23,17 +23,17 @@ export default function UpiPaymentModal({
   onTrackAction,
 }: UpiPaymentModalProps) {
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>("");
-  const [copied, setCopied] = useState<boolean>(false);
+  const [copiedId, setCopiedId] = useState<boolean>(false);
+  const [copiedAmount, setCopiedAmount] = useState<boolean>(false);
   const [savedQr, setSavedQr] = useState<boolean>(false);
-  const [isGeneratingQr, setIsGeneratingQr] = useState<boolean>(true);
 
   const cleanUpiId = (upiId || "").trim();
   const cleanBusinessName = (businessName || "Business").trim();
   const numAmount = amount ? Number(amount) : null;
 
-  // Build standard universal NPCI UPI intent URI
+  // Build standard universal NPCI UPI QR string (for direct camera scan)
   const standardUpiUri = cleanUpiId
-    ? `upi://pay?pa=${encodeURIComponent(cleanUpiId)}&pn=${encodeURIComponent(cleanBusinessName)}${
+    ? `upi://pay?pa=${cleanUpiId}&pn=${cleanBusinessName.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, "%20")}${
         numAmount && numAmount > 0 ? `&am=${numAmount.toFixed(2)}` : ""
       }&cu=INR`
     : "";
@@ -46,9 +46,8 @@ export default function UpiPaymentModal({
       return;
     }
 
-    setIsGeneratingQr(true);
     QRCode.toDataURL(standardUpiUri, {
-      width: 240,
+      width: 220,
       margin: 1,
       color: {
         dark: "#0f172a",
@@ -57,14 +56,10 @@ export default function UpiPaymentModal({
       errorCorrectionLevel: "M",
     })
       .then((url) => {
-        if (isMounted) {
-          setQrCodeDataUrl(url);
-          setIsGeneratingQr(false);
-        }
+        if (isMounted) setQrCodeDataUrl(url);
       })
       .catch((err) => {
         console.error("Failed to generate UPI QR code:", err);
-        if (isMounted) setIsGeneratingQr(false);
       });
 
     return () => {
@@ -84,21 +79,34 @@ export default function UpiPaymentModal({
 
   if (!isOpen) return null;
 
-  const handleCopy = () => {
-    if (!cleanUpiId) return;
+  const copyToClipboard = (text: string) => {
+    if (!text) return;
     if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(cleanUpiId);
+      navigator.clipboard.writeText(text);
     } else {
       const textarea = document.createElement("textarea");
-      textarea.value = cleanUpiId;
+      textarea.value = text;
       document.body.appendChild(textarea);
       textarea.select();
       document.execCommand("copy");
       document.body.removeChild(textarea);
     }
-    setCopied(true);
+  };
+
+  const handleCopyUpiId = () => {
+    if (!cleanUpiId) return;
+    copyToClipboard(cleanUpiId);
+    setCopiedId(true);
     if (onTrackAction) onTrackAction("upi_id_copied");
-    setTimeout(() => setCopied(false), 2500);
+    setTimeout(() => setCopiedId(false), 2500);
+  };
+
+  const handleCopyAmount = () => {
+    if (!numAmount || numAmount <= 0) return;
+    copyToClipboard(numAmount.toFixed(2));
+    setCopiedAmount(true);
+    if (onTrackAction) onTrackAction("amount_copied");
+    setTimeout(() => setCopiedAmount(false), 2500);
   };
 
   const handleDownloadQr = () => {
@@ -112,10 +120,6 @@ export default function UpiPaymentModal({
     setSavedQr(true);
     if (onTrackAction) onTrackAction("upi_qr_downloaded");
     setTimeout(() => setSavedQr(false), 3000);
-  };
-
-  const handleIntentClick = () => {
-    if (onTrackAction) onTrackAction("upi_intent_click");
   };
 
   return (
@@ -148,7 +152,7 @@ export default function UpiPaymentModal({
           from { opacity: 0; transform: scale(0.95) translateY(8px); }
           to { opacity: 1; transform: scale(1) translateY(0); }
         }
-        .tapx-pay-button:active {
+        .tapx-action-btn:active {
           transform: scale(0.98);
         }
       `}</style>
@@ -156,7 +160,10 @@ export default function UpiPaymentModal({
       <div
         style={{
           width: "100%",
-          maxWidth: "380px",
+          maxWidth: "400px",
+          maxHeight: "92vh",
+          display: "flex",
+          flexDirection: "column",
           background: "#ffffff",
           borderRadius: "24px",
           boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)",
@@ -168,12 +175,13 @@ export default function UpiPaymentModal({
         {/* Header */}
         <div
           style={{
-            padding: "18px 20px 14px",
+            padding: "16px 20px",
             borderBottom: "1px solid #f1f5f9",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             background: "#fafafa",
+            flexShrink: 0,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0 }}>
@@ -197,27 +205,27 @@ export default function UpiPaymentModal({
               <div
                 style={{
                   fontSize: "15px",
-                  fontWeight: 700,
+                  fontWeight: 800,
                   color: "#0f172a",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                 }}
               >
-                {cleanBusinessName}
+                Pay {cleanBusinessName}
               </div>
               <div
                 style={{
                   fontSize: "11px",
                   color: "#16a34a",
-                  fontWeight: 600,
+                  fontWeight: 700,
                   display: "flex",
                   alignItems: "center",
                   gap: "3px",
                 }}
               >
                 <span>✓</span>
-                <span>Verified Direct UPI</span>
+                <span>Pay with any UPI App</span>
               </div>
             </div>
           </div>
@@ -247,207 +255,319 @@ export default function UpiPaymentModal({
           </button>
         </div>
 
-        {/* Modal Body */}
-        <div style={{ padding: "20px 20px 22px", textAlign: "center" }}>
-          {/* Optional Amount Display */}
+        {/* Modal Scrollable Body */}
+        <div
+          style={{
+            padding: "18px 20px 22px",
+            overflowY: "auto",
+            WebkitOverflowScrolling: "touch",
+            flex: 1,
+          }}
+        >
+          {/* Amount to Pay (when there is an order total) */}
           {numAmount && numAmount > 0 && (
-            <div style={{ marginBottom: "16px" }}>
-              <div style={{ fontSize: "12px", color: "#64748b", fontWeight: 600, textTransform: "uppercase" }}>
-                Amount to Pay
-              </div>
-              <div style={{ fontSize: "28px", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px" }}>
-                ₹{numAmount.toLocaleString("en-IN")}
-              </div>
-            </div>
-          )}
-
-          {/* QR Code Frame */}
-          {cleanUpiId ? (
             <div
               style={{
-                display: "inline-flex",
-                flexDirection: "column",
-                alignItems: "center",
                 background: "#f8fafc",
                 border: "1.5px solid #e2e8f0",
-                borderRadius: "20px",
-                padding: "14px",
+                borderRadius: "16px",
+                padding: "14px 16px",
                 marginBottom: "16px",
-                boxShadow: "inset 0 2px 4px rgba(0,0,0,0.02)",
-              }}
-            >
-              <div
-                style={{
-                  width: "190px",
-                  height: "190px",
-                  background: "#ffffff",
-                  borderRadius: "14px",
-                  border: "1px solid #cbd5e1",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  overflow: "hidden",
-                }}
-              >
-                {isGeneratingQr ? (
-                  <div style={{ fontSize: "12px", color: "#94a3b8" }}>Generating QR...</div>
-                ) : qrCodeDataUrl ? (
-                  <img
-                    src={qrCodeDataUrl}
-                    alt="UPI QR Code"
-                    style={{ width: "100%", height: "100%", display: "block" }}
-                  />
-                ) : (
-                  <div style={{ fontSize: "12px", color: "#ef4444" }}>QR Unavailable</div>
-                )}
-              </div>
-
-              <div
-                style={{
-                  marginTop: "8px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "10px",
-                  flexWrap: "wrap",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: "11px",
-                    fontWeight: 600,
-                    color: "#64748b",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "4px",
-                  }}
-                >
-                  <span>📷</span>
-                  <span>Scan with any UPI Scanner</span>
-                </div>
-
-                {qrCodeDataUrl && (
-                  <button
-                    type="button"
-                    onClick={handleDownloadQr}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "4px",
-                      padding: "4px 9px",
-                      borderRadius: "8px",
-                      border: "1px solid #cbd5e1",
-                      background: savedQr ? "#dcfce7" : "#ffffff",
-                      color: savedQr ? "#15803d" : "#334155",
-                      fontSize: "11px",
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      transition: "all 0.15s ease",
-                    }}
-                  >
-                    <span>{savedQr ? "✓" : "📥"}</span>
-                    <span>{savedQr ? "Saved to Photos!" : "Save QR"}</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div style={{ padding: "20px 0", color: "#64748b", fontSize: "13px" }}>
-              No UPI ID configured for this business.
-            </div>
-          )}
-
-          {/* Action 1: 1-Tap Universal App Intent Button */}
-          {cleanUpiId && standardUpiUri && (
-            <a
-              href={standardUpiUri}
-              onClick={handleIntentClick}
-              className="tapx-pay-button"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                width: "100%",
-                padding: "13px 16px",
-                background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
-                color: "#ffffff",
-                borderRadius: "14px",
-                textDecoration: "none",
-                fontWeight: 700,
-                fontSize: "14px",
-                boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)",
-                marginBottom: "10px",
-                transition: "all 0.15s ease",
-              }}
-            >
-              <span>⚡</span>
-              <span>Open in Any UPI App</span>
-            </a>
-          )}
-
-          {/* Action 2: Copy UPI ID Chip */}
-          {cleanUpiId && (
-            <div
-              style={{
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                padding: "10px 12px",
-                background: "#f8fafc",
-                border: "1px dashed #cbd5e1",
-                borderRadius: "12px",
-                marginBottom: paymentUrl && !paymentUrl.startsWith("upi://") ? "10px" : "14px",
+                gap: "12px",
               }}
             >
-              <div style={{ minWidth: 0, textAlign: "left", marginRight: "8px" }}>
-                <div style={{ fontSize: "10px", color: "#64748b", fontWeight: 700, textTransform: "uppercase" }}>
-                  UPI ID
+              <div style={{ textAlign: "left" }}>
+                <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 700, textTransform: "uppercase" }}>
+                  Amount to Pay
                 </div>
-                <div
-                  style={{
-                    fontSize: "12.5px",
-                    fontWeight: 700,
-                    color: "#0f172a",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {cleanUpiId}
+                <div style={{ fontSize: "24px", fontWeight: 900, color: "#0f172a", letterSpacing: "-0.5px" }}>
+                  ₹{numAmount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
 
               <button
                 type="button"
-                onClick={handleCopy}
+                onClick={handleCopyAmount}
+                className="tapx-action-btn"
                 style={{
-                  background: copied ? "#16a34a" : "#0f172a",
+                  background: copiedAmount ? "#16a34a" : "#0f172a",
                   color: "#ffffff",
                   border: "none",
-                  borderRadius: "8px",
-                  padding: "7px 12px",
-                  fontSize: "11.5px",
+                  borderRadius: "10px",
+                  padding: "9px 14px",
+                  fontSize: "12px",
                   fontWeight: 700,
                   cursor: "pointer",
+                  transition: "all 0.15s ease",
                   whiteSpace: "nowrap",
-                  transition: "background 0.2s ease",
                   flexShrink: 0,
                 }}
               >
-                {copied ? "✓ Copied!" : "📋 Copy ID"}
+                {copiedAmount ? "✓ Amount Copied" : "📋 Copy Amount"}
               </button>
             </div>
           )}
 
-          {/* Action 3: Payment Gateway Fallback Link if Available */}
+          {/* Business UPI ID Section in Large Text */}
+          {cleanUpiId ? (
+            <div
+              style={{
+                background: "#f8fafc",
+                border: "1.5px solid #e2e8f0",
+                borderRadius: "16px",
+                padding: "16px",
+                marginBottom: "16px",
+                textAlign: "left",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: "8px",
+                }}
+              >
+                <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 700, textTransform: "uppercase" }}>
+                  Business UPI ID
+                </span>
+                <span style={{ fontSize: "11px", color: "#16a34a", fontWeight: 700 }}>
+                  ✓ Direct Transfer
+                </span>
+              </div>
+
+              {/* UPI ID in Large Text */}
+              <div
+                style={{
+                  fontSize: "17px",
+                  fontWeight: 800,
+                  color: "#0f172a",
+                  wordBreak: "break-all",
+                  fontFamily: "monospace, -apple-system, BlinkMacSystemFont, sans-serif",
+                  letterSpacing: "0.2px",
+                  marginBottom: "12px",
+                  padding: "12px 14px",
+                  background: "#ffffff",
+                  borderRadius: "12px",
+                  border: "1px solid #cbd5e1",
+                  userSelect: "all",
+                }}
+              >
+                {cleanUpiId}
+              </div>
+
+              {/* Copy UPI ID Button */}
+              <button
+                type="button"
+                onClick={handleCopyUpiId}
+                className="tapx-action-btn"
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                  padding: "13px 18px",
+                  background: copiedId ? "#16a34a" : "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
+                  color: "#ffffff",
+                  border: "none",
+                  borderRadius: "12px",
+                  fontSize: "14px",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  boxShadow: copiedId
+                    ? "0 4px 12px rgba(22, 163, 74, 0.25)"
+                    : "0 4px 12px rgba(37, 99, 235, 0.25)",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <span>{copiedId ? "✓" : "📋"}</span>
+                <span>{copiedId ? "UPI ID Copied!" : "Copy UPI ID"}</span>
+              </button>
+            </div>
+          ) : (
+            <div style={{ padding: "16px 0", color: "#64748b", fontSize: "13px", textAlign: "center" }}>
+              No UPI ID configured for this business.
+            </div>
+          )}
+
+          {/* Three Short Steps to Pay */}
+          <div
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e2e8f0",
+              borderRadius: "16px",
+              padding: "14px 16px",
+              marginBottom: "16px",
+              textAlign: "left",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "12.5px",
+                fontWeight: 800,
+                color: "#0f172a",
+                marginBottom: "12px",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <span>📲</span>
+              <span>How to pay with any UPI app</span>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              {/* Step 1 */}
+              <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                <div
+                  style={{
+                    width: "22px",
+                    height: "22px",
+                    borderRadius: "50%",
+                    background: "#eff6ff",
+                    color: "#2563eb",
+                    fontSize: "12px",
+                    fontWeight: 800,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  1
+                </div>
+                <div style={{ fontSize: "12px", color: "#334155", lineHeight: 1.45 }}>
+                  Open any UPI app (<strong>GPay</strong>, <strong>PhonePe</strong>, <strong>Paytm</strong>, <strong>BHIM</strong>)
+                </div>
+              </div>
+
+              {/* Step 2 */}
+              <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                <div
+                  style={{
+                    width: "22px",
+                    height: "22px",
+                    borderRadius: "50%",
+                    background: "#eff6ff",
+                    color: "#2563eb",
+                    fontSize: "12px",
+                    fontWeight: 800,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  2
+                </div>
+                <div style={{ fontSize: "12px", color: "#334155", lineHeight: 1.45 }}>
+                  Choose <strong>&quot;Pay to UPI ID&quot;</strong> (or &quot;To UPI ID&quot;)
+                </div>
+              </div>
+
+              {/* Step 3 */}
+              <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+                <div
+                  style={{
+                    width: "22px",
+                    height: "22px",
+                    borderRadius: "50%",
+                    background: "#eff6ff",
+                    color: "#2563eb",
+                    fontSize: "12px",
+                    fontWeight: 800,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  3
+                </div>
+                <div style={{ fontSize: "12px", color: "#334155", lineHeight: 1.45 }}>
+                  Paste the ID and enter{" "}
+                  {numAmount && numAmount > 0 ? (
+                    <strong>₹{numAmount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                  ) : (
+                    "the amount"
+                  )}{" "}
+                  to complete payment
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* On-Screen QR Code (Secondary Camera / Gallery Scan Option) */}
+          {cleanUpiId && qrCodeDataUrl && (
+            <div
+              style={{
+                background: "#f8fafc",
+                border: "1px dashed #cbd5e1",
+                borderRadius: "14px",
+                padding: "12px",
+                marginBottom: paymentUrl && !paymentUrl.startsWith("upi://") ? "12px" : "4px",
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                textAlign: "left",
+              }}
+            >
+              <img
+                src={qrCodeDataUrl}
+                alt="UPI QR Code"
+                style={{
+                  width: "60px",
+                  height: "60px",
+                  borderRadius: "8px",
+                  border: "1px solid #cbd5e1",
+                  background: "#ffffff",
+                  flexShrink: 0,
+                }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: "12px", fontWeight: 700, color: "#0f172a" }}>
+                  Or Scan QR with Camera
+                </div>
+                <div style={{ fontSize: "11px", color: "#64748b", marginTop: "2px" }}>
+                  Scan directly or save to gallery
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDownloadQr}
+                  style={{
+                    marginTop: "6px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    padding: "3px 8px",
+                    borderRadius: "6px",
+                    border: "1px solid #cbd5e1",
+                    background: savedQr ? "#dcfce7" : "#ffffff",
+                    color: savedQr ? "#15803d" : "#334155",
+                    fontSize: "10.5px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  <span>{savedQr ? "✓" : "📥"}</span>
+                  <span>{savedQr ? "Saved to Photos!" : "Save QR"}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Payment Gateway Fallback Link if Available */}
           {paymentUrl && !paymentUrl.startsWith("upi://") && (
             <a
               href={paymentUrl}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => onTrackAction && onTrackAction("payment_gateway_click")}
-              className="tapx-pay-button"
+              className="tapx-action-btn"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -462,33 +582,13 @@ export default function UpiPaymentModal({
                 textDecoration: "none",
                 fontWeight: 700,
                 fontSize: "13px",
-                marginBottom: "14px",
+                marginTop: "10px",
               }}
             >
               <span>🌐</span>
               <span>Pay via Gateway / Card / NetBanking</span>
             </a>
           )}
-
-          {/* Subtitle / Universal App Support Badge */}
-          <div
-            style={{
-              fontSize: "11px",
-              lineHeight: 1.45,
-              color: "#475569",
-              background: "#f8fafc",
-              padding: "10px 12px",
-              borderRadius: "12px",
-              border: "1px solid #e2e8f0",
-              textAlign: "left",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "5px", color: "#0f172a", fontWeight: 700, marginBottom: "3px" }}>
-              <span>💡</span>
-              <span>Smooth Payment Tip</span>
-            </div>
-            Direct <strong>QR Scan</strong> or tapping <strong>Copy ID</strong> &amp; pasting into PhonePe/GPay bypasses bank link filters and works with 0% failure across all banks &amp; UPI apps.
-          </div>
         </div>
       </div>
     </div>
