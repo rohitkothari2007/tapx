@@ -21,7 +21,7 @@ function UpiTestContent() {
 
   useEffect(() => {
     if (!deviceCode) {
-      setError("Please provide a ?device= query parameter (e.g. ?device=TAPX003)");
+      setError("Note: No ?device= parameter provided. Pass ?device=TAPX003 to test device-specific variants below.");
       setLoading(false);
       return;
     }
@@ -55,27 +55,32 @@ function UpiTestContent() {
     void loadData();
   }, [deviceCode]);
 
-  // Formatted parameters
+  // Client-side generated transaction reference
+  const clientTimestamp = timestamp || Date.now().toString();
+
+  // M1, M2, M3: Plain links with literal @ and exact merchant parameters
+  const m1Link =
+    "upi://pay?pa=9112091122@okbizicici&pn=Ridhi%20Sales%20And%20Services&mc=5462&aid=uGICAgMDMsbvIIw&ver=01&mode=01&tr=BCR2DN4T6SNZTZQY";
+  const m2Link =
+    "upi://pay?pa=9112091122@okbizicici&pn=Ridhi%20Sales%20And%20Services&mc=5462&aid=uGICAgMDMsbvIIw&ver=01&mode=01&tr=BCR2DN4T6SNZTZQY&am=1.00&cu=INR";
+  const m3Tr = `TAPX${clientTimestamp}`;
+  const m3Link = `upi://pay?pa=9112091122@okbizicici&pn=Ridhi%20Sales%20And%20Services&mc=5462&aid=uGICAgMDMsbvIIw&ver=01&mode=01&tr=${m3Tr}&am=1.00&cu=INR`;
+
+  // Formatted device parameters for V1-V6
   const upiIdRaw = (upiId || "").trim();
   const cleanName = (businessName || "Business").trim();
   const paEncoded = encodeURIComponent(upiIdRaw);
   const pnEncoded = encodeURIComponent(cleanName);
   const cu = "INR";
 
-  // V4: %20 for spaces, stripped of special characters
   const nameWithPercent20 = cleanName
     .replace(/[^a-zA-Z0-9 ]/g, "")
     .replace(/\s+/g, "%20");
-
-  // V5 & V6: stripped of spaces and special characters
   const nameWithoutSpaces = cleanName.replace(/[^a-zA-Z0-9]/g, "");
 
-  // Client-side generated transaction references
-  const clientTimestamp = timestamp || Date.now().toString();
   const trV3 = encodeURIComponent(`TAPXTEST${clientTimestamp}`);
   const trV6 = `TAPX${clientTimestamp}`;
 
-  // Link definitions
   const v1Link = `upi://pay?pa=${paEncoded}&pn=${pnEncoded}&cu=${cu}`;
   const v2Link = `upi://pay?pa=${paEncoded}&pn=${pnEncoded}&am=10.00&cu=${cu}`;
   const v3Link = `upi://pay?pa=${paEncoded}&pn=${pnEncoded}&am=10.00&cu=${cu}&tr=${trV3}&tn=TAPX%20test`;
@@ -83,7 +88,7 @@ function UpiTestContent() {
   const v5Link = `upi://pay?pa=${upiIdRaw}&pn=${nameWithoutSpaces}&cu=${cu}`;
   const v6Link = `upi://pay?pa=${upiIdRaw}&pn=${nameWithoutSpaces}&am=1.00&cu=${cu}&tr=${trV6}`;
 
-  const variants = [
+  const deviceVariants = [
     {
       id: "V1",
       title: "Variant 1: Raw QR Match (encodeURIComponent, No Amount)",
@@ -137,7 +142,7 @@ function UpiTestContent() {
   return (
     <main
       style={{
-        maxWidth: "640px",
+        maxWidth: "680px",
         margin: "0 auto",
         padding: "24px 16px 48px",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
@@ -161,15 +166,209 @@ function UpiTestContent() {
         ⚠️ Test page - delete after use
       </div>
 
-      <h1 style={{ fontSize: "20px", fontWeight: 800, marginBottom: "4px" }}>
+      <h1 style={{ fontSize: "22px", fontWeight: 800, marginBottom: "4px" }}>
         UPI Intent Link Tester
       </h1>
-      <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "16px" }}>
+      <p style={{ fontSize: "13px", color: "#64748b", marginBottom: "20px" }}>
         Device: <strong>{deviceCode || "(none)"}</strong>
       </p>
 
+      {/* SECTION 1: M1, M2, M3 Variants (Requested) */}
+      <section
+        style={{
+          background: "#ffffff",
+          border: "2px solid #2563eb",
+          borderRadius: "16px",
+          padding: "20px",
+          marginBottom: "28px",
+          boxShadow: "0 4px 16px rgba(37, 99, 235, 0.08)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+          <h2 style={{ fontSize: "17px", fontWeight: 800, margin: 0, color: "#1e3a8a" }}>
+            Target Variants: M1, M2, M3
+          </h2>
+          <button
+            type="button"
+            onClick={() => setTimestamp(Date.now().toString())}
+            style={{
+              background: "#eff6ff",
+              border: "1px solid #93c5fd",
+              color: "#1d4ed8",
+              padding: "4px 10px",
+              borderRadius: "6px",
+              fontSize: "12px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            🔄 Refresh tr
+          </button>
+        </div>
+        <p style={{ fontSize: "12px", color: "#64748b", margin: "0 0 16px 0" }}>
+          Unencoded with literal <code>@</code> and exact merchant QR intent parameters.
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "18px" }}>
+          {/* M1 Button & Printed String */}
+          <div
+            style={{
+              border: "1px solid #cbd5e1",
+              borderRadius: "12px",
+              padding: "14px",
+              background: "#f8fafc",
+            }}
+          >
+            <div style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b", marginBottom: "6px" }}>
+              M1: Raw Merchant Intent (Exact QR Parameters)
+            </div>
+            <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "10px" }}>
+              pa=9112091122@okbizicici, pn=Ridhi%20Sales%20And%20Services, mc=5462, aid=uGICAgMDMsbvIIw, ver=01, mode=01, tr=BCR2DN4T6SNZTZQY
+            </div>
+            <a
+              href={m1Link}
+              style={{
+                display: "block",
+                textAlign: "center",
+                padding: "13px 20px",
+                background: "#2563eb",
+                color: "#ffffff",
+                textDecoration: "none",
+                fontWeight: 700,
+                fontSize: "15px",
+                borderRadius: "10px",
+                boxShadow: "0 2px 8px rgba(37,99,235,0.25)",
+              }}
+            >
+              Test M1 Link
+            </a>
+            <div
+              style={{
+                marginTop: "10px",
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
+                padding: "10px",
+                borderRadius: "8px",
+                fontSize: "11px",
+                fontFamily: "monospace",
+                wordBreak: "break-all",
+                color: "#0f172a",
+                lineHeight: 1.5,
+              }}
+            >
+              {m1Link}
+            </div>
+          </div>
+
+          {/* M2 Button & Printed String */}
+          <div
+            style={{
+              border: "1px solid #cbd5e1",
+              borderRadius: "12px",
+              padding: "14px",
+              background: "#f8fafc",
+            }}
+          >
+            <div style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b", marginBottom: "6px" }}>
+              M2: M1 + &amp;am=1.00&amp;cu=INR
+            </div>
+            <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "10px" }}>
+              M1 parameters + fixed amount ₹1.00 + cu=INR
+            </div>
+            <a
+              href={m2Link}
+              style={{
+                display: "block",
+                textAlign: "center",
+                padding: "13px 20px",
+                background: "#0891b2",
+                color: "#ffffff",
+                textDecoration: "none",
+                fontWeight: 700,
+                fontSize: "15px",
+                borderRadius: "10px",
+                boxShadow: "0 2px 8px rgba(8,145,178,0.25)",
+              }}
+            >
+              Test M2 Link (₹1.00)
+            </a>
+            <div
+              style={{
+                marginTop: "10px",
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
+                padding: "10px",
+                borderRadius: "8px",
+                fontSize: "11px",
+                fontFamily: "monospace",
+                wordBreak: "break-all",
+                color: "#0f172a",
+                lineHeight: 1.5,
+              }}
+            >
+              {m2Link}
+            </div>
+          </div>
+
+          {/* M3 Button & Printed String */}
+          <div
+            style={{
+              border: "1px solid #cbd5e1",
+              borderRadius: "12px",
+              padding: "14px",
+              background: "#f8fafc",
+            }}
+          >
+            <div style={{ fontSize: "13px", fontWeight: 700, color: "#1e293b", marginBottom: "6px" }}>
+              M3: M2 with dynamic alphanumeric tr (TAPX&#123;Date.now()&#125;)
+            </div>
+            <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "10px" }}>
+              M2 parameters with client-generated tr: <strong>{m3Tr}</strong>
+            </div>
+            <a
+              href={m3Link}
+              style={{
+                display: "block",
+                textAlign: "center",
+                padding: "13px 20px",
+                background: "#059669",
+                color: "#ffffff",
+                textDecoration: "none",
+                fontWeight: 700,
+                fontSize: "15px",
+                borderRadius: "10px",
+                boxShadow: "0 2px 8px rgba(5,150,105,0.25)",
+              }}
+            >
+              Test M3 Link (₹1.00 + Dynamic tr)
+            </a>
+            <div
+              style={{
+                marginTop: "10px",
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
+                padding: "10px",
+                borderRadius: "8px",
+                fontSize: "11px",
+                fontFamily: "monospace",
+                wordBreak: "break-all",
+                color: "#0f172a",
+                lineHeight: 1.5,
+              }}
+            >
+              {m3Link}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* SECTION 2: Device-Specific Resolution & V1-V6 Variants */}
+      <h2 style={{ fontSize: "16px", fontWeight: 700, marginBottom: "8px", color: "#1e293b" }}>
+        Device-Specific Variants (V1–V6)
+      </h2>
+
       {loading && (
-        <div style={{ padding: "20px 0", color: "#64748b", fontSize: "14px" }}>
+        <div style={{ padding: "16px 0", color: "#64748b", fontSize: "14px" }}>
           Loading device and business details...
         </div>
       )}
@@ -216,7 +415,7 @@ function UpiTestContent() {
             </div>
           </div>
 
-          {variants.map((v) => (
+          {deviceVariants.map((v) => (
             <div
               key={v.id}
               style={{
