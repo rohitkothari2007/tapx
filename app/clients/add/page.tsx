@@ -7,6 +7,10 @@ import { supabase } from "../../lib/supabase";
 import { getPublicSiteUrl } from "../../lib/siteUrl";
 import QRCode from "qrcode";
 import ModuleConfigurator from "./ModuleConfigurator";
+import {
+  validateOnlineOrderingConfig,
+  sanitizeOnlineOrderingLinks,
+} from "../../lib/onlineOrdering";
 
 type Feature = {
   id: string;
@@ -443,6 +447,22 @@ export default function AddClientPage() {
       return "Please select a TAPX device before activating this client.";
     }
 
+    const onlineOrderingFeature = features.find(
+      (f) => f.feature_key === "online_ordering"
+    );
+    if (
+      onlineOrderingFeature &&
+      selectedPaidFeatures.includes(onlineOrderingFeature.id)
+    ) {
+      const cfg = moduleConfigs[onlineOrderingFeature.id];
+      if (cfg && Array.isArray(cfg.links) && cfg.links.length > 0) {
+        const valRes = validateOnlineOrderingConfig(cfg);
+        if (!valRes.valid) {
+          return `Order online: ${valRes.errors[0]}`;
+        }
+      }
+    }
+
     return "";
   }
 
@@ -469,6 +489,11 @@ export default function AddClientPage() {
       // STEP 1: CREATE BUSINESS
       // -----------------------------------------------------
 
+      const isPaymentSelected =
+        selectedPaidFeatures.some(
+          (id) => features.find((f) => f.id === id)?.feature_key === "upi_payment"
+        ) || coreFeatures.some((f) => f.feature_key === "upi_payment");
+
       const {
         data: business,
         error: businessError,
@@ -488,9 +513,9 @@ export default function AddClientPage() {
             form.google_review_url.trim() || null,
           whatsapp_number:
             form.whatsapp_number.trim() || null,
-          upi_id: form.upi_id.trim() || null,
+          upi_id: isPaymentSelected ? (form.upi_id.trim() || null) : null,
           payment_enabled:
-            Boolean(form.upi_id.trim()),
+            isPaymentSelected && Boolean(form.upi_id.trim()),
           status: "active",
         })
         .select()
@@ -570,11 +595,18 @@ export default function AddClientPage() {
             return null;
           }
 
+          let rawConfig = moduleConfigs[feature.id] || {};
+          if (feature.feature_key === "online_ordering") {
+            rawConfig = {
+              links: sanitizeOnlineOrderingLinks(rawConfig),
+            };
+          }
+
           return {
             business_id: business.id,
             feature_id: feature.id,
             module_key: feature.feature_key,
-            config: moduleConfigs[feature.id] || {},
+            config: rawConfig,
             status: "active",
           };
         })

@@ -9,6 +9,10 @@ import JSZip from "jszip";
 import ModuleConfigurator, {
   type Feature as ConfigFeature,
 } from "../add/ModuleConfigurator";
+import {
+  validateOnlineOrderingConfig,
+  sanitizeOnlineOrderingLinks,
+} from "../../lib/onlineOrdering";
 
 type Business = {
   id: string;
@@ -1005,6 +1009,39 @@ export default function ClientPage() {
     }
   }
 
+  async function disableModule(feature: Feature) {
+    setModuleMessage("");
+
+    try {
+      const { error: updateError } = await supabase
+        .from("business_features")
+        .update({
+          enabled: false,
+          status: "inactive",
+        })
+        .eq("business_id", businessId)
+        .eq("feature_id", feature.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      setModuleMessage(
+        `${feature.name} disabled. Saved settings were preserved.`
+      );
+
+      setSelectedFeatureId(null);
+      await loadWorkspace();
+    } catch (err) {
+      console.error("TAPX disable module error:", err);
+      setModuleMessage(
+        err instanceof Error
+          ? err.message
+          : "Unable to disable this module."
+      );
+    }
+  }
+
   async function saveModuleConfig(feature: Feature) {
     setSavingModule(true);
     setModuleMessage("");
@@ -1015,6 +1052,22 @@ export default function ClientPage() {
       };
 
       delete cleanConfig.__draft;
+
+      if (feature.feature_key === "online_ordering") {
+        if (
+          cleanConfig.links &&
+          Array.isArray(cleanConfig.links) &&
+          cleanConfig.links.length > 0
+        ) {
+          const valRes = validateOnlineOrderingConfig(cleanConfig);
+          if (!valRes.valid) {
+            setModuleMessage(valRes.errors[0]);
+            setSavingModule(false);
+            return;
+          }
+        }
+        cleanConfig.links = sanitizeOnlineOrderingLinks(cleanConfig.links);
+      }
 
       const existing = getModuleConfig(
         feature.id
@@ -1903,19 +1956,35 @@ export default function ClientPage() {
                             gap: 10,
                           }}
                         >
-                          <span
-                            style={{
-                              fontSize: 12,
-                              color: config
-                                ? "#15803d"
-                                : "#d97706",
-                              fontWeight: 700,
-                            }}
-                          >
-                            {config
-                              ? "✓ Configured"
-                              : "⚠ Configuration needed"}
-                          </span>
+                          {(() => {
+                            const isConfigured = Boolean(
+                              feature.feature_key === "online_ordering"
+                                ? config?.config?.links &&
+                                  Array.isArray(config.config.links) &&
+                                  config.config.links.length > 0
+                                : config &&
+                                  config.config &&
+                                  Object.keys(config.config).filter(
+                                    (k) => k !== "__draft"
+                                  ).length > 0
+                            );
+
+                            return (
+                              <span
+                                style={{
+                                  fontSize: 12,
+                                  color: isConfigured
+                                    ? "#15803d"
+                                    : "#d97706",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {isConfigured
+                                  ? "✓ Configured"
+                                  : "Not configured"}
+                              </span>
+                            );
+                          })()}
 
                           <button
                             type="button"
@@ -2097,19 +2166,35 @@ export default function ClientPage() {
                           </p>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setSelectedFeatureId(
-                              null
-                            )
-                          }
-                          style={
-                            secondaryButton
-                          }
-                        >
-                          Close
-                        </button>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          {!selectedFeature.is_core && (
+                            <button
+                              type="button"
+                              onClick={() => disableModule(selectedFeature)}
+                              style={{
+                                ...secondaryButton,
+                                color: "#dc2626",
+                                borderColor: "#fecaca",
+                                background: "#fef2f2",
+                              }}
+                            >
+                              Turn off module
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedFeatureId(
+                                null
+                              )
+                            }
+                            style={
+                              secondaryButton
+                            }
+                          >
+                            Close
+                          </button>
+                        </div>
                       </div>
 
                       <ModuleConfigurator

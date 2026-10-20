@@ -11,6 +11,48 @@ import { supabase } from "../../lib/supabase";
 import RestaurantExperience from "../../components/RestaurantExperience";
 import { InstagramIcon, WhatsAppIcon } from "../../components/BrandIcons";
 import UpiPaymentModal from "../../components/UpiPaymentModal";
+import {
+  type OnlineOrderingLink,
+  sanitizeOnlineOrderingLinks,
+} from "../../lib/onlineOrdering";
+
+function ShoppingBagIcon({ size = 24 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
+      <path d="M3 6h18" />
+      <path d="M16 10a4 4 0 0 1-8 0" />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <polyline points="15 3 21 3 21 9" />
+      <line x1="10" y1="14" x2="21" y2="3" />
+    </svg>
+  );
+}
 
 type Device = {
   id: string;
@@ -302,6 +344,10 @@ export default function TapPage({
     useState<HotelServiceItem[]>([]);
   const [isPaymentModalOpen, setIsPaymentModalOpen] =
     useState(false);
+  const [onlineOrderingLinks, setOnlineOrderingLinks] =
+    useState<OnlineOrderingLink[]>([]);
+  const [isOnlineOrderingModalOpen, setIsOnlineOrderingModalOpen] =
+    useState(false);
 
   const categoryAccent = useMemo(
     () => getCategoryAccent(business?.category),
@@ -437,6 +483,16 @@ export default function TapPage({
           return "hotel_services";
         }
 
+        if (
+          key === "online_ordering" ||
+          key === "online-ordering" ||
+          key === "order_online" ||
+          key === "order-online" ||
+          key === "ordering"
+        ) {
+          return "online_ordering";
+        }
+
         return key;
       };
 
@@ -461,6 +517,21 @@ export default function TapPage({
       setEnabledModuleKeys(
         activeModuleKeys
       );
+
+      // ====================================================
+      // ONLINE ORDERING
+      // ====================================================
+
+      const onlineOrderingModuleConfig = enabledConfigs.find(
+        (item: ModuleConfig) =>
+          normalizeModuleKey(item.module_key) === "online_ordering"
+      );
+
+      const sanitizedOrderingLinks = onlineOrderingModuleConfig
+        ? sanitizeOnlineOrderingLinks(onlineOrderingModuleConfig.config)
+        : [];
+
+      setOnlineOrderingLinks(sanitizedOrderingLinks);
 
       // ====================================================
       // DIGITAL MENU
@@ -1149,13 +1220,22 @@ export default function TapPage({
         )}`
       : null;
 
-  const isPaymentActive =
-    business.payment_enabled !== false &&
-    Boolean(business.upi_id || business.payment_url);
+  const isPaymentModuleActive =
+    enabledModuleKeys.includes("upi_payment") ||
+    (business.payment_enabled !== false && Boolean(business.upi_id));
 
-  const paymentSubtitle = isPaymentActive
-    ? "Instant UPI & QR"
-    : "Payment not configured";
+  const isUpiIdConfigured = Boolean(
+    business.upi_id && business.upi_id.trim()
+  );
+
+  const showPaymentButton =
+    isPaymentModuleActive &&
+    isUpiIdConfigured &&
+    business.payment_enabled !== false;
+
+  const isOnlineOrderingActive =
+    enabledModuleKeys.includes("online_ordering") &&
+    onlineOrderingLinks.length > 0;
 
   const digitalMenuEnabled =
     enabledModuleKeys.includes(
@@ -1436,23 +1516,39 @@ export default function TapPage({
                   onClick={() => void trackActionClick("whatsapp_click")}
                 />
 
-                <ActionCard
-                  icon={String.fromCodePoint(
-                    0x1f4b3
-                  )}
-                  title="Pay Now"
-                  subtitle={
-                    paymentSubtitle
-                  }
-                  onClick={
-                    isPaymentActive
-                      ? () => {
-                          void trackActionClick("payment_click");
-                          setIsPaymentModalOpen(true);
-                        }
-                      : undefined
-                  }
-                />
+                {isOnlineOrderingActive && (
+                  <ActionCard
+                    icon={<ShoppingBagIcon size={24} />}
+                    title="Order online"
+                    subtitle="Delivery & takeaway"
+                    onClick={() => {
+                      if (onlineOrderingLinks.length === 1) {
+                        void trackActionClick("order_online_click");
+                        window.open(
+                          onlineOrderingLinks[0].url,
+                          "_blank",
+                          "noopener,noreferrer"
+                        );
+                      } else if (onlineOrderingLinks.length > 1) {
+                        setIsOnlineOrderingModalOpen(true);
+                      }
+                    }}
+                  />
+                )}
+
+                {showPaymentButton && (
+                  <ActionCard
+                    icon={String.fromCodePoint(
+                      0x1f4b3
+                    )}
+                    title="Pay Now"
+                    subtitle="Pay with any UPI app"
+                    onClick={() => {
+                      void trackActionClick("payment_click");
+                      setIsPaymentModalOpen(true);
+                    }}
+                  />
+                )}
 
                 <ActionCard
                   icon={String.fromCodePoint(
@@ -2049,6 +2145,153 @@ export default function TapPage({
           paymentUrl={business.payment_url}
           onTrackAction={(type) => void trackActionClick(type)}
         />
+
+        {isOnlineOrderingModalOpen && (
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.7)",
+              zIndex: 9999,
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "center",
+            }}
+            onClick={() => setIsOnlineOrderingModalOpen(false)}
+          >
+            <div
+              style={{
+                width: "100%",
+                maxWidth: "480px",
+                background: "#ffffff",
+                borderTopLeftRadius: "24px",
+                borderTopRightRadius: "24px",
+                padding: "24px 20px 32px",
+                boxShadow: "0 -8px 30px rgba(0,0,0,0.18)",
+                maxHeight: "85vh",
+                overflowY: "auto",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: "16px",
+                }}
+              >
+                <div>
+                  <h3
+                    style={{
+                      margin: 0,
+                      fontSize: "18px",
+                      fontWeight: 800,
+                      fontFamily: "var(--font-cabinet), sans-serif",
+                      color: "#18181b",
+                    }}
+                  >
+                    Order online
+                  </h3>
+                  <p
+                    style={{
+                      margin: "4px 0 0",
+                      fontSize: "13px",
+                      color: "#71717a",
+                      fontFamily: "var(--font-satoshi), sans-serif",
+                    }}
+                  >
+                    Choose where you would like to order
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsOnlineOrderingModalOpen(false)}
+                  style={{
+                    background: "#f4f4f5",
+                    border: "none",
+                    borderRadius: "50%",
+                    width: "32px",
+                    height: "32px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    color: "#71717a",
+                    fontSize: "18px",
+                    fontWeight: 600,
+                  }}
+                  aria-label="Close"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "10px",
+                }}
+              >
+                {onlineOrderingLinks.map((link, idx) => (
+                  <a
+                    key={idx}
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => {
+                      void trackActionClick("order_online_click");
+                      setIsOnlineOrderingModalOpen(false);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "14px 16px",
+                      background: "#fafafa",
+                      border: "1px solid #e4e4e7",
+                      borderRadius: "14px",
+                      textDecoration: "none",
+                      color: "#18181b",
+                      fontFamily: "var(--font-satoshi), sans-serif",
+                      fontWeight: 700,
+                      fontSize: "15px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: "32px",
+                          height: "32px",
+                          borderRadius: "8px",
+                          background: "#f4f4f5",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "#18181b",
+                        }}
+                      >
+                        <ShoppingBagIcon size={18} />
+                      </span>
+                      <span>{link.label}</span>
+                    </span>
+                    <ExternalLinkIcon size={18} />
+                  </a>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );

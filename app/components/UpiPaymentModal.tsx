@@ -441,7 +441,7 @@ export default function UpiPaymentModal({
                   1
                 </div>
                 <div style={{ fontSize: "12px", color: "#334155", lineHeight: 1.45 }}>
-                  Open any UPI app (<strong>GPay</strong>, <strong>PhonePe</strong>, <strong>Paytm</strong>, <strong>BHIM</strong>)
+                  Open any UPI app
                 </div>
               </div>
 
