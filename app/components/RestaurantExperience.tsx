@@ -180,21 +180,30 @@ export default function RestaurantExperience({
         return;
       }
 
-      const { data: order, error: orderErr } = await supabase
-        .from("tapx_orders")
-        .select("id, order_number, table_number, customer_name, customer_phone, status, subtotal, total, created_at")
-        .eq("id", savedId)
-        .eq("business_id", business.id)
-        .maybeSingle();
+      const { data: orderData, error: orderErr } = await supabase.rpc(
+        "get_tap_order_status",
+        { p_order_id: savedId }
+      );
 
-      if (orderErr || !order) {
+      if (orderErr || !orderData) {
         if (typeof window !== "undefined") window.localStorage.removeItem(storageKey);
         setCurrentOrder(null);
         setCurrentOrderItems([]);
         return;
       }
 
-      const typedOrder = order as ActiveOrder;
+      const typedOrder = {
+        id: String(orderData.id),
+        order_number: (orderData as any).order_number || null,
+        table_number: orderData.table_number,
+        customer_name: "",
+        customer_phone: "",
+        status: String(orderData.status),
+        subtotal: Number(orderData.subtotal || 0),
+        total: Number(orderData.total || 0),
+        created_at: String(orderData.created_at),
+      } as ActiveOrder;
+
       setCurrentOrder(typedOrder);
       if (typedOrder.table_number) {
         setTableNumber(String(typedOrder.table_number));
@@ -207,15 +216,7 @@ export default function RestaurantExperience({
         return;
       }
 
-      const { data: orderItems } = await supabase
-        .from("tapx_order_items")
-        .select("id, item_name, unit_price, quantity, line_total")
-        .eq("order_id", typedOrder.id)
-        .order("created_at", { ascending: true });
-
-      if (orderItems) {
-        setCurrentOrderItems(orderItems as ActiveOrderItem[]);
-      }
+      setCurrentOrderItems((orderData.items || []) as ActiveOrderItem[]);
     } catch (err) {
       console.warn("Error restoring active order:", err);
     }
@@ -288,12 +289,23 @@ export default function RestaurantExperience({
 
     setCancellingOrder(true);
     try {
-      const { error: cancelErr } = await supabase
-        .from("tapx_orders")
-        .update({ status: "cancelled" })
-        .eq("id", currentOrder.id);
+      const { data: wasCancelled, error: rpcErr } = await supabase.rpc(
+        "cancel_tapx_order",
+        { p_order_id: currentOrder.id }
+      );
 
-      if (cancelErr) throw cancelErr;
+      if (rpcErr) {
+        throw new Error(rpcErr.message || "Failed to cancel order.");
+      }
+
+      if (!wasCancelled) {
+        alert(
+          "This order cannot be cancelled online because it has already been accepted or is being prepared by the kitchen. Please speak to staff directly."
+        );
+        // Refresh the active order to display latest kitchen status
+        await loadActiveOrder(currentOrder.id);
+        return;
+      }
 
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(storageKey);
