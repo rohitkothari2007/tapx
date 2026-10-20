@@ -289,12 +289,23 @@ export default function RestaurantExperience({
 
     setCancellingOrder(true);
     try {
-      const { error: cancelErr } = await supabase
-        .from("tapx_orders")
-        .update({ status: "cancelled" })
-        .eq("id", currentOrder.id);
+      const { data: wasCancelled, error: rpcErr } = await supabase.rpc(
+        "cancel_tapx_order",
+        { p_order_id: currentOrder.id }
+      );
 
-      if (cancelErr) throw cancelErr;
+      if (rpcErr) {
+        throw new Error(rpcErr.message || "Failed to cancel order.");
+      }
+
+      if (!wasCancelled) {
+        alert(
+          "This order cannot be cancelled online because it has already been accepted or is being prepared by the kitchen. Please speak to staff directly."
+        );
+        // Refresh the active order to display latest kitchen status
+        await loadActiveOrder(currentOrder.id);
+        return;
+      }
 
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(storageKey);

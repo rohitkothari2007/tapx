@@ -371,7 +371,7 @@ export default function ClientLoginPage() {
                     try {
                       await supabase.from("customer_requests").insert({
                         business_id: bIdParam || null,
-                        customer_name: cleanEmail,
+                        customer_name: targetBusinessName || cleanEmail,
                         customer_phone: cleanEmail,
                         request_type: "password_reset",
                         status: "pending",
