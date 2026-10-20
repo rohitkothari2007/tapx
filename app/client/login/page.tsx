@@ -45,17 +45,17 @@ export default function ClientLoginPage() {
 
       if (bId) {
         setBIdParam(bId);
-        const { data: bData } = await supabase
-          .from("businesses")
-          .select("name, email")
-          .eq("id", bId)
-          .maybeSingle();
+        try {
+          const { data: bName, error: rpcErr } = await supabase.rpc(
+            "get_client_login_name",
+            { p_business_id: bId }
+          );
 
-        if (bData && active) {
-          setTargetBusinessName(bData.name);
-          if (bData.email) {
-            setEmail((prev) => prev || bData.email || "");
+          if (!rpcErr && bName && active) {
+            setTargetBusinessName(bName);
           }
+        } catch (err) {
+          // Gracefully ignore error and show default
         }
       }
 
@@ -368,29 +368,24 @@ export default function ClientLoginPage() {
                       redirectTo: `${origin}/client/set-password`,
                     });
                     
-                    let matchedBizId: string | null = null;
-                    const { data: biz } = await supabase
-                      .from("businesses")
-                      .select("id, name")
-                      .ilike("email", cleanEmail)
-                      .maybeSingle();
-
-                    if (biz) matchedBizId = biz.id;
-
-                    await supabase.from("customer_requests").insert({
-                      business_id: matchedBizId,
-                      customer_name: biz?.name || cleanEmail,
-                      customer_phone: cleanEmail,
-                      request_type: "password_reset",
-                      status: "pending",
-                      payload: {
-                        email: cleanEmail,
-                        requested_at: new Date().toISOString(),
-                      },
-                    });
+                    try {
+                      await supabase.from("customer_requests").insert({
+                        business_id: bIdParam || null,
+                        customer_name: targetBusinessName || cleanEmail,
+                        customer_phone: cleanEmail,
+                        request_type: "password_reset",
+                        status: "pending",
+                        payload: {
+                          email: cleanEmail,
+                          requested_at: new Date().toISOString(),
+                        },
+                      });
+                    } catch (reqErr) {
+                      console.warn("[Password Reset] Could not log request:", reqErr);
+                    }
 
                     setForgotSuccess(
-                      `Password reset request sent for ${cleanEmail}! Check your email inbox or contact TAPX Admin.`
+                      "If this email belongs to a TAPX account, the TAPX team has been notified and will contact you."
                     );
                   } catch (resetErr: any) {
                     setError(resetErr?.message || "Unable to send password reset request.");

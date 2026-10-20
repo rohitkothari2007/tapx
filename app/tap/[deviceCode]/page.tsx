@@ -967,22 +967,24 @@ export default function TapPage({
         }
       })();
 
-      // Social proof all-time cumulative counts fetch
+      // Social proof all-time cumulative counts fetch via protected RPC
       try {
-        const { data: socialLogs } = await supabase
-          .from("interactions")
-          .select("interaction_type")
-          .eq("business_id", deviceData.business_id)
-          .in("interaction_type", ["google_review_click", "instagram_click"]);
+        const { data: proofData, error: rpcErr } = await supabase.rpc(
+          "get_tap_social_proof",
+          { p_business_id: deviceData.business_id }
+        );
 
-        const proofCounts = { google_review_click: 0, instagram_click: 0 };
-        (socialLogs || []).forEach((item: any) => {
-          if (item.interaction_type === "google_review_click") proofCounts.google_review_click += 1;
-          if (item.interaction_type === "instagram_click") proofCounts.instagram_click += 1;
-        });
-        setSocialProofCounts(proofCounts);
+        if (!rpcErr && proofData) {
+          setSocialProofCounts({
+            google_review_click: Number(proofData.google_review_click || 0),
+            instagram_click: Number(proofData.instagram_click || 0),
+          });
+        } else {
+          setSocialProofCounts({ google_review_click: 0, instagram_click: 0 });
+        }
       } catch (err) {
         console.error("[TAPX Social Proof] Error loading counts:", err);
+        setSocialProofCounts({ google_review_click: 0, instagram_click: 0 });
       }
     } catch (err) {
       console.error(
@@ -2623,16 +2625,12 @@ function TableOrderingSection({
         return;
       }
 
-      const { data: order, error: orderError } = await supabase
-        .from("tapx_orders")
-        .select(
-          "id, table_number, customer_name, customer_phone, status, subtotal, total, created_at"
-        )
-        .eq("id", savedOrderId)
-        .eq("business_id", businessId)
-        .maybeSingle();
+      const { data: orderData, error: orderError } = await supabase.rpc(
+        "get_tap_order_status",
+        { p_order_id: savedOrderId }
+      );
 
-      if (orderError || !order) {
+      if (orderError || !orderData) {
         if (typeof window !== "undefined") {
           window.localStorage.removeItem(storageKey);
         }
@@ -2641,11 +2639,23 @@ function TableOrderingSection({
         return;
       }
 
-      const typedOrder = order as ActiveOrder;
+      const typedOrder = {
+        id: String(orderData.id),
+        table_number: orderData.table_number,
+        customer_name: "",
+        customer_phone: "",
+        status: String(orderData.status),
+        subtotal: Number(orderData.subtotal || 0),
+        total: Number(orderData.total || 0),
+        created_at: String(orderData.created_at),
+      } as ActiveOrder;
+
       setCurrentOrder(typedOrder);
-      setTableNumber(String(typedOrder.table_number));
-      setCustomerName(typedOrder.customer_name || "");
-      setCustomerPhone(typedOrder.customer_phone || "");
+      if (typedOrder.table_number) {
+        setTableNumber(String(typedOrder.table_number));
+      }
+      setCustomerName("");
+      setCustomerPhone("");
 
       if (!isActiveOrder(typedOrder.status)) {
         setCurrentOrderItems([]);
@@ -2655,18 +2665,7 @@ function TableOrderingSection({
         return;
       }
 
-      const { data: orderItems, error: itemsError } = await supabase
-        .from("tapx_order_items")
-        .select("id, item_name, unit_price, quantity, line_total")
-        .eq("order_id", typedOrder.id)
-        .order("created_at", { ascending: true });
-
-      if (itemsError) {
-        console.error("Unable to load order items:", itemsError);
-        setCurrentOrderItems([]);
-      } else {
-        setCurrentOrderItems((orderItems || []) as ActiveOrderItem[]);
-      }
+      setCurrentOrderItems((orderData.items || []) as ActiveOrderItem[]);
     } catch (err) {
       console.error("TAPX current order restore error:", err);
     } finally {
@@ -3399,27 +3398,38 @@ function AppointmentBookingSection({
       return;
     }
 
-    const { data, error: queryError } = await supabase
-      .from("tapx_appointments")
-      .select("appointment_time, duration_minutes")
-      .eq("business_id", businessId)
-      .eq("appointment_date", selectedDate)
-      .in("status", ["pending", "confirmed"]);
+    try {
+      const { data: bookedSlots, error: queryError } = await supabase.rpc(
+        "get_tap_booked_slots",
+        {
+          p_business_id: businessId,
+          p_date: selectedDate,
+        }
+      );
 
-    if (queryError) {
-      console.error("Unable to load booked appointment slots:", queryError);
-      return;
+      if (queryError || !bookedSlots) {
+        if (queryError) {
+          console.warn("Unable to load booked appointment slots via RPC:", queryError);
+        }
+        setBookedIntervals([]);
+        setBookedTimes([]);
+        return;
+      }
+
+      const intervals: BookedInterval[] = (bookedSlots as any[]).map((row: any) => {
+        const rawStr = String(row.appointment_time || "").trim();
+        const startMin = timeToMinutes(rawStr);
+        const duration = Number(row.duration_minutes || 30);
+        return { startMin: startMin >= 0 ? startMin : 0, endMin: (startMin >= 0 ? startMin : 0) + duration, timeStr: rawStr };
+      });
+
+      setBookedIntervals(intervals);
+      setBookedTimes(intervals.map((i) => i.timeStr));
+    } catch (err) {
+      console.warn("Exception in loadBookedTimes:", err);
+      setBookedIntervals([]);
+      setBookedTimes([]);
     }
-
-    const intervals: BookedInterval[] = (data || []).map((row: any) => {
-      const rawStr = String(row.appointment_time || "").trim();
-      const startMin = timeToMinutes(rawStr);
-      const duration = Number(row.duration_minutes || 30);
-      return { startMin: startMin >= 0 ? startMin : 0, endMin: (startMin >= 0 ? startMin : 0) + duration, timeStr: rawStr };
-    });
-
-    setBookedIntervals(intervals);
-    setBookedTimes(intervals.map((i) => i.timeStr));
   }
 
   function isSlotOverlapping(slotTimeStr: string, slotDurationOverride?: number) {
@@ -5676,16 +5686,12 @@ function RoomServiceSection({
         return;
       }
 
-      const { data: order, error: orderError } = await supabase
-        .from("tapx_orders")
-        .select(
-          "id, table_number, customer_name, customer_phone, status, subtotal, total, created_at"
-        )
-        .eq("id", savedOrderId)
-        .eq("business_id", businessId)
-        .maybeSingle();
+      const { data: orderData, error: orderError } = await supabase.rpc(
+        "get_tap_order_status",
+        { p_order_id: savedOrderId }
+      );
 
-      if (orderError || !order) {
+      if (orderError || !orderData) {
         if (typeof window !== "undefined") {
           window.localStorage.removeItem(storageKey);
         }
@@ -5694,13 +5700,23 @@ function RoomServiceSection({
         return;
       }
 
-      const typedOrder = order as ActiveOrder;
+      const typedOrder = {
+        id: String(orderData.id),
+        table_number: orderData.table_number,
+        customer_name: "",
+        customer_phone: "",
+        status: String(orderData.status),
+        subtotal: Number(orderData.subtotal || 0),
+        total: Number(orderData.total || 0),
+        created_at: String(orderData.created_at),
+      } as ActiveOrder;
+
       setCurrentOrder(typedOrder);
       if (typedOrder.table_number) {
         setRoomNumber(String(typedOrder.table_number));
       }
-      setCustomerName(typedOrder.customer_name || "");
-      setCustomerPhone(typedOrder.customer_phone || "");
+      setCustomerName("");
+      setCustomerPhone("");
 
       if (!isActiveOrder(typedOrder.status)) {
         setCurrentOrderItems([]);
@@ -5710,15 +5726,7 @@ function RoomServiceSection({
         return;
       }
 
-      const { data: orderItems, error: itemsError } = await supabase
-        .from("tapx_order_items")
-        .select("id, item_name, unit_price, quantity, line_total")
-        .eq("order_id", typedOrder.id)
-        .order("created_at", { ascending: true });
-
-      if (!itemsError) {
-        setCurrentOrderItems((orderItems || []) as ActiveOrderItem[]);
-      }
+      setCurrentOrderItems((orderData.items || []) as ActiveOrderItem[]);
     } catch (err) {
       console.error("TAPX room order restore error:", err);
     } finally {
