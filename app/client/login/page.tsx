@@ -385,7 +385,7 @@ export default function ClientLoginPage() {
                     }
 
                     setForgotSuccess(
-                      `If an account exists for ${cleanEmail}, password reset instructions have been sent. Check your email inbox or contact TAPX Admin.`
+                      "If this email belongs to a TAPX account, the TAPX team has been notified and will contact you."
                     );
                   } catch (resetErr: any) {
                     setError(resetErr?.message || "Unable to send password reset request.");
