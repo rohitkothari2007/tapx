@@ -11,6 +11,16 @@ import { supabase } from "../lib/supabase";
 import { getPublicSiteUrl } from "../lib/siteUrl";
 import QRCode from "qrcode";
 import AnalyticsPage from "./AnalyticsPage";
+import {
+  type OnlineOrderingLink,
+  MAX_ONLINE_ORDERING_LINKS,
+  MAX_LABEL_LENGTH,
+  MAX_URL_LENGTH,
+  QUICK_FILL_SUGGESTIONS,
+  isValidHttpsUrl,
+  validateOnlineOrderingConfig,
+  sanitizeOnlineOrderingLinks,
+} from "../lib/onlineOrdering";
 
 type Business = {
   id: string;
@@ -962,6 +972,13 @@ export default function ClientPortalPage() {
     "feedback"
   );
 
+  const hasOnlineOrdering = hasModule(
+    "online_ordering",
+    "online-ordering",
+    "order_online",
+    "order online"
+  );
+
   const today = new Date();
 
   const todayOrders = useMemo(() => {
@@ -1789,6 +1806,9 @@ export default function ClientPortalPage() {
             <SettingsPage
               business={business}
               email={currentUserEmail}
+              hasOnlineOrdering={hasOnlineOrdering}
+              moduleConfigs={moduleConfigs}
+              features={features}
               onUpdateBusiness={(updated) => setBusiness(updated)}
             />
           )}
@@ -5187,10 +5207,16 @@ function ModulePage({
 function SettingsPage({
   business,
   email,
+  hasOnlineOrdering,
+  moduleConfigs,
+  features,
   onUpdateBusiness,
 }: {
   business: Business;
   email: string;
+  hasOnlineOrdering?: boolean;
+  moduleConfigs?: ModuleConfig[];
+  features?: Feature[];
   onUpdateBusiness?: (updated: Business) => void;
 }) {
   const [name, setName] = useState(business.name || "");
@@ -5207,6 +5233,9 @@ function SettingsPage({
   const [paymentUrl, setPaymentUrl] = useState(business.payment_url || "");
   const [paymentEnabled, setPaymentEnabled] = useState(business.payment_enabled ?? true);
   const [logoUrl, setLogoUrl] = useState(business.logo_url || "");
+
+  const [onlineOrderingLinks, setOnlineOrderingLinks] = useState<OnlineOrderingLink[]>([]);
+  const [onlineOrderingFeatureId, setOnlineOrderingFeatureId] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [savedBanner, setSavedBanner] = useState(false);
@@ -5227,7 +5256,62 @@ function SettingsPage({
     setPaymentUrl(business.payment_url || "");
     setPaymentEnabled(business.payment_enabled ?? true);
     setLogoUrl(business.logo_url || "");
-  }, [business]);
+
+    const existingConfigRow = (moduleConfigs || []).find(
+      (m: any) => normalizeKey(m.module_key) === "online_ordering"
+    );
+    if (existingConfigRow?.config?.links && Array.isArray(existingConfigRow.config.links)) {
+      setOnlineOrderingLinks(sanitizeOnlineOrderingLinks(existingConfigRow.config.links));
+    } else {
+      supabase
+        .from("business_module_configs")
+        .select("config, feature_id")
+        .eq("business_id", business.id)
+        .eq("module_key", "online_ordering")
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data?.config?.links && Array.isArray(data.config.links)) {
+            setOnlineOrderingLinks(sanitizeOnlineOrderingLinks(data.config.links));
+          }
+          if (data?.feature_id) {
+            setOnlineOrderingFeatureId(data.feature_id);
+          }
+        });
+    }
+
+    const feat = (features || []).find(
+      (f) => normalizeKey(f.feature_key) === "online_ordering"
+    );
+    if (feat) {
+      setOnlineOrderingFeatureId(feat.id);
+    }
+  }, [business, moduleConfigs, features]);
+
+  function updateOrderLink(index: number, patch: Partial<OnlineOrderingLink>) {
+    setOnlineOrderingLinks((current) =>
+      current.map((item, i) => (i === index ? { ...item, ...patch } : item))
+    );
+  }
+
+  function addOrderLink() {
+    if (onlineOrderingLinks.length >= MAX_ONLINE_ORDERING_LINKS) return;
+    setOnlineOrderingLinks((current) => [...current, { label: "", url: "" }]);
+  }
+
+  function removeOrderLink(index: number) {
+    setOnlineOrderingLinks((current) => current.filter((_, i) => i !== index));
+  }
+
+  function moveOrderLink(index: number, direction: -1 | 1) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= onlineOrderingLinks.length) return;
+    setOnlineOrderingLinks((current) => {
+      const next = [...current];
+      const [item] = next.splice(index, 1);
+      next.splice(targetIndex, 0, item);
+      return next;
+    });
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -5236,6 +5320,63 @@ function SettingsPage({
     setErrorBanner("");
 
     try {
+      if (hasOnlineOrdering || onlineOrderingLinks.length > 0) {
+        if (onlineOrderingLinks.length > 0) {
+          const valRes = validateOnlineOrderingConfig(onlineOrderingLinks);
+          if (!valRes.valid) {
+            setErrorBanner(`Order online: ${valRes.errors[0]}`);
+            setSaving(false);
+            return;
+          }
+        }
+
+        const cleanLinks = sanitizeOnlineOrderingLinks(onlineOrderingLinks);
+        const { data: existingRow } = await supabase
+          .from("business_module_configs")
+          .select("id, feature_id")
+          .eq("business_id", business.id)
+          .eq("module_key", "online_ordering")
+          .maybeSingle();
+
+        let resolvedFeatureId = onlineOrderingFeatureId;
+        if (!resolvedFeatureId) {
+          const feat = (features || []).find(
+            (f) => normalizeKey(f.feature_key) === "online_ordering"
+          );
+          if (feat?.id) resolvedFeatureId = feat.id;
+        }
+        if (!resolvedFeatureId) {
+          const { data: fcRow } = await supabase
+            .from("feature_catalog")
+            .select("id")
+            .eq("feature_key", "online_ordering")
+            .maybeSingle();
+          if (fcRow?.id) resolvedFeatureId = fcRow.id;
+        }
+
+        if (existingRow?.id) {
+          const { error: cfgErr } = await supabase
+            .from("business_module_configs")
+            .update({
+              config: { links: cleanLinks },
+              status: "active",
+            })
+            .eq("id", existingRow.id);
+          if (cfgErr) throw cfgErr;
+        } else if (cleanLinks.length > 0 && resolvedFeatureId) {
+          const { error: cfgErr } = await supabase
+            .from("business_module_configs")
+            .insert({
+              business_id: business.id,
+              feature_id: resolvedFeatureId,
+              module_key: "online_ordering",
+              config: { links: cleanLinks },
+              status: "active",
+            });
+          if (cfgErr) throw cfgErr;
+        }
+      }
+
       const payload = {
         name: name.trim(),
         category: category.trim(),
@@ -5487,6 +5628,331 @@ function SettingsPage({
             <input type="text" disabled value={email || "Authenticated account"} />
           </div>
         </div>
+
+        {/* PANEL 5: ORDER ONLINE */}
+        {(hasOnlineOrdering || onlineOrderingLinks.length > 0) && (
+          <div className="settings-panel" style={{ gridColumn: "1 / -1" }}>
+            <div className="settings-heading">
+              <div>
+                <h3>Order online</h3>
+                <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#64748b" }}>
+                  Direct customers to your online ordering platforms and website.
+                </p>
+              </div>
+              <span>ONLINE ORDERING</span>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              {onlineOrderingLinks.length === 0 ? (
+                <div
+                  style={{
+                    padding: "24px 16px",
+                    textAlign: "center",
+                    background: "#f8fafc",
+                    border: "1px dashed #cbd5e1",
+                    borderRadius: "12px",
+                  }}
+                >
+                  <p
+                    style={{
+                      margin: "0 0 12px 0",
+                      fontSize: "13px",
+                      color: "#64748b",
+                    }}
+                  >
+                    No online ordering links configured yet. You can add up to {MAX_ONLINE_ORDERING_LINKS} direct links.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={addOrderLink}
+                    style={{
+                      padding: "8px 16px",
+                      background: "#0f172a",
+                      color: "#ffffff",
+                      border: "none",
+                      borderRadius: "8px",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    + Add first link
+                  </button>
+                </div>
+              ) : (
+                onlineOrderingLinks.map((link, idx) => {
+                  const hasInvalidUrl = Boolean(link.url && !isValidHttpsUrl(link.url));
+                  const hasExceededLabel = link.label.length > MAX_LABEL_LENGTH;
+
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        background: "#f8fafc",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "12px",
+                        padding: "16px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "12px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            color: "#475569",
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                          }}
+                        >
+                          Link {idx + 1} of {onlineOrderingLinks.length}
+                        </span>
+
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => moveOrderLink(idx, -1)}
+                            title="Move up"
+                            style={{
+                              padding: "4px 8px",
+                              fontSize: "12px",
+                              border: "1px solid #e2e8f0",
+                              borderRadius: "6px",
+                              background: idx === 0 ? "#f1f5f9" : "#ffffff",
+                              color: idx === 0 ? "#cbd5e1" : "#334155",
+                              cursor: idx === 0 ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === onlineOrderingLinks.length - 1}
+                            onClick={() => moveOrderLink(idx, 1)}
+                            title="Move down"
+                            style={{
+                              padding: "4px 8px",
+                              fontSize: "12px",
+                              border: "1px solid #e2e8f0",
+                              borderRadius: "6px",
+                              background:
+                                idx === onlineOrderingLinks.length - 1
+                                  ? "#f1f5f9"
+                                  : "#ffffff",
+                              color:
+                                idx === onlineOrderingLinks.length - 1
+                                  ? "#cbd5e1"
+                                  : "#334155",
+                              cursor:
+                                idx === onlineOrderingLinks.length - 1
+                                  ? "not-allowed"
+                                  : "pointer",
+                            }}
+                          >
+                            ↓
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeOrderLink(idx)}
+                            title="Remove link"
+                            style={{
+                              padding: "4px 10px",
+                              fontSize: "12px",
+                              border: "1px solid #fee2e2",
+                              borderRadius: "6px",
+                              background: "#fff1f2",
+                              color: "#e11d48",
+                              fontWeight: 600,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Label input */}
+                      <div>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            marginBottom: "4px",
+                          }}
+                        >
+                          <label
+                            style={{
+                              fontSize: "12px",
+                              fontWeight: 700,
+                              color: "#475569",
+                            }}
+                          >
+                            Button label *
+                          </label>
+                          <span
+                            style={{
+                              fontSize: "11px",
+                              color: hasExceededLabel ? "#ef4444" : "#94a3b8",
+                            }}
+                          >
+                            {link.label.length}/{MAX_LABEL_LENGTH}
+                          </span>
+                        </div>
+                        <input
+                          type="text"
+                          value={link.label}
+                          maxLength={MAX_LABEL_LENGTH}
+                          placeholder="e.g. Website, Store, etc."
+                          onChange={(e) =>
+                            updateOrderLink(idx, { label: e.target.value })
+                          }
+                          style={{
+                            width: "100%",
+                            padding: "10px 14px",
+                            borderRadius: "10px",
+                            border: `1px solid ${hasExceededLabel ? "#ef4444" : "#cbd5e1"}`,
+                            fontSize: "13px",
+                            color: "#0f172a",
+                            background: "#ffffff",
+                            outline: "none",
+                          }}
+                        />
+
+                        {/* Quick-fill suggestions */}
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: "6px",
+                            marginTop: "6px",
+                            alignItems: "center",
+                          }}
+                        >
+                          <span style={{ fontSize: "11px", color: "#64748b" }}>Quick fill:</span>
+                          {QUICK_FILL_SUGGESTIONS.map((suggestion) => (
+                            <button
+                              key={suggestion}
+                              type="button"
+                              onClick={() =>
+                                updateOrderLink(idx, { label: suggestion })
+                              }
+                              style={{
+                                border: "1px solid #e2e8f0",
+                                borderRadius: "14px",
+                                padding: "2px 10px",
+                                background: "#ffffff",
+                                color: "#475569",
+                                fontSize: "11px",
+                                fontWeight: 500,
+                                cursor: "pointer",
+                              }}
+                            >
+                              {suggestion}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* URL input */}
+                      <div>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            marginBottom: "4px",
+                          }}
+                        >
+                          <label
+                            style={{
+                              fontSize: "12px",
+                              fontWeight: 700,
+                              color: "#475569",
+                            }}
+                          >
+                            Destination URL (https://) *
+                          </label>
+                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                            {link.url.length}/{MAX_URL_LENGTH}
+                          </span>
+                        </div>
+                        <input
+                          type="url"
+                          value={link.url}
+                          maxLength={MAX_URL_LENGTH}
+                          placeholder="https://..."
+                          onChange={(e) =>
+                            updateOrderLink(idx, { url: e.target.value })
+                          }
+                          style={{
+                            width: "100%",
+                            padding: "10px 14px",
+                            borderRadius: "10px",
+                            border: `1px solid ${hasInvalidUrl ? "#ef4444" : "#cbd5e1"}`,
+                            fontSize: "13px",
+                            color: "#0f172a",
+                            background: "#ffffff",
+                            outline: "none",
+                          }}
+                        />
+                        {hasInvalidUrl && (
+                          <span
+                            style={{
+                              display: "block",
+                              marginTop: "4px",
+                              fontSize: "11.5px",
+                              color: "#dc2626",
+                              fontWeight: 500,
+                            }}
+                          >
+                            Must be a valid URL starting with https://
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+
+              {onlineOrderingLinks.length > 0 &&
+                onlineOrderingLinks.length < MAX_ONLINE_ORDERING_LINKS && (
+                  <button
+                    type="button"
+                    onClick={addOrderLink}
+                    style={{
+                      padding: "10px 16px",
+                      background: "#ffffff",
+                      color: "#0f172a",
+                      border: "1px dashed #94a3b8",
+                      borderRadius: "10px",
+                      fontSize: "13px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "6px",
+                    }}
+                  >
+                    <span>+ Add another link</span>
+                    <span style={{ fontSize: "11px", color: "#64748b" }}>
+                      ({onlineOrderingLinks.length}/{MAX_ONLINE_ORDERING_LINKS})
+                    </span>
+                  </button>
+                )}
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ marginTop: "24px", display: "flex", justifyContent: "flex-end" }}>

@@ -1,5 +1,13 @@
 "use client";
 import type { ReactNode } from "react";
+import {
+  type OnlineOrderingLink,
+  MAX_ONLINE_ORDERING_LINKS,
+  MAX_LABEL_LENGTH,
+  MAX_URL_LENGTH,
+  QUICK_FILL_SUGGESTIONS,
+  isValidHttpsUrl,
+} from "../../lib/onlineOrdering";
 
 export type Feature = {
   id: string;
@@ -141,6 +149,15 @@ export default function ModuleConfigurator({
         />
       );
 
+    case "online_ordering":
+      return (
+        <OnlineOrdering
+          feature={feature}
+          config={config}
+          onChange={onChange}
+        />
+      );
+
     default:
       return (
         <Generic
@@ -225,6 +242,14 @@ function normalizeKey(
     value.includes("service")
   ) {
     return "room_service";
+  }
+
+  if (
+    key === "online_ordering" ||
+    (value.includes("online") &&
+      (value.includes("order") || value.includes("ordering")))
+  ) {
+    return "online_ordering";
   }
 
   return key;
@@ -2297,6 +2322,358 @@ function RoomService({
           </>}
         </div>
         <div className="hotel-footer">{categories.length} categor{categories.length === 1 ? "y" : "ies"} · {items.length} item{items.length === 1 ? "" : "s"}</div>
+      </div>
+    </ModuleBox>
+  );
+}
+
+/* =========================================================
+   ONLINE ORDERING
+========================================================= */
+
+function OnlineOrdering({
+  feature,
+  config,
+  onChange,
+}: Props) {
+  const links: OnlineOrderingLink[] = Array.isArray(config.links)
+    ? config.links
+    : [];
+
+  function updateLink(index: number, patch: Partial<OnlineOrderingLink>) {
+    const nextLinks = links.map((link, i) =>
+      i === index ? { ...link, ...patch } : link
+    );
+    onChange({
+      ...config,
+      links: nextLinks,
+    });
+  }
+
+  function addLink() {
+    if (links.length >= MAX_ONLINE_ORDERING_LINKS) return;
+    onChange({
+      ...config,
+      links: [...links, { label: "", url: "" }],
+    });
+  }
+
+  function removeLink(index: number) {
+    const nextLinks = links.filter((_, i) => i !== index);
+    onChange({
+      ...config,
+      links: nextLinks,
+    });
+  }
+
+  function moveLink(index: number, direction: -1 | 1) {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= links.length) return;
+    const nextLinks = [...links];
+    const [moved] = nextLinks.splice(index, 1);
+    nextLinks.splice(targetIndex, 0, moved);
+    onChange({
+      ...config,
+      links: nextLinks,
+    });
+  }
+
+  return (
+    <ModuleBox
+      icon="🛍️"
+      title="Order online"
+      description="Direct customers to your online ordering platforms and website."
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        {links.length === 0 ? (
+          <div
+            style={{
+              padding: "24px 16px",
+              textAlign: "center",
+              background: "#ffffff",
+              border: "1px dashed #cbd5e1",
+              borderRadius: "12px",
+            }}
+          >
+            <p
+              style={{
+                margin: "0 0 12px 0",
+                fontSize: "13px",
+                color: "#64748b",
+              }}
+            >
+              No online ordering links added yet. You can add up to {MAX_ONLINE_ORDERING_LINKS} direct links.
+            </p>
+            <button
+              type="button"
+              onClick={addLink}
+              style={{
+                padding: "8px 16px",
+                background: "#0f172a",
+                color: "#ffffff",
+                border: "none",
+                borderRadius: "8px",
+                fontSize: "13px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              + Add first link
+            </button>
+          </div>
+        ) : (
+          links.map((link, idx) => {
+            const hasInvalidUrl = Boolean(link.url && !isValidHttpsUrl(link.url));
+            const hasExceededLabel = link.label.length > MAX_LABEL_LENGTH;
+
+            return (
+              <div
+                key={idx}
+                style={{
+                  background: "#ffffff",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "12px",
+                  padding: "16px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "12px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      color: "#475569",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                    }}
+                  >
+                    Link {idx + 1} of {links.length}
+                  </span>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <button
+                      type="button"
+                      disabled={idx === 0}
+                      onClick={() => moveLink(idx, -1)}
+                      title="Move up"
+                      style={{
+                        padding: "4px 8px",
+                        fontSize: "12px",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "6px",
+                        background: idx === 0 ? "#f8fafc" : "#ffffff",
+                        color: idx === 0 ? "#cbd5e1" : "#334155",
+                        cursor: idx === 0 ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      disabled={idx === links.length - 1}
+                      onClick={() => moveLink(idx, 1)}
+                      title="Move down"
+                      style={{
+                        padding: "4px 8px",
+                        fontSize: "12px",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "6px",
+                        background: idx === links.length - 1 ? "#f8fafc" : "#ffffff",
+                        color: idx === links.length - 1 ? "#cbd5e1" : "#334155",
+                        cursor: idx === links.length - 1 ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeLink(idx)}
+                      title="Remove link"
+                      style={{
+                        padding: "4px 10px",
+                        fontSize: "12px",
+                        border: "1px solid #fee2e2",
+                        borderRadius: "6px",
+                        background: "#fff1f2",
+                        color: "#e11d48",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+
+                {/* Label input */}
+                <div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: "4px",
+                    }}
+                  >
+                    <label
+                      style={{
+                        fontSize: "13px",
+                        fontWeight: 600,
+                        color: "#0f172a",
+                      }}
+                    >
+                      Button label *
+                    </label>
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        color: hasExceededLabel ? "#ef4444" : "#94a3b8",
+                      }}
+                    >
+                      {link.label.length}/{MAX_LABEL_LENGTH}
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={link.label}
+                    maxLength={MAX_LABEL_LENGTH}
+                    placeholder="e.g. Website, Store, etc."
+                    onChange={(e) => updateLink(idx, { label: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: "9px 12px",
+                      borderRadius: "8px",
+                      border: `1px solid ${hasExceededLabel ? "#ef4444" : "#cbd5e1"}`,
+                      fontSize: "14px",
+                      color: "#0f172a",
+                      background: "#ffffff",
+                    }}
+                  />
+
+                  {/* Quick-fill suggestions */}
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "6px",
+                      marginTop: "6px",
+                      alignItems: "center",
+                    }}
+                  >
+                    <span style={{ fontSize: "11px", color: "#64748b" }}>Quick fill:</span>
+                    {QUICK_FILL_SUGGESTIONS.map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        type="button"
+                        onClick={() => updateLink(idx, { label: suggestion })}
+                        style={{
+                          border: "1px solid #e2e8f0",
+                          borderRadius: "14px",
+                          padding: "2px 10px",
+                          background: "#f8fafc",
+                          color: "#475569",
+                          fontSize: "11px",
+                          fontWeight: 500,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* URL input */}
+                <div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: "4px",
+                    }}
+                  >
+                    <label
+                      style={{
+                        fontSize: "13px",
+                        fontWeight: 600,
+                        color: "#0f172a",
+                      }}
+                    >
+                      Destination URL (https://) *
+                    </label>
+                    <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                      {link.url.length}/{MAX_URL_LENGTH}
+                    </span>
+                  </div>
+                  <input
+                    type="url"
+                    value={link.url}
+                    maxLength={MAX_URL_LENGTH}
+                    placeholder="https://..."
+                    onChange={(e) => updateLink(idx, { url: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: "9px 12px",
+                      borderRadius: "8px",
+                      border: `1px solid ${hasInvalidUrl ? "#ef4444" : "#cbd5e1"}`,
+                      fontSize: "14px",
+                      color: "#0f172a",
+                      background: "#ffffff",
+                    }}
+                  />
+                  {hasInvalidUrl && (
+                    <span
+                      style={{
+                        display: "block",
+                        marginTop: "4px",
+                        fontSize: "11.5px",
+                        color: "#dc2626",
+                        fontWeight: 500,
+                      }}
+                    >
+                      Must be a valid URL starting with https://
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        )}
+
+        {links.length > 0 && links.length < MAX_ONLINE_ORDERING_LINKS && (
+          <button
+            type="button"
+            onClick={addLink}
+            style={{
+              padding: "10px 16px",
+              background: "#ffffff",
+              color: "#0f172a",
+              border: "1px dashed #94a3b8",
+              borderRadius: "10px",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
+            }}
+          >
+            <span>+ Add another link</span>
+            <span style={{ fontSize: "11px", color: "#64748b" }}>
+              ({links.length}/{MAX_ONLINE_ORDERING_LINKS})
+            </span>
+          </button>
+        )}
       </div>
     </ModuleBox>
   );
