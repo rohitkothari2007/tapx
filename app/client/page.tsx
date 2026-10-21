@@ -5338,6 +5338,22 @@ function SettingsPage({
           .eq("module_key", "online_ordering")
           .maybeSingle();
 
+        let resolvedFeatureId = onlineOrderingFeatureId;
+        if (!resolvedFeatureId) {
+          const feat = (features || []).find(
+            (f) => normalizeKey(f.feature_key) === "online_ordering"
+          );
+          if (feat?.id) resolvedFeatureId = feat.id;
+        }
+        if (!resolvedFeatureId) {
+          const { data: fcRow } = await supabase
+            .from("feature_catalog")
+            .select("id")
+            .eq("feature_key", "online_ordering")
+            .maybeSingle();
+          if (fcRow?.id) resolvedFeatureId = fcRow.id;
+        }
+
         if (existingRow?.id) {
           const { error: cfgErr } = await supabase
             .from("business_module_configs")
@@ -5347,12 +5363,12 @@ function SettingsPage({
             })
             .eq("id", existingRow.id);
           if (cfgErr) throw cfgErr;
-        } else if (cleanLinks.length > 0) {
+        } else if (cleanLinks.length > 0 && resolvedFeatureId) {
           const { error: cfgErr } = await supabase
             .from("business_module_configs")
             .insert({
               business_id: business.id,
-              feature_id: onlineOrderingFeatureId || "online_ordering",
+              feature_id: resolvedFeatureId,
               module_key: "online_ordering",
               config: { links: cleanLinks },
               status: "active",

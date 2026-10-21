@@ -372,6 +372,11 @@ export default function TapPage({
         p_device_code: deviceCode,
       });
 
+      const catalogRequest = supabase
+        .from("feature_catalog")
+        .select("id, feature_key")
+        .eq("is_active", true);
+
       const rpcTimeout = new Promise<never>((_, reject) =>
         setTimeout(
           () =>
@@ -384,10 +389,13 @@ export default function TapPage({
         )
       );
 
-      const { data: tapData, error: tapError } = await Promise.race([
-        tapRpcRequest,
-        rpcTimeout,
+      const [tapResult, catalogResult] = await Promise.all([
+        Promise.race([tapRpcRequest, rpcTimeout]),
+        catalogRequest,
       ]);
+
+      const tapData = (tapResult as any)?.data || tapResult;
+      const tapError = (tapResult as any)?.error;
 
       if (tapError) throw tapError;
 
@@ -496,6 +504,21 @@ export default function TapPage({
         return key;
       };
 
+      const catalogKeyMap = new Map<string, string>(
+        (catalogResult.data || []).map((f: { id: string; feature_key: string }) => [
+          f.id,
+          f.feature_key,
+        ])
+      );
+
+      const enabledCatalogKeys = (tapData.enabled_features || [])
+        .filter(
+          (item: any) => item.enabled && item.status !== "inactive"
+        )
+        .map((item: any) => catalogKeyMap.get(item.feature_id))
+        .filter((key): key is string => Boolean(key))
+        .map(normalizeModuleKey);
+
       const enabledConfigs =
         (tapData.module_configs || []).filter(
           (item: any) =>
@@ -505,14 +528,18 @@ export default function TapPage({
             item.status !== "inactive"
         );
 
-      const activeModuleKeys =
-        enabledConfigs
-          .map((item: ModuleConfig) =>
-            normalizeModuleKey(
-              item.module_key
+      const activeModuleKeys = Array.from(
+        new Set([
+          ...enabledCatalogKeys,
+          ...enabledConfigs
+            .map((item: ModuleConfig) =>
+              normalizeModuleKey(
+                item.module_key
+              )
             )
-          )
-          .filter(Boolean);
+            .filter(Boolean),
+        ])
+      );
 
       setEnabledModuleKeys(
         activeModuleKeys
@@ -1221,8 +1248,7 @@ export default function TapPage({
       : null;
 
   const isPaymentModuleActive =
-    enabledModuleKeys.includes("upi_payment") ||
-    (business.payment_enabled !== false && Boolean(business.upi_id));
+    enabledModuleKeys.includes("upi_payment");
 
   const isUpiIdConfigured = Boolean(
     business.upi_id && business.upi_id.trim()
@@ -1333,7 +1359,7 @@ export default function TapPage({
     return (
       <main style={styles.page}>
         <RestaurantExperience
-          business={business}
+          business={{ ...business, payment_enabled: showPaymentButton }}
           device={device}
           categories={digitalMenuCategories}
           items={digitalMenuItems}
