@@ -11,6 +11,8 @@ import { supabase } from "../lib/supabase";
 import { getPublicSiteUrl } from "../lib/siteUrl";
 import QRCode from "qrcode";
 import AnalyticsPage from "./AnalyticsPage";
+import { normalizePhone } from "../lib/whatsapp";
+import LoyaltyWhatsAppModal, { ChatIcon } from "./LoyaltyWhatsAppModal";
 import {
   type OnlineOrderingLink,
   MAX_ONLINE_ORDERING_LINKS,
@@ -6826,6 +6828,45 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
+  const [activeWhatsAppMember, setActiveWhatsAppMember] = useState<any | null>(null);
+
+  const sortedMembers = useMemo(() => {
+    return [...members].sort((a, b) => {
+      const visitsA = typeof a.visits === "number" && !isNaN(a.visits) ? a.visits : 0;
+      const visitsB = typeof b.visits === "number" && !isNaN(b.visits) ? b.visits : 0;
+      if (visitsB !== visitsA) {
+        return visitsB - visitsA;
+      }
+
+      const timeA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+      const timeB = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+      const validTimeA = isNaN(timeA) ? 0 : timeA;
+      const validTimeB = isNaN(timeB) ? 0 : timeB;
+      if (validTimeB !== validTimeA) {
+        return validTimeB - validTimeA;
+      }
+
+      const nameA = (a.customer?.name || "").trim().toLowerCase();
+      const nameB = (b.customer?.name || "").trim().toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+  }, [members]);
+
+  const hasRewardReady = useMemo(() => {
+    if (!activeWhatsAppMember) return false;
+    const memId = activeWhatsAppMember.id;
+    const custId = activeWhatsAppMember.customer_id;
+    const hasPending = rewards.some(
+      (r) => (r.membership_id === memId || r.customer_id === custId) && r.status === "pending"
+    );
+    const visits =
+      typeof activeWhatsAppMember.visits === "number" && !isNaN(activeWhatsAppMember.visits)
+        ? activeWhatsAppMember.visits
+        : 0;
+    const reachedMilestone =
+      interval > 0 && visits > 0 && visits % interval === 0 && !activeWhatsAppMember.reward_claimed;
+    return Boolean(hasPending || reachedMilestone);
+  }, [activeWhatsAppMember, rewards, interval]);
 
   useEffect(() => {
     loadLoyaltyData();
@@ -7237,7 +7278,7 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
 
         {loading ? (
           <p style={{ color: "#64748b", fontSize: "14px" }}>Loading loyalty members...</p>
-        ) : members.filter((m) => {
+        ) : sortedMembers.filter((m) => {
             const q = search.trim().toLowerCase();
             if (!q) return true;
             return m.customer?.name?.toLowerCase().includes(q) || m.customer?.phone?.toLowerCase().includes(q);
@@ -7245,74 +7286,113 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
           <p style={{ color: "#64748b", fontSize: "14px" }}>No loyalty members found.</p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            {members
+            {sortedMembers
               .filter((m) => {
                 const q = search.trim().toLowerCase();
                 if (!q) return true;
                 return m.customer?.name?.toLowerCase().includes(q) || m.customer?.phone?.toLowerCase().includes(q);
               })
-              .map((member) => (
-                <div key={member.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
-                  <div>
-                    <strong style={{ fontSize: "14px", color: "#0f172a", display: "block" }}>{member.customer?.name || "Customer"}</strong>
-                    <span style={{ fontSize: "12px", color: "#64748b" }}>{member.customer?.phone || "No phone"}</span>
-                    <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "4px", flexWrap: "wrap" }}>
-                      <span style={{ fontSize: "12px", color: "#2563eb", fontWeight: 700 }}>
-                        {member.visits} verified visit{member.visits === 1 ? "" : "s"}
-                      </span>
-                      <span style={{ fontSize: "12px", color: "#166534", background: "#f0fdf4", padding: "2px 8px", borderRadius: "12px", border: "1px solid #bbf7d0", fontWeight: 700 }}>
-                        🏆 {member.redemption_count || 0} reward{(member.redemption_count || 0) === 1 ? "" : "s"} redeemed all-time
-                      </span>
+              .map((member) => {
+                const phoneDigits = normalizePhone(member.customer?.phone);
+                const isValidPhone = Boolean(phoneDigits);
+
+                return (
+                  <div key={member.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                    <div>
+                      <strong style={{ fontSize: "14px", color: "#0f172a", display: "block" }}>{member.customer?.name || "Customer"}</strong>
+                      <span style={{ fontSize: "12px", color: "#64748b" }}>{member.customer?.phone || "No phone"}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "4px", flexWrap: "wrap" }}>
+                        <span style={{ fontSize: "12px", color: "#2563eb", fontWeight: 700 }}>
+                          {member.visits} verified visit{member.visits === 1 ? "" : "s"}
+                        </span>
+                        <span style={{ fontSize: "12px", color: "#166534", background: "#f0fdf4", padding: "2px 8px", borderRadius: "12px", border: "1px solid #bbf7d0", fontWeight: 700 }}>
+                          🏆 {member.redemption_count || 0} reward{(member.redemption_count || 0) === 1 ? "" : "s"} redeemed all-time
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        onClick={() => recordVisit(member)}
+                        disabled={recordingId === member.id || removingId === member.id}
+                        style={{
+                          padding: "8px 14px",
+                          background: "#2563eb",
+                          color: "white",
+                          border: "none",
+                          borderRadius: "8px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          cursor: recordingId === member.id || removingId === member.id ? "not-allowed" : "pointer",
+                          opacity: recordingId === member.id ? 0.6 : 1,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {recordingId === member.id ? "Recording..." : "+ Record Visit"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveWhatsAppMember(member)}
+                        disabled={!isValidPhone || recordingId === member.id || removingId === member.id}
+                        title={!isValidPhone ? "Invalid phone number" : "Message on WhatsApp"}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "6px",
+                          padding: "8px 12px",
+                          background: isValidPhone ? "#f0fdf4" : "#f8fafc",
+                          color: isValidPhone ? "#166534" : "#94a3b8",
+                          border: `1px solid ${isValidPhone ? "#bbf7d0" : "#e2e8f0"}`,
+                          borderRadius: "8px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          cursor: isValidPhone && recordingId !== member.id && removingId !== member.id ? "pointer" : "not-allowed",
+                          opacity: isValidPhone ? 1 : 0.6,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <ChatIcon size={14} />
+                        <span>WhatsApp</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => removeMember(member)}
+                        disabled={recordingId === member.id || removingId === member.id}
+                        style={{
+                          padding: "8px 12px",
+                          background: "#fef2f2",
+                          color: "#dc2626",
+                          border: "1px solid #fecaca",
+                          borderRadius: "8px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          cursor: recordingId === member.id || removingId === member.id ? "not-allowed" : "pointer",
+                          opacity: removingId === member.id ? 0.6 : 1,
+                          whiteSpace: "nowrap",
+                        }}
+                        title="Remove Member"
+                      >
+                        {removingId === member.id ? "Removing..." : "🗑️ Remove"}
+                      </button>
                     </div>
                   </div>
-
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      onClick={() => recordVisit(member)}
-                      disabled={recordingId === member.id || removingId === member.id}
-                      style={{
-                        padding: "8px 14px",
-                        background: "#2563eb",
-                        color: "white",
-                        border: "none",
-                        borderRadius: "8px",
-                        fontSize: "12px",
-                        fontWeight: 700,
-                        cursor: recordingId === member.id || removingId === member.id ? "not-allowed" : "pointer",
-                        opacity: recordingId === member.id ? 0.6 : 1,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {recordingId === member.id ? "Recording..." : "+ Record Visit"}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => removeMember(member)}
-                      disabled={recordingId === member.id || removingId === member.id}
-                      style={{
-                        padding: "8px 12px",
-                        background: "#fef2f2",
-                        color: "#dc2626",
-                        border: "1px solid #fecaca",
-                        borderRadius: "8px",
-                        fontSize: "12px",
-                        fontWeight: 700,
-                        cursor: recordingId === member.id || removingId === member.id ? "not-allowed" : "pointer",
-                        opacity: removingId === member.id ? 0.6 : 1,
-                        whiteSpace: "nowrap",
-                      }}
-                      title="Remove Member"
-                    >
-                      {removingId === member.id ? "Removing..." : "🗑️ Remove"}
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
           </div>
         )}
       </div>
+
+      <LoyaltyWhatsAppModal
+        isOpen={Boolean(activeWhatsAppMember)}
+        onClose={() => setActiveWhatsAppMember(null)}
+        member={activeWhatsAppMember}
+        businessName={businessName}
+        milestoneReward={rewardDesc}
+        hasRewardReady={hasRewardReady}
+      />
     </div>
   );
 }
