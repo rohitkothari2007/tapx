@@ -13,6 +13,7 @@ import QRCode from "qrcode";
 import AnalyticsPage from "./AnalyticsPage";
 import { normalizePhone } from "../lib/whatsapp";
 import LoyaltyWhatsAppModal, { ChatIcon } from "./LoyaltyWhatsAppModal";
+import LoyaltyRecentJoined from "./LoyaltyRecentJoined";
 import {
   type OnlineOrderingLink,
   MAX_ONLINE_ORDERING_LINKS,
@@ -6910,7 +6911,7 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
         // Fallback to direct table query
         const { data: memberData } = await supabase
           .from("loyalty_memberships")
-          .select("id, customer_id, visits, redemption_count, reward_claimed, updated_at, customer:customers(name, phone)")
+          .select("id, customer_id, visits, redemption_count, reward_claimed, created_at, updated_at, customer:customers(name, phone)")
           .eq("business_id", businessId)
           .order("updated_at", { ascending: false });
 
@@ -7268,6 +7269,17 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
       {/* MEMBERS & VISITS LIST */}
       <div style={{ background: "white", borderRadius: "20px", border: "1px solid #e2e8f0", padding: "24px" }}>
         <h3 style={{ margin: "0 0 12px", fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>👥 Loyalty Members & Visit Verification</h3>
+
+        <div style={{ marginBottom: "16px" }}>
+          <LoyaltyRecentJoined
+            members={members}
+            recordingId={recordingId}
+            removingId={removingId}
+            onRecordVisit={recordVisit}
+            onRemoveMember={removeMember}
+            onOpenWhatsApp={setActiveWhatsAppMember}
+          />
+        </div>
 
         <input
           value={search}
