@@ -13,7 +13,7 @@ import QRCode from "qrcode";
 import AnalyticsPage from "./AnalyticsPage";
 import { normalizePhone } from "../lib/whatsapp";
 import LoyaltyWhatsAppModal, { ChatIcon } from "./LoyaltyWhatsAppModal";
-import LoyaltyRecentJoined from "./LoyaltyRecentJoined";
+import LoyaltyMemberLists from "./LoyaltyMemberLists";
 import {
   type OnlineOrderingLink,
   MAX_ONLINE_ORDERING_LINKS,
@@ -7270,9 +7270,18 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
       <div style={{ background: "white", borderRadius: "20px", border: "1px solid #e2e8f0", padding: "24px" }}>
         <h3 style={{ margin: "0 0 12px", fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>👥 Loyalty Members & Visit Verification</h3>
 
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search customer by name or mobile..."
+          style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", marginBottom: "16px", boxSizing: "border-box" }}
+        />
+
         <div style={{ marginBottom: "16px" }}>
-          <LoyaltyRecentJoined
+          <LoyaltyMemberLists
+            key={businessId}
             members={members}
+            searchText={search}
             recordingId={recordingId}
             removingId={removingId}
             onRecordVisit={recordVisit}
@@ -7280,13 +7289,6 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
             onOpenWhatsApp={setActiveWhatsAppMember}
           />
         </div>
-
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search customer by name or mobile..."
-          style={{ width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", marginBottom: "16px", boxSizing: "border-box" }}
-        />
 
         {loading ? (
           <p style={{ color: "#64748b", fontSize: "14px" }}>Loading loyalty members...</p>
