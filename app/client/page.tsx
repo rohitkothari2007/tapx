@@ -14,6 +14,8 @@ import AnalyticsPage from "./AnalyticsPage";
 import { normalizePhone } from "../lib/whatsapp";
 import LoyaltyWhatsAppModal, { ChatIcon } from "./LoyaltyWhatsAppModal";
 import LoyaltyMemberLists from "./LoyaltyMemberLists";
+import LoyaltyMilestoneRulesEditor from "./LoyaltyMilestoneRulesEditor";
+import { type LoyaltyMilestoneRule, parseLoyaltyRules } from "../lib/loyaltyMilestones";
 import {
   type OnlineOrderingLink,
   MAX_ONLINE_ORDERING_LINKS,
@@ -6823,6 +6825,9 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
   const [rewards, setRewards] = useState<any[]>([]);
   const [interval, setInterval] = useState<number>(5);
   const [rewardDesc, setRewardDesc] = useState<string>("10% off next visit");
+  const [loyaltyRules, setLoyaltyRules] = useState<LoyaltyMilestoneRule[]>([
+    { every: 5, reward: "10% off next visit" },
+  ]);
   const [loading, setLoading] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
   const [recordingId, setRecordingId] = useState<string | null>(null);
@@ -6865,9 +6870,36 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
         ? activeWhatsAppMember.visits
         : 0;
     const reachedMilestone =
-      interval > 0 && visits > 0 && visits % interval === 0 && !activeWhatsAppMember.reward_claimed;
+      visits > 0 &&
+      !activeWhatsAppMember.reward_claimed &&
+      loyaltyRules.some((r) => r.every > 0 && visits % r.every === 0);
     return Boolean(hasPending || reachedMilestone);
-  }, [activeWhatsAppMember, rewards, interval]);
+  }, [activeWhatsAppMember, rewards, loyaltyRules]);
+
+  const activeMemberRewardDescription = useMemo(() => {
+    if (!activeWhatsAppMember) return loyaltyRules[0]?.reward || rewardDesc;
+    const memId = activeWhatsAppMember.id;
+    const custId = activeWhatsAppMember.customer_id;
+    const pending = rewards.find(
+      (r) => (r.membership_id === memId || r.customer_id === custId) && r.status === "pending"
+    );
+    if (pending?.reward_description) {
+      return pending.reward_description;
+    }
+    const visits =
+      typeof activeWhatsAppMember.visits === "number" && !isNaN(activeWhatsAppMember.visits)
+        ? activeWhatsAppMember.visits
+        : 0;
+    if (visits > 0 && loyaltyRules.length > 0) {
+      const matchingRules = loyaltyRules
+        .filter((r) => r.every > 0 && visits % r.every === 0)
+        .sort((a, b) => b.every - a.every);
+      if (matchingRules.length > 0) {
+        return matchingRules[0].reward;
+      }
+    }
+    return loyaltyRules[0]?.reward || rewardDesc;
+  }, [activeWhatsAppMember, rewards, loyaltyRules, rewardDesc]);
 
   useEffect(() => {
     loadLoyaltyData();
@@ -6936,9 +6968,10 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
         .maybeSingle();
 
       if (cfgData?.config) {
-        const cfg = cfgData.config as any;
-        if (cfg.milestone_interval) setInterval(Number(cfg.milestone_interval));
-        if (cfg.milestone_reward) setRewardDesc(String(cfg.milestone_reward));
+        const parsed = parseLoyaltyRules(cfgData.config);
+        setLoyaltyRules(parsed);
+        setInterval(parsed[0].every);
+        setRewardDesc(parsed[0].reward);
       }
     } catch (err) {
       console.error("Error loading loyalty data:", err);
@@ -7147,48 +7180,16 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
       )}
 
       {/* MILESTONE CONFIG CARD */}
-      <div style={{ background: "white", borderRadius: "20px", border: "1px solid #e2e8f0", padding: "24px" }}>
-        <h3 style={{ margin: "0 0 14px", fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>⚙ Loyalty Milestone Rules</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px", marginBottom: "16px" }}>
-          <div>
-            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>
-              Milestone Interval (Visits)
-            </label>
-            <input
-              type="number"
-              min={1}
-              max={100}
-              value={interval}
-              onChange={(e) => setInterval(Number(e.target.value) || 5)}
-              style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
-            />
-            <span style={{ fontSize: "12px", color: "#94a3b8", marginTop: "4px", display: "block" }}>e.g. 5 = reward triggered every 5th visit</span>
-          </div>
-
-          <div>
-            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>
-              Reward Description
-            </label>
-            <input
-              type="text"
-              value={rewardDesc}
-              onChange={(e) => setRewardDesc(e.target.value)}
-              placeholder="e.g. 10% off next visit"
-              style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
-            />
-            <span style={{ fontSize: "12px", color: "#94a3b8", marginTop: "4px", display: "block" }}>Text sent to customer upon reaching milestone</span>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={saveConfig}
-          disabled={savingConfig}
-          style={{ padding: "10px 18px", background: "#0f172a", color: "white", border: "none", borderRadius: "8px", fontWeight: 700, cursor: savingConfig ? "not-allowed" : "pointer" }}
-        >
-          {savingConfig ? "Saving..." : "Save Milestone Rules"}
-        </button>
-      </div>
+      <LoyaltyMilestoneRulesEditor
+        businessId={businessId}
+        onSaved={(newRules) => {
+          setLoyaltyRules(newRules);
+          if (newRules[0]) {
+            setInterval(newRules[0].every);
+            setRewardDesc(newRules[0].reward);
+          }
+        }}
+      />
 
       {/* MILESTONES & REWARDS WIDGET */}
       <div style={{ background: "white", borderRadius: "20px", border: "1px solid #e2e8f0", padding: "24px" }}>
@@ -7404,7 +7405,7 @@ function LoyaltyPortalSection({ businessId, businessName }: { businessId: string
         onClose={() => setActiveWhatsAppMember(null)}
         member={activeWhatsAppMember}
         businessName={businessName}
-        milestoneReward={rewardDesc}
+        milestoneReward={activeMemberRewardDescription}
         hasRewardReady={hasRewardReady}
       />
     </div>
