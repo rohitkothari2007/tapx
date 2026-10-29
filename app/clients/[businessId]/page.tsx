@@ -9,6 +9,7 @@ import JSZip from "jszip";
 import ModuleConfigurator, {
   type Feature as ConfigFeature,
 } from "../add/ModuleConfigurator";
+import LoyaltyMilestoneRulesEditor from "../../client/LoyaltyMilestoneRulesEditor";
 import {
   validateOnlineOrderingConfig,
   sanitizeOnlineOrderingLinks,
@@ -501,7 +502,16 @@ export default function ClientPage() {
     setSavingMilestoneConfig(true);
     setLoyaltyMessage("");
     try {
+      const { data: existingRow } = await supabase
+        .from("business_module_configs")
+        .select("config")
+        .eq("business_id", businessId)
+        .eq("module_key", "loyalty")
+        .maybeSingle();
+
+      const existingConfig = (existingRow?.config || {}) as any;
       const newConfig = {
+        ...existingConfig,
         milestone_interval: milestoneInterval,
         milestone_reward: milestoneReward,
       };
@@ -2289,53 +2299,15 @@ export default function ClientPage() {
           )}
 
           {/* =========================================================
-              MILESTONE CONFIGURATION CARD
+              MILESTONE CONFIGURATION CARD (SHARED RULES EDITOR)
           ========================================================= */}
-          <div style={{ ...card, marginBottom: "24px" }}>
-            <h3 style={{ margin: "0 0 12px", fontSize: "16px", fontWeight: 700, color: "#111827" }}>
-              ⚙ Loyalty Milestone Rules
-            </h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px", marginBottom: "16px" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#4b5563", marginBottom: "6px" }}>
-                  Milestone Interval (Visits)
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={milestoneInterval}
-                  onChange={(e) => setMilestoneInterval(Number(e.target.value) || 5)}
-                  style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "14px", boxSizing: "border-box" }}
-                />
-                <span style={{ fontSize: "12px", color: "#6b7280", marginTop: "4px", display: "block" }}>
-                  e.g., 5 = reward triggered every 5th visit
-                </span>
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#4b5563", marginBottom: "6px" }}>
-                  Reward Description
-                </label>
-                <input
-                  type="text"
-                  value={milestoneReward}
-                  onChange={(e) => setMilestoneReward(e.target.value)}
-                  placeholder="e.g. 10% off next visit"
-                  style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "14px", boxSizing: "border-box" }}
-                />
-                <span style={{ fontSize: "12px", color: "#6b7280", marginTop: "4px", display: "block" }}>
-                  Description sent to customer upon reaching milestone
-                </span>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={saveMilestoneConfig}
-              disabled={savingMilestoneConfig}
-              style={{ ...primaryButton, opacity: savingMilestoneConfig ? 0.6 : 1 }}
-            >
-              {savingMilestoneConfig ? "Saving Rules..." : "Save Milestone Rules"}
-            </button>
+          <div style={{ marginBottom: "24px" }}>
+            <LoyaltyMilestoneRulesEditor
+              businessId={businessId}
+              onSaved={() => {
+                loadLoyaltyConfig(businessId);
+              }}
+            />
           </div>
 
           {/* =========================================================

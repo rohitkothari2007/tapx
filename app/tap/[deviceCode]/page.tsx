@@ -15,6 +15,11 @@ import {
   type OnlineOrderingLink,
   sanitizeOnlineOrderingLinks,
 } from "../../lib/onlineOrdering";
+import {
+  type LoyaltyMilestoneRule,
+  parseLoyaltyRules,
+  getNextMilestone,
+} from "../../lib/loyaltyMilestones";
 
 function ShoppingBagIcon({ size = 24 }: { size?: number }) {
   return (
@@ -238,6 +243,7 @@ type LoyaltyConfig = {
   program_name?: string;
   reward?: string;
   visits_required?: string | number;
+  milestones?: any[];
 };
 
 type TableOrderingConfig = {
@@ -856,6 +862,8 @@ export default function TapPage({
             : rawLoyaltyConfig.visits_required !== undefined && rawLoyaltyConfig.visits_required !== null
             ? String(rawLoyaltyConfig.visits_required)
             : "5",
+
+        milestones: Array.isArray(rawLoyaltyConfig.milestones) ? rawLoyaltyConfig.milestones : undefined,
       });
 
       // ====================================================
@@ -4301,6 +4309,14 @@ function LoyaltySection({
       ) || 5
     );
 
+  const loyaltyRules = useMemo(() => {
+    return parseLoyaltyRules(config);
+  }, [config]);
+
+  const previewRule = loyaltyRules[0];
+  const previewReward = previewRule?.reward || reward;
+  const previewRequiredVisits = previewRule?.every || requiredVisits;
+
   async function joinOrViewLoyalty() {
     const cleanName =
       name.trim();
@@ -4387,21 +4403,48 @@ function LoyaltySection({
   const visits =
     membership?.visits || 0;
 
-  const progress =
-    Math.min(
-      100,
-      Math.round(
-        (visits /
-          requiredVisits) *
-          100
-      )
-    );
+  const isSingleRule = loyaltyRules.length <= 1;
 
-  const rewardUnlocked =
-    visits >=
-      requiredVisits &&
-    membership?.reward_claimed !==
-      true;
+  let targetVisits: number;
+  let currentProgressVisits: number;
+  let progress: number;
+  let remainingVisits: number;
+  let displayReward: string;
+  let rewardUnlocked: boolean;
+
+  if (isSingleRule) {
+    const req = previewRequiredVisits;
+    targetVisits = req;
+    currentProgressVisits = visits;
+    progress = Math.min(100, Math.round((visits / req) * 100));
+    remainingVisits = Math.max(0, req - visits);
+    displayReward = previewReward;
+    rewardUnlocked = visits >= req && membership?.reward_claimed !== true;
+  } else {
+    const matchingRules =
+      visits > 0
+        ? loyaltyRules.filter((r) => visits % r.every === 0).sort((a, b) => b.every - a.every)
+        : [];
+
+    if (matchingRules.length > 0 && membership?.reward_claimed !== true) {
+      const unlockedRule = matchingRules[0];
+      rewardUnlocked = true;
+      targetVisits = unlockedRule.every;
+      currentProgressVisits = unlockedRule.every;
+      progress = 100;
+      remainingVisits = 0;
+      displayReward = unlockedRule.reward;
+    } else {
+      rewardUnlocked = false;
+      const nextMilestone = getNextMilestone(visits, loyaltyRules);
+      const nextRule = nextMilestone.rule;
+      targetVisits = nextRule.every;
+      remainingVisits = nextMilestone.remaining;
+      currentProgressVisits = Math.max(0, nextRule.every - remainingVisits);
+      progress = Math.min(100, Math.round((currentProgressVisits / nextRule.every) * 100));
+      displayReward = nextMilestone.reward;
+    }
+  }
 
   return (
     <section
@@ -4576,7 +4619,7 @@ function LoyaltySection({
                   styles.loyaltyRewardText
                 }
               >
-                {reward}
+                {previewReward}
               </div>
 
               <div
@@ -4586,7 +4629,7 @@ function LoyaltySection({
               >
                 Unlock after{" "}
                 {
-                  requiredVisits
+                  previewRequiredVisits
                 }{" "}
                 visits
               </div>
@@ -4659,9 +4702,9 @@ function LoyaltySection({
                   styles.loyaltyProgressCount
                 }
               >
-                {visits} /{" "}
+                {currentProgressVisits} /{" "}
                 {
-                  requiredVisits
+                  targetVisits
                 }{" "}
                 visits
               </div>
@@ -4697,7 +4740,7 @@ function LoyaltySection({
             {Array.from(
               {
                 length:
-                  requiredVisits,
+                  Math.min(50, targetVisits),
               },
               (_, index) => (
                 <span
@@ -4706,12 +4749,12 @@ function LoyaltySection({
                     ...styles.loyaltyDot,
 
                     ...(index <
-                    visits
+                    currentProgressVisits
                       ? styles.loyaltyDotActive
                       : {}),
                   }}
                 >
-                  {index < visits
+                  {index < currentProgressVisits
                     ? "✓"
                     : ""}
                 </span>
@@ -4756,7 +4799,7 @@ function LoyaltySection({
                   styles.loyaltyRewardText
                 }
               >
-                {reward}
+                {displayReward}
               </div>
 
               {!rewardUnlocked && (
@@ -4765,14 +4808,9 @@ function LoyaltySection({
                     styles.loyaltyRequirement
                   }
                 >
-                  {Math.max(
-                    0,
-                    requiredVisits -
-                      visits
-                  )}{" "}
+                  {remainingVisits}{" "}
                   more visit
-                  {requiredVisits -
-                    visits ===
+                  {remainingVisits ===
                   1
                     ? ""
                     : "s"}{" "}
