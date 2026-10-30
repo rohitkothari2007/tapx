@@ -15,6 +15,7 @@ import { normalizePhone } from "../lib/whatsapp";
 import LoyaltyWhatsAppModal, { ChatIcon } from "./LoyaltyWhatsAppModal";
 import LoyaltyMemberLists from "./LoyaltyMemberLists";
 import LoyaltyMilestoneRulesEditor from "./LoyaltyMilestoneRulesEditor";
+import RemindersPage, { useRemindersData } from "./RemindersPage";
 import { type LoyaltyMilestoneRule, parseLoyaltyRules } from "../lib/loyaltyMilestones";
 import {
   type OnlineOrderingLink,
@@ -145,6 +146,7 @@ type PageKey =
   | "menu"
   | "offers"
   | "loyalty"
+  | "reminders"
   | "feedback"
   | "analytics"
   | "settings";
@@ -970,6 +972,12 @@ export default function ClientPortalPage() {
     "loyalty"
   );
 
+  const reminders = useRemindersData({
+    businessId: business?.id,
+    hasLoyalty,
+    hasOffers,
+  });
+
   const hasFeedback = hasModule(
     "customer_feedback",
     "customer-feedback",
@@ -1270,6 +1278,13 @@ export default function ClientPortalPage() {
       label: "Loyalty",
       icon: "♡",
       show: hasLoyalty,
+    },
+    {
+      key: "reminders" as PageKey,
+      label: "Reminders",
+      icon: "✉",
+      show: Boolean(hasLoyalty || hasOffers),
+      badge: reminders.badge,
     },
     {
       key: "feedback" as PageKey,
@@ -1767,6 +1782,17 @@ export default function ClientPortalPage() {
 
           {activePage === "loyalty" && hasLoyalty && (
             <LoyaltyPortalSection businessId={business.id} businessName={business.name} />
+          )}
+
+          {activePage === "reminders" && Boolean(hasLoyalty || hasOffers) && (
+            <RemindersPage
+              key={business.id}
+              businessId={business.id}
+              businessName={business.name}
+              hasLoyalty={hasLoyalty}
+              hasOffers={hasOffers}
+              remindersData={reminders}
+            />
           )}
 
           {activePage === "feedback" && hasFeedback && (
