@@ -53,19 +53,22 @@ export default function LoyaltyMilestoneRulesEditor({
       if (!businessId) return;
       setLoading(true);
       try {
-        const { data } = await supabase
+        const { data: rows, error: loadErr } = await supabase
           .from("business_module_configs")
           .select("config")
           .eq("business_id", businessId)
           .eq("module_key", "loyalty")
-          .maybeSingle();
+          .order("updated_at", { ascending: false });
 
+        if (loadErr) throw loadErr;
+
+        const data = rows?.[0];
         if (!isCancelled && data?.config) {
           const parsed = parseLoyaltyRules(data.config);
           setRules(parsed);
         }
-      } catch (err) {
-        console.error("Error loading loyalty milestone rules:", err);
+      } catch (err: any) {
+        console.error("Error loading loyalty milestone rules:", err?.message || err);
       } finally {
         if (!isCancelled) {
           setLoading(false);
@@ -85,49 +88,93 @@ export default function LoyaltyMilestoneRulesEditor({
       setMessage({ text: "Missing business ID.", type: "error" });
       return false;
     }
+    if (saving) return false;
     setSaving(true);
     try {
-      // 1. Read existing config to merge safely without overwriting other keys
-      const { data: existingRow } = await supabase
+      // 1. Read existing config(s) sorted by updated_at descending
+      const { data: existingRows, error: fetchError } = await supabase
         .from("business_module_configs")
-        .select("id, config, feature_id")
+        .select("id, config, feature_id, updated_at")
         .eq("business_id", businessId)
         .eq("module_key", "loyalty")
-        .maybeSingle();
+        .order("updated_at", { ascending: false });
+
+      if (fetchError) throw fetchError;
+
+      const existingRow = existingRows && existingRows.length > 0 ? existingRows[0] : null;
+
+      const baseConfig =
+        existingRow?.config && typeof existingRow.config === "object"
+          ? existingRow.config
+          : {};
 
       const mergedConfig = {
-        ...(existingRow?.config || {}),
+        ...baseConfig,
         milestones: cleanRules,
         // Mirror rule 1 for backwards compatibility with legacy code
         milestone_interval: cleanRules[0].every,
         milestone_reward: cleanRules[0].reward,
       };
 
-      const resolvedFeatureId = existingRow?.feature_id || "loyalty";
+      if (existingRow?.id) {
+        // 2. If found, update by row id. If multiple rows exist, update the most recent one.
+        const { error: updateError } = await supabase
+          .from("business_module_configs")
+          .update({
+            config: mergedConfig,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingRow.id);
 
-      const { error } = await supabase
-        .from("business_module_configs")
-        .upsert(
-          {
+        if (updateError) throw updateError;
+      } else {
+        // 3. If no row exists, resolve feature_id and insert
+        let resolvedFeatureId: string | null = null;
+        const { data: featRow } = await supabase
+          .from("feature_catalog")
+          .select("id")
+          .eq("feature_key", "loyalty")
+          .maybeSingle();
+
+        if (featRow?.id) {
+          resolvedFeatureId = featRow.id;
+        } else {
+          const { data: bfRow } = await supabase
+            .from("business_features")
+            .select("feature_id")
+            .eq("business_id", businessId)
+            .limit(1)
+            .maybeSingle();
+          if (bfRow?.feature_id) {
+            resolvedFeatureId = bfRow.feature_id;
+          }
+        }
+
+        if (!resolvedFeatureId) {
+          throw new Error("Could not resolve feature ID for loyalty module.");
+        }
+
+        const { error: insertError } = await supabase
+          .from("business_module_configs")
+          .insert({
             business_id: businessId,
             feature_id: resolvedFeatureId,
             module_key: "loyalty",
             config: mergedConfig,
             status: "active",
-          },
-          { onConflict: "business_id,module_key" }
-        );
+          });
 
-      if (error) throw error;
+        if (insertError) throw insertError;
+      }
 
       setRules(cleanRules);
       setMessage({ text: "✓ Loyalty milestone rules saved!", type: "success" });
       onSaved?.(cleanRules);
       return true;
     } catch (err: any) {
-      console.error("Failed to save milestone rules:", err);
+      console.error("Failed to save milestone rules:", err?.message || err);
       setMessage({
-        text: err?.message || "Failed to save milestone rules.",
+        text: "Could not save milestone rules. Please try again.",
         type: "error",
       });
       return false;
@@ -170,6 +217,7 @@ export default function LoyaltyMilestoneRulesEditor({
   }
 
   async function handleDelete(index: number) {
+    if (saving) return;
     setMessage(null);
     if (rules.length <= 1) {
       setMessage({
@@ -200,6 +248,7 @@ export default function LoyaltyMilestoneRulesEditor({
 
   async function handleModalSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (saving) return;
     setModalError(null);
 
     // Guard: max 3 rules on creation
@@ -253,6 +302,8 @@ export default function LoyaltyMilestoneRulesEditor({
     if (success) {
       setShowModal(false);
       setModalError(null);
+    } else {
+      setModalError("Could not save milestone rules. Please try again.");
     }
   }
 
