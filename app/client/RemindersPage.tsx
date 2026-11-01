@@ -2,12 +2,15 @@
 
 import React, { useState, useEffect } from "react";
 import { useRemindersData, RemindersData } from "./RemindersContext";
+import OccasionsManager from "./OccasionsManager";
 import {
   renderTemplate,
   formatIndiaSentTime,
+  formatIndiaDateOnly,
   WelcomeReminderItem,
   RewardReminderItem,
   OfferReminderItem,
+  OccasionReminderItem,
   SentHistoryItem,
 } from "../lib/reminders";
 import { formatWhatsAppUrl, normalizePhone } from "../lib/whatsapp";
@@ -40,6 +43,7 @@ export default function RemindersPage({
   const {
     loading,
     isTableMissing,
+    isOccasionsMissing,
     welcomePending,
     welcomeSent,
     rewardPending,
@@ -47,9 +51,16 @@ export default function RemindersPage({
     offerPending,
     offerSent,
     liveOffersCount,
+    occasions,
+    activeOccasionGroups,
+    pastOccasions,
+    totalOccasionPending,
     sentHistory,
     templates,
     setTemplate,
+    createOccasion,
+    updateOccasion,
+    deleteOccasion,
     markAsSent,
     markAsNotSent,
     refresh,
@@ -75,11 +86,20 @@ export default function RemindersPage({
   const [showAllReward, setShowAllReward] = useState(false);
   const [showAllOffer, setShowAllOffer] = useState(false);
   const [showAllHistory, setShowAllHistory] = useState(false);
+  const [showAllOccasionMembers, setShowAllOccasionMembers] = useState<Record<string, boolean>>({});
 
   // Template editor toggle states
   const [editTemplateSection, setEditTemplateSection] = useState<"welcome" | "reward" | "offer" | null>(
     null
   );
+
+  // Manage Occasions modal state
+  const [isOccasionsModalOpen, setIsOccasionsModalOpen] = useState(false);
+  const [expandedPastOccasions, setExpandedPastOccasions] = useState(false);
+
+  // Per-member custom message editor state (for sending custom message for that send only)
+  const [editingMessagePerMember, setEditingMessagePerMember] = useState<Record<string, string>>({});
+  const [expandedCustomizePerMember, setExpandedCustomizePerMember] = useState<Record<string, boolean>>({});
 
   // Clear undo state after 5 seconds
   useEffect(() => {
@@ -204,8 +224,8 @@ export default function RemindersPage({
     }
   }
 
-  // Undo button click handler
-  async function handleUndoClick() {
+  // Trigger undo from undo notification bar
+  async function handleTriggerUndo() {
     if (!undoItem) return;
     await handleMarkAsNotSent({
       membershipId: undoItem.membershipId,
@@ -220,8 +240,19 @@ export default function RemindersPage({
   const currentRewardList = activeTab === "pending" ? rewardPending : rewardSent;
   const currentOfferList = activeTab === "pending" ? offerPending : offerSent;
 
+  const currentOccasionPendingCount = totalOccasionPending;
+  const currentOccasionSentCount = activeOccasionGroups.reduce(
+    (acc, g) => acc + g.sentItems.length,
+    0
+  );
+  const currentOccasionCount =
+    activeTab === "pending" ? currentOccasionPendingCount : currentOccasionSentCount;
+
   const totalCurrentSectionCount =
-    currentWelcomeList.length + currentRewardList.length + currentOfferList.length;
+    currentWelcomeList.length +
+    currentRewardList.length +
+    currentOfferList.length +
+    currentOccasionCount;
 
   return (
     <div
@@ -261,24 +292,44 @@ export default function RemindersPage({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => refresh()}
-          disabled={loading}
-          style={{
-            padding: "8px 16px",
-            background: "#ffffff",
-            color: "#475569",
-            border: "1px solid #cbd5e1",
-            borderRadius: "8px",
-            fontSize: "13px",
-            fontWeight: 600,
-            cursor: loading ? "not-allowed" : "pointer",
-            boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
-          }}
-        >
-          {loading ? "Refreshing..." : "Refresh"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => setIsOccasionsModalOpen(true)}
+            style={{
+              padding: "8px 16px",
+              background: "#ffffff",
+              color: "#0f172a",
+              border: "1px solid #cbd5e1",
+              borderRadius: "8px",
+              fontSize: "13px",
+              fontWeight: 700,
+              cursor: "pointer",
+              boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+            }}
+          >
+            Manage occasions ({occasions.length}/20)
+          </button>
+
+          <button
+            type="button"
+            onClick={() => refresh()}
+            disabled={loading}
+            style={{
+              padding: "8px 16px",
+              background: "#ffffff",
+              color: "#475569",
+              border: "1px solid #cbd5e1",
+              borderRadius: "8px",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: loading ? "not-allowed" : "pointer",
+              boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+            }}
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {/* TABLE MISSING BANNER */}
@@ -318,76 +369,56 @@ export default function RemindersPage({
         <div
           style={{
             padding: "12px 16px",
-            borderRadius: "8px",
+            borderRadius: "10px",
             fontSize: "13px",
             fontWeight: 600,
-            background: feedbackMessage.type === "success" ? "#ecfdf5" : "#fef2f2",
-            border: `1px solid ${feedbackMessage.type === "success" ? "#a7f3d0" : "#fecaca"}`,
-            color: feedbackMessage.type === "success" ? "#047857" : "#dc2626",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            background: feedbackMessage.type === "success" ? "#ecfdf5" : "#fef2f2",
+            color: feedbackMessage.type === "success" ? "#065f46" : "#991b1b",
+            border: `1px solid ${
+              feedbackMessage.type === "success" ? "#a7f3d0" : "#fecaca"
+            }`,
           }}
         >
           <span>{feedbackMessage.text}</span>
-          <button
-            type="button"
-            onClick={() => setFeedbackMessage(null)}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "inherit",
-              fontSize: "16px",
-              cursor: "pointer",
-              padding: "0 4px",
-            }}
-          >
-            ×
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            {undoItem && (
+              <button
+                type="button"
+                onClick={handleTriggerUndo}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#047857",
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                }}
+              >
+                Undo
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setFeedbackMessage(null)}
+              style={{
+                background: "transparent",
+                border: "none",
+                fontSize: "12px",
+                color: "#64748b",
+                cursor: "pointer",
+              }}
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
-      {/* UNDO TOAST NOTIFICATION */}
-      {undoItem && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: "24px",
-            right: "24px",
-            zIndex: 1000,
-            background: "#0f172a",
-            color: "white",
-            padding: "14px 20px",
-            borderRadius: "10px",
-            boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.2)",
-            display: "flex",
-            alignItems: "center",
-            gap: "16px",
-            fontSize: "14px",
-            maxWidth: "90vw",
-          }}
-        >
-          <span>Marked as sent for {undoItem.label}</span>
-          <button
-            type="button"
-            onClick={handleUndoClick}
-            style={{
-              background: "#38bdf8",
-              color: "#0f172a",
-              border: "none",
-              borderRadius: "6px",
-              padding: "6px 12px",
-              fontWeight: 700,
-              fontSize: "12px",
-              cursor: "pointer",
-            }}
-          >
-            Undo
-          </button>
-        </div>
-      )}
-
-      {/* FILTER TABS */}
+      {/* TABS NAVIGATION */}
       <div
         style={{
           display: "flex",
@@ -400,53 +431,100 @@ export default function RemindersPage({
           onClick={() => setActiveTab("pending")}
           style={{
             padding: "10px 16px",
+            background: "none",
             border: "none",
-            background: "transparent",
-            fontSize: "14px",
-            fontWeight: 700,
-            color: activeTab === "pending" ? "#2563eb" : "#64748b",
             borderBottom: activeTab === "pending" ? "2px solid #2563eb" : "2px solid transparent",
+            color: activeTab === "pending" ? "#2563eb" : "#64748b",
+            fontWeight: activeTab === "pending" ? 700 : 500,
+            fontSize: "14px",
             cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
           }}
         >
-          Pending
+          <span>Pending</span>
+          <span
+            style={{
+              padding: "2px 8px",
+              borderRadius: "10px",
+              fontSize: "11px",
+              fontWeight: 700,
+              background: activeTab === "pending" ? "#eff6ff" : "#f1f5f9",
+              color: activeTab === "pending" ? "#2563eb" : "#64748b",
+            }}
+          >
+            {welcomePending.length + rewardPending.length + offerPending.length + totalOccasionPending}
+          </span>
         </button>
+
         <button
           type="button"
           onClick={() => setActiveTab("sent")}
           style={{
             padding: "10px 16px",
+            background: "none",
             border: "none",
-            background: "transparent",
-            fontSize: "14px",
-            fontWeight: 700,
-            color: activeTab === "sent" ? "#2563eb" : "#64748b",
             borderBottom: activeTab === "sent" ? "2px solid #2563eb" : "2px solid transparent",
+            color: activeTab === "sent" ? "#2563eb" : "#64748b",
+            fontWeight: activeTab === "sent" ? 700 : 500,
+            fontSize: "14px",
             cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
           }}
         >
-          Sent
+          <span>Sent</span>
+          <span
+            style={{
+              padding: "2px 8px",
+              borderRadius: "10px",
+              fontSize: "11px",
+              fontWeight: 700,
+              background: activeTab === "sent" ? "#eff6ff" : "#f1f5f9",
+              color: activeTab === "sent" ? "#2563eb" : "#64748b",
+            }}
+          >
+            {welcomeSent.length + rewardSent.length + offerSent.length + currentOccasionSentCount}
+          </span>
         </button>
+
         <button
           type="button"
           onClick={() => setActiveTab("history")}
           style={{
             padding: "10px 16px",
+            background: "none",
             border: "none",
-            background: "transparent",
-            fontSize: "14px",
-            fontWeight: 700,
-            color: activeTab === "history" ? "#2563eb" : "#64748b",
             borderBottom: activeTab === "history" ? "2px solid #2563eb" : "2px solid transparent",
+            color: activeTab === "history" ? "#2563eb" : "#64748b",
+            fontWeight: activeTab === "history" ? 700 : 500,
+            fontSize: "14px",
             cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
           }}
         >
-          Sent history (30 days)
+          <span>Sent history (30 days)</span>
+          <span
+            style={{
+              padding: "2px 8px",
+              borderRadius: "10px",
+              fontSize: "11px",
+              fontWeight: 700,
+              background: activeTab === "history" ? "#eff6ff" : "#f1f5f9",
+              color: activeTab === "history" ? "#2563eb" : "#64748b",
+            }}
+          >
+            {sentHistory.length}
+          </span>
         </button>
       </div>
 
       {/* =========================================================
-          SENT HISTORY VIEW (30 DAYS)
+          SENT HISTORY TAB VIEW
       ========================================================= */}
       {activeTab === "history" && (
         <div
@@ -462,16 +540,16 @@ export default function RemindersPage({
               Sent history
             </h3>
             <p style={{ margin: 0, fontSize: "13px", color: "#64748b" }}>
-              Messages marked as sent in the last 30 days.
+              Log of all customer messages recorded in the last 30 days.
             </p>
           </div>
 
           {sentHistory.length === 0 ? (
             <p style={{ color: "#64748b", fontSize: "14px", margin: "16px 0" }}>
-              No messages marked as sent in the last 30 days.
+              No messages have been sent or recorded in the last 30 days.
             </p>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               {(showAllHistory ? sentHistory : sentHistory.slice(0, 10)).map((item) => (
                 <div
                   key={item.id}
@@ -481,28 +559,40 @@ export default function RemindersPage({
                     justifyContent: "space-between",
                     padding: "12px 16px",
                     background: "#f8fafc",
-                    borderRadius: "10px",
+                    borderRadius: "8px",
                     border: "1px solid #e2e8f0",
+                    fontSize: "13px",
                     flexWrap: "wrap",
-                    gap: "12px",
+                    gap: "8px",
                   }}
                 >
                   <div>
-                    <strong style={{ fontSize: "14px", color: "#0f172a", display: "block" }}>
+                    <strong style={{ color: "#0f172a", display: "inline-block", marginRight: "8px" }}>
                       {item.customerName}
                     </strong>
-                    <span style={{ fontSize: "12px", color: "#64748b" }}>
-                      {item.customerPhone || "No phone"} &bull; {item.detailLabel}
-                    </span>
+                    <span style={{ color: "#64748b" }}>{item.customerPhone || "No phone"}</span>
+                    <div style={{ fontSize: "12px", color: "#475569", marginTop: "2px" }}>
+                      <span
+                        style={{
+                          textTransform: "capitalize",
+                          fontWeight: 600,
+                          color: "#2563eb",
+                          marginRight: "6px",
+                        }}
+                      >
+                        [{item.messageType}]
+                      </span>
+                      {item.detailLabel}
+                    </div>
                   </div>
 
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <div style={{ textAlign: "right" }}>
                     <span
                       style={{
-                        fontSize: "12px",
+                        fontSize: "11px",
                         fontWeight: 700,
-                        padding: "3px 8px",
-                        borderRadius: "12px",
+                        padding: "2px 8px",
+                        borderRadius: "10px",
                         background: "#ecfdf5",
                         color: "#059669",
                         border: "1px solid #a7f3d0",
@@ -510,30 +600,6 @@ export default function RemindersPage({
                     >
                       Sent {formatIndiaSentTime(item.sentAt)}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleMarkAsNotSent({
-                          membershipId: item.membershipId,
-                          messageType: item.messageType,
-                          refId: item.refId,
-                          customerName: item.customerName,
-                        })
-                      }
-                      disabled={isTableMissing || processingKey === `${item.membershipId}__${item.messageType}__${item.refId}`}
-                      style={{
-                        padding: "4px 10px",
-                        fontSize: "12px",
-                        fontWeight: 600,
-                        background: "#f1f5f9",
-                        color: "#475569",
-                        border: "1px solid #cbd5e1",
-                        borderRadius: "6px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Mark as not sent
-                    </button>
                   </div>
                 </div>
               ))}
@@ -602,7 +668,7 @@ export default function RemindersPage({
                   justifyContent: "space-between",
                   flexWrap: "wrap",
                   gap: "12px",
-                  marginBottom: "16px",
+                  marginBottom: "8px",
                 }}
               >
                 <div>
@@ -614,10 +680,10 @@ export default function RemindersPage({
                       color: "#0f172a",
                     }}
                   >
-                    Welcome messages ({currentWelcomeList.length})
+                    Welcome reminders ({currentWelcomeList.length})
                   </h3>
                   <p style={{ margin: 0, fontSize: "13px", color: "#64748b" }}>
-                    Members who joined in the last 7 days.
+                    New customers who joined loyalty in the last 7 days.
                   </p>
                 </div>
 
@@ -698,14 +764,14 @@ export default function RemindersPage({
               {currentWelcomeList.length === 0 ? (
                 <p style={{ color: "#64748b", fontSize: "14px", margin: 0 }}>
                   {activeTab === "pending"
-                    ? "No members joined in the last 7 days awaiting welcome message."
-                    : "No welcome messages sent yet."}
+                    ? "No pending welcome messages. All recent members have been greeted."
+                    : "No welcome messages sent in the last 7 days."}
                 </p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                   {(showAllWelcome ? currentWelcomeList : currentWelcomeList.slice(0, 10)).map(
                     (item) => {
-                      const itemKey = `${item.membershipId}__welcome__${item.refId}`;
+                      const itemKey = `${item.membershipId}__welcome__`;
                       const isProcessing = processingKey === itemKey;
                       const hasValidPhone = Boolean(item.phoneDigits);
 
@@ -716,7 +782,7 @@ export default function RemindersPage({
 
                       return (
                         <div
-                          key={item.membershipId}
+                          key={itemKey}
                           style={{
                             display: "flex",
                             alignItems: "center",
@@ -730,11 +796,14 @@ export default function RemindersPage({
                           }}
                         >
                           <div>
-                            <strong style={{ fontSize: "14px", color: "#0f172a", display: "block" }}>
+                            <strong
+                              style={{ fontSize: "14px", color: "#0f172a", display: "block" }}
+                            >
                               {item.customerName}
                             </strong>
                             <span style={{ fontSize: "12px", color: "#64748b" }}>
-                              {item.customerPhone || "No phone"}
+                              {item.customerPhone || "No phone"} &bull; Joined{" "}
+                              {formatIndiaDateOnly(item.joinedAt)}
                             </span>
                             <div style={{ marginTop: "4px" }}>
                               {item.isSent ? (
@@ -769,7 +838,14 @@ export default function RemindersPage({
                             </div>
                           </div>
 
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              flexShrink: 0,
+                            }}
+                          >
                             {!item.isSent ? (
                               <>
                                 <button
@@ -780,7 +856,7 @@ export default function RemindersPage({
                                       rawMessage: messageText,
                                       membershipId: item.membershipId,
                                       messageType: "welcome",
-                                      refId: item.refId,
+                                      refId: "",
                                       customerName: item.customerName,
                                     })
                                   }
@@ -794,7 +870,8 @@ export default function RemindersPage({
                                     borderRadius: "6px",
                                     fontSize: "12px",
                                     fontWeight: 700,
-                                    cursor: !hasValidPhone || isProcessing ? "not-allowed" : "pointer",
+                                    cursor:
+                                      !hasValidPhone || isProcessing ? "not-allowed" : "pointer",
                                   }}
                                 >
                                   {isProcessing ? "Saving..." : "Send"}
@@ -805,7 +882,7 @@ export default function RemindersPage({
                                     handleMarkAsSentOnly({
                                       membershipId: item.membershipId,
                                       messageType: "welcome",
-                                      refId: item.refId,
+                                      refId: "",
                                       customerName: item.customerName,
                                     })
                                   }
@@ -813,7 +890,7 @@ export default function RemindersPage({
                                   style={{
                                     padding: "6px 12px",
                                     background: "#ffffff",
-                                    color: "#334155",
+                                    color: "#475569",
                                     border: "1px solid #cbd5e1",
                                     borderRadius: "6px",
                                     fontSize: "12px",
@@ -831,7 +908,7 @@ export default function RemindersPage({
                                   handleMarkAsNotSent({
                                     membershipId: item.membershipId,
                                     messageType: "welcome",
-                                    refId: item.refId,
+                                    refId: "",
                                     customerName: item.customerName,
                                   })
                                 }
@@ -908,10 +985,10 @@ export default function RemindersPage({
                       color: "#0f172a",
                     }}
                   >
-                    Reward notifications ({currentRewardList.length})
+                    Reward reminders ({currentRewardList.length})
                   </h3>
                   <p style={{ margin: 0, fontSize: "13px", color: "#64748b" }}>
-                    Milestone rewards with status pending.
+                    Members who have earned an unclaimed loyalty milestone reward.
                   </p>
                 </div>
 
@@ -934,18 +1011,6 @@ export default function RemindersPage({
                   {editTemplateSection === "reward" ? "Close template" : "Edit template"}
                 </button>
               </div>
-
-              {/* Compliance note (Required) */}
-              <p
-                style={{
-                  fontSize: "12px",
-                  color: "#d97706",
-                  fontWeight: 600,
-                  margin: "0 0 16px",
-                }}
-              >
-                Message only customers who agreed to hear from you.
-              </p>
 
               {/* Template Editor Box */}
               {editTemplateSection === "reward" && (
@@ -1000,12 +1065,12 @@ export default function RemindersPage({
                 </div>
               )}
 
-              {/* Rewards Rows List */}
+              {/* Reward Rows List */}
               {currentRewardList.length === 0 ? (
                 <p style={{ color: "#64748b", fontSize: "14px", margin: 0 }}>
                   {activeTab === "pending"
-                    ? "No pending milestone rewards awaiting notification."
-                    : "No reward notifications sent yet."}
+                    ? "No pending reward reminders. All members with earned rewards have been contacted."
+                    : "No reward reminders sent yet."}
                 </p>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -1023,7 +1088,7 @@ export default function RemindersPage({
 
                       return (
                         <div
-                          key={item.rewardId}
+                          key={itemKey}
                           style={{
                             display: "flex",
                             alignItems: "center",
@@ -1037,11 +1102,16 @@ export default function RemindersPage({
                           }}
                         >
                           <div>
-                            <strong style={{ fontSize: "14px", color: "#0f172a", display: "block" }}>
+                            <strong
+                              style={{ fontSize: "14px", color: "#0f172a", display: "block" }}
+                            >
                               {item.customerName}
                             </strong>
                             <span style={{ fontSize: "12px", color: "#64748b" }}>
-                              {item.customerPhone || "No phone"} &bull; {item.rewardDescription}
+                              {item.customerPhone || "No phone"} &bull; Reward:{" "}
+                              <strong style={{ color: "#0f172a" }}>
+                                {item.rewardDescription}
+                              </strong>
                             </span>
                             <div style={{ marginTop: "4px" }}>
                               {item.isSent ? (
@@ -1076,7 +1146,14 @@ export default function RemindersPage({
                             </div>
                           </div>
 
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              flexShrink: 0,
+                            }}
+                          >
                             {!item.isSent ? (
                               <>
                                 <button
@@ -1101,7 +1178,8 @@ export default function RemindersPage({
                                     borderRadius: "6px",
                                     fontSize: "12px",
                                     fontWeight: 700,
-                                    cursor: !hasValidPhone || isProcessing ? "not-allowed" : "pointer",
+                                    cursor:
+                                      !hasValidPhone || isProcessing ? "not-allowed" : "pointer",
                                   }}
                                 >
                                   {isProcessing ? "Saving..." : "Send"}
@@ -1120,7 +1198,7 @@ export default function RemindersPage({
                                   style={{
                                     padding: "6px 12px",
                                     background: "#ffffff",
-                                    color: "#334155",
+                                    color: "#475569",
                                     border: "1px solid #cbd5e1",
                                     borderRadius: "6px",
                                     fontSize: "12px",
@@ -1428,7 +1506,7 @@ export default function RemindersPage({
                                 style={{
                                   padding: "6px 12px",
                                   background: "#ffffff",
-                                  color: "#334155",
+                                  color: "#475569",
                                   border: "1px solid #cbd5e1",
                                   borderRadius: "6px",
                                   fontSize: "12px",
@@ -1492,8 +1570,606 @@ export default function RemindersPage({
               )}
             </div>
           )}
+
+          {/* 4. OCCASIONS SECTION */}
+          <div
+            style={{
+              background: "white",
+              borderRadius: "16px",
+              border: "1px solid #e2e8f0",
+              padding: "20px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: "12px",
+                marginBottom: "8px",
+              }}
+            >
+              <div>
+                <h3
+                  style={{
+                    margin: "0 0 4px",
+                    fontSize: "16px",
+                    fontWeight: 700,
+                    color: "#0f172a",
+                  }}
+                >
+                  Occasions reminders ({currentOccasionCount})
+                </h3>
+                <p style={{ margin: 0, fontSize: "13px", color: "#64748b" }}>
+                  Festival greetings, wishes and notices ({activeOccasionGroups.length} active now).
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsOccasionsModalOpen(true)}
+                style={{
+                  padding: "6px 12px",
+                  background: "#f1f5f9",
+                  color: "#334155",
+                  border: "none",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Manage occasions
+              </button>
+            </div>
+
+            {/* Compliance note (Required) */}
+            <p
+              style={{
+                fontSize: "12px",
+                color: "#d97706",
+                fontWeight: 600,
+                margin: "0 0 16px",
+              }}
+            >
+              Message only customers who agreed to hear from you.
+            </p>
+
+            {/* If occasions table cannot be read */}
+            {isOccasionsMissing && (
+              <div
+                style={{
+                  background: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  borderRadius: "8px",
+                  padding: "12px 16px",
+                  color: "#991b1b",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  marginBottom: "16px",
+                }}
+              >
+                Occasions are not available yet.
+              </div>
+            )}
+
+            {/* ACTIVE OCCASIONS LIST (Under Pending or Sent) */}
+            {activeOccasionGroups.length === 0 ? (
+              <p style={{ color: "#64748b", fontSize: "14px", margin: 0 }}>
+                {occasions.length === 0
+                  ? "No occasions configured yet. Click 'Manage occasions' to add festival wishes or notices."
+                  : activeTab === "pending"
+                  ? "No occasions are active for reminders today. Click 'Manage occasions' to view or schedule."
+                  : "No occasion reminders sent yet."}
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                {activeOccasionGroups.map((group) => {
+                  const displayItems =
+                    activeTab === "pending" ? group.pendingItems : group.sentItems;
+                  const isExpandedAll = Boolean(showAllOccasionMembers[group.occasion.id]);
+                  const visibleItems = isExpandedAll
+                    ? displayItems
+                    : displayItems.slice(0, 10);
+
+                  const progressPercent =
+                    group.totalEligibleCount > 0
+                      ? Math.round((group.messagedCount / group.totalEligibleCount) * 100)
+                      : 0;
+
+                  return (
+                    <div
+                      key={group.occasion.id}
+                      style={{
+                        background: "#f8fafc",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "12px",
+                        padding: "16px",
+                      }}
+                    >
+                      {/* Occasion block header */}
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "flex-start",
+                          flexWrap: "wrap",
+                          gap: "8px",
+                          marginBottom: "12px",
+                        }}
+                      >
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <strong style={{ fontSize: "15px", color: "#0f172a" }}>
+                              {group.occasion.title}
+                            </strong>
+                            <span
+                              style={{
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                background: "#ecfdf5",
+                                color: "#059669",
+                                border: "1px solid #a7f3d0",
+                                borderRadius: "10px",
+                                padding: "2px 8px",
+                              }}
+                            >
+                              Date: {formatIndiaDateOnly(group.occasion.occasion_date)}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px" }}>
+                            {group.messagedCount} of {group.totalEligibleCount} members messaged
+                          </div>
+                        </div>
+
+                        {/* Progress Bar */}
+                        <div style={{ width: "160px" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              fontSize: "11px",
+                              color: "#64748b",
+                              marginBottom: "2px",
+                            }}
+                          >
+                            <span>Progress</span>
+                            <span>{progressPercent}%</span>
+                          </div>
+                          <div
+                            style={{
+                              width: "100%",
+                              height: "6px",
+                              background: "#e2e8f0",
+                              borderRadius: "3px",
+                              overflow: "hidden",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: `${progressPercent}%`,
+                                height: "100%",
+                                background: "#2563eb",
+                                transition: "width 0.3s ease",
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Members list under this occasion */}
+                      {displayItems.length === 0 ? (
+                        <p style={{ color: "#64748b", fontSize: "13px", margin: "8px 0" }}>
+                          {activeTab === "pending"
+                            ? "All eligible members have been messaged for this occasion."
+                            : "No messages sent yet for this occasion."}
+                        </p>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                          {visibleItems.map((item) => {
+                            const itemKey = `${item.membershipId}__occasion__${item.refId}`;
+                            const isProcessing = processingKey === itemKey;
+                            const hasValidPhone = Boolean(item.phoneDigits);
+
+                            // Default rendered message
+                            const defaultMessage = renderTemplate(group.occasion.message, {
+                              name: item.customerName,
+                              business: businessName,
+                              occasion: group.occasion.title,
+                            });
+
+                            // Use customized message if owner edited it before sending
+                            const activeMessage =
+                              editingMessagePerMember[itemKey] !== undefined
+                                ? editingMessagePerMember[itemKey]
+                                : defaultMessage;
+
+                            const isCustomizeOpen = Boolean(expandedCustomizePerMember[itemKey]);
+
+                            return (
+                              <div
+                                key={itemKey}
+                                style={{
+                                  background: "white",
+                                  border: "1px solid #e2e8f0",
+                                  borderRadius: "8px",
+                                  padding: "12px 14px",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: "8px",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                    flexWrap: "wrap",
+                                    gap: "10px",
+                                  }}
+                                >
+                                  <div>
+                                    <strong
+                                      style={{
+                                        fontSize: "13px",
+                                        color: "#0f172a",
+                                        display: "block",
+                                      }}
+                                    >
+                                      {item.customerName}
+                                    </strong>
+                                    <span style={{ fontSize: "12px", color: "#64748b" }}>
+                                      {item.customerPhone || "No phone"}
+                                    </span>
+                                    <div style={{ marginTop: "4px" }}>
+                                      {item.isSent ? (
+                                        <span
+                                          style={{
+                                            fontSize: "11px",
+                                            fontWeight: 700,
+                                            padding: "2px 8px",
+                                            borderRadius: "10px",
+                                            background: "#ecfdf5",
+                                            color: "#059669",
+                                            border: "1px solid #a7f3d0",
+                                          }}
+                                        >
+                                          Sent {formatIndiaSentTime(item.sentAt)}
+                                        </span>
+                                      ) : (
+                                        <span
+                                          style={{
+                                            fontSize: "11px",
+                                            fontWeight: 700,
+                                            padding: "2px 8px",
+                                            borderRadius: "10px",
+                                            background: "#fef3c7",
+                                            color: "#b45309",
+                                            border: "1px solid #fde68a",
+                                          }}
+                                        >
+                                          Not sent
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: "8px",
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    {!item.isSent ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setExpandedCustomizePerMember((prev) => ({
+                                              ...prev,
+                                              [itemKey]: !prev[itemKey],
+                                            }))
+                                          }
+                                          style={{
+                                            padding: "6px 10px",
+                                            background: isCustomizeOpen ? "#e2e8f0" : "#f1f5f9",
+                                            color: "#334155",
+                                            border: "none",
+                                            borderRadius: "6px",
+                                            fontSize: "12px",
+                                            fontWeight: 600,
+                                            cursor: "pointer",
+                                          }}
+                                        >
+                                          {isCustomizeOpen ? "Close edit" : "Customize"}
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleSendWhatsApp({
+                                              phoneDigits: item.phoneDigits,
+                                              rawMessage: activeMessage,
+                                              membershipId: item.membershipId,
+                                              messageType: "occasion",
+                                              refId: item.refId,
+                                              customerName: item.customerName,
+                                            })
+                                          }
+                                          disabled={
+                                            !hasValidPhone || isProcessing || isTableMissing
+                                          }
+                                          title={
+                                            !hasValidPhone
+                                              ? "Invalid phone number"
+                                              : "Open WhatsApp"
+                                          }
+                                          style={{
+                                            padding: "6px 14px",
+                                            background: hasValidPhone ? "#2563eb" : "#94a3b8",
+                                            color: "white",
+                                            border: "none",
+                                            borderRadius: "6px",
+                                            fontSize: "12px",
+                                            fontWeight: 700,
+                                            cursor:
+                                              !hasValidPhone || isProcessing
+                                                ? "not-allowed"
+                                                : "pointer",
+                                          }}
+                                        >
+                                          {isProcessing ? "Saving..." : "Send"}
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleMarkAsSentOnly({
+                                              membershipId: item.membershipId,
+                                              messageType: "occasion",
+                                              refId: item.refId,
+                                              customerName: item.customerName,
+                                            })
+                                          }
+                                          disabled={isProcessing || isTableMissing}
+                                          style={{
+                                            padding: "6px 12px",
+                                            background: "#ffffff",
+                                            color: "#475569",
+                                            border: "1px solid #cbd5e1",
+                                            borderRadius: "6px",
+                                            fontSize: "12px",
+                                            fontWeight: 600,
+                                            cursor: isProcessing ? "not-allowed" : "pointer",
+                                          }}
+                                        >
+                                          Mark as sent
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleMarkAsNotSent({
+                                            membershipId: item.membershipId,
+                                            messageType: "occasion",
+                                            refId: item.refId,
+                                            customerName: item.customerName,
+                                          })
+                                        }
+                                        disabled={isProcessing || isTableMissing}
+                                        style={{
+                                          padding: "6px 12px",
+                                          background: "#ffffff",
+                                          color: "#dc2626",
+                                          border: "1px solid #fecaca",
+                                          borderRadius: "6px",
+                                          fontSize: "12px",
+                                          fontWeight: 600,
+                                          cursor: isProcessing ? "not-allowed" : "pointer",
+                                        }}
+                                      >
+                                        Mark as not sent
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Expandable inline message editor for that send only */}
+                                {isCustomizeOpen && !item.isSent && (
+                                  <div
+                                    style={{
+                                      background: "#f8fafc",
+                                      padding: "10px",
+                                      borderRadius: "6px",
+                                      border: "1px solid #cbd5e1",
+                                      marginTop: "4px",
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        fontSize: "11px",
+                                        fontWeight: 700,
+                                        color: "#475569",
+                                        marginBottom: "4px",
+                                      }}
+                                    >
+                                      Edit message for {item.customerName} (this send only):
+                                    </div>
+                                    <textarea
+                                      rows={2}
+                                      maxLength={1000}
+                                      value={activeMessage}
+                                      onChange={(e) =>
+                                        setEditingMessagePerMember((prev) => ({
+                                          ...prev,
+                                          [itemKey]: e.target.value.slice(0, 1000),
+                                        }))
+                                      }
+                                      style={{
+                                        width: "100%",
+                                        padding: "6px 8px",
+                                        borderRadius: "6px",
+                                        border: "1px solid #cbd5e1",
+                                        fontSize: "12px",
+                                        boxSizing: "border-box",
+                                        fontFamily: "inherit",
+                                      }}
+                                    />
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        fontSize: "10px",
+                                        color: "#64748b",
+                                        marginTop: "2px",
+                                      }}
+                                    >
+                                      <span>Editing does not change the stored template.</span>
+                                      <span>{activeMessage.length}/1000</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {displayItems.length > 10 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setShowAllOccasionMembers((prev) => ({
+                                  ...prev,
+                                  [group.occasion.id]: !prev[group.occasion.id],
+                                }))
+                              }
+                              style={{
+                                padding: "8px 12px",
+                                background: "transparent",
+                                border: "none",
+                                color: "#2563eb",
+                                fontSize: "13px",
+                                fontWeight: 700,
+                                cursor: "pointer",
+                                textAlign: "center",
+                              }}
+                            >
+                              {isExpandedAll
+                                ? "Show less"
+                                : `Show all (${displayItems.length})`}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Past occasions collapsible section */}
+            {pastOccasions.length > 0 && (
+              <div
+                style={{
+                  marginTop: "24px",
+                  background: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "10px",
+                  padding: "14px 16px",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setExpandedPastOccasions((prev) => !prev)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    width: "100%",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: 0,
+                    textAlign: "left",
+                  }}
+                >
+                  <span style={{ fontSize: "14px", fontWeight: 700, color: "#475569" }}>
+                    Past occasions ({pastOccasions.length})
+                  </span>
+                  <span style={{ fontSize: "12px", color: "#64748b", fontWeight: 700 }}>
+                    {expandedPastOccasions ? "Hide ▲" : "Show ▼"}
+                  </span>
+                </button>
+
+                {expandedPastOccasions && (
+                  <div
+                    style={{
+                      marginTop: "12px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px",
+                    }}
+                  >
+                    {pastOccasions.map((p) => (
+                      <div
+                        key={p.occasion.id}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          padding: "10px 12px",
+                          background: "white",
+                          borderRadius: "8px",
+                          border: "1px solid #e2e8f0",
+                          fontSize: "13px",
+                          flexWrap: "wrap",
+                          gap: "6px",
+                        }}
+                      >
+                        <div>
+                          <strong style={{ color: "#0f172a", display: "inline-block", marginRight: "8px" }}>
+                            {p.occasion.title}
+                          </strong>
+                          <span style={{ fontSize: "12px", color: "#64748b" }}>
+                            Date: {formatIndiaDateOnly(p.occasion.occasion_date)}
+                          </span>
+                        </div>
+                        <span
+                          style={{
+                            fontSize: "12px",
+                            fontWeight: 600,
+                            color: "#2563eb",
+                            background: "#eff6ff",
+                            padding: "2px 8px",
+                            borderRadius: "10px",
+                          }}
+                        >
+                          {p.messagedCount} of {p.totalEligibleCount} messaged
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
+
+      {/* OCCASIONS MANAGER MODAL */}
+      <OccasionsManager
+        isOpen={isOccasionsModalOpen}
+        onClose={() => setIsOccasionsModalOpen(false)}
+        occasions={occasions}
+        businessName={businessName}
+        isOccasionsMissing={isOccasionsMissing}
+        onCreateOccasion={createOccasion}
+        onUpdateOccasion={updateOccasion}
+        onDeleteOccasion={deleteOccasion}
+      />
     </div>
   );
 }

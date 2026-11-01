@@ -53,6 +53,17 @@ export interface OfferData {
   [key: string]: any;
 }
 
+export interface OccasionData {
+  id: string;
+  business_id: string;
+  title: string;
+  message: string;
+  occasion_date: string; // YYYY-MM-DD
+  remind_days_before: number; // 0-30, default 3
+  created_at?: string | null;
+  created_by?: string | null;
+}
+
 export interface MessageLogRow {
   id?: string;
   business_id: string;
@@ -105,6 +116,36 @@ export interface OfferReminderItem {
   logRow?: MessageLogRow | null;
   isSent: boolean;
   sentAt?: string | null;
+}
+
+export interface OccasionReminderItem {
+  type: "occasion";
+  occasionId: string;
+  occasionTitle: string;
+  occasionMessage: string;
+  occasionDate: string;
+  membershipId: string;
+  customerName: string;
+  customerPhone: string;
+  phoneDigits: string | null;
+  refId: string; // occasion.id
+  logRow?: MessageLogRow | null;
+  isSent: boolean;
+  sentAt?: string | null;
+}
+
+export interface ActiveOccasionGroup {
+  occasion: OccasionData;
+  totalEligibleCount: number; // M: members with valid phone
+  messagedCount: number; // N: members with isSent === true
+  pendingItems: OccasionReminderItem[];
+  sentItems: OccasionReminderItem[];
+}
+
+export interface PastOccasionSummary {
+  occasion: OccasionData;
+  totalEligibleCount: number;
+  messagedCount: number;
 }
 
 export interface SentHistoryItem {
@@ -322,6 +363,60 @@ export function getOfferRefId(offer: OfferData): string {
 }
 
 /**
+ * Subtracts N days from a YYYY-MM-DD date string using UTC math, returning YYYY-MM-DD.
+ */
+export function subtractDaysYMD(ymd: string, days: number): string {
+  if (!ymd) return "";
+  const parts = ymd.split("-").map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return ymd;
+  const [y, m, d] = parts;
+  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() - Math.max(0, days));
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * Checks if an occasion is active now in India Standard Time.
+ * Active from (occasion_date - remind_days_before) through end of occasion_date (23:59:59 IST).
+ */
+export function isOccasionActive(
+  occasion: { occasion_date: string; remind_days_before?: number } | null | undefined,
+  now: Date = new Date()
+): boolean {
+  if (!occasion || !occasion.occasion_date) return false;
+  const todayYMD = getIndiaYMD(now);
+  const remindDays = Math.max(0, Math.min(30, Number(occasion.remind_days_before ?? 3)));
+  const startYMD = subtractDaysYMD(occasion.occasion_date, remindDays);
+  return todayYMD >= startYMD && todayYMD <= occasion.occasion_date;
+}
+
+/**
+ * Checks if an occasion is past in India Standard Time (date < today in IST).
+ */
+export function isOccasionPast(
+  occasion: { occasion_date: string } | null | undefined,
+  now: Date = new Date()
+): boolean {
+  if (!occasion || !occasion.occasion_date) return false;
+  const todayYMD = getIndiaYMD(now);
+  return todayYMD > occasion.occasion_date;
+}
+
+/**
+ * Checks if an occasion is scheduled for the future but not yet in its active reminder window.
+ */
+export function isOccasionUpcoming(
+  occasion: { occasion_date: string; remind_days_before?: number } | null | undefined,
+  now: Date = new Date()
+): boolean {
+  if (!occasion || !occasion.occasion_date) return false;
+  const todayYMD = getIndiaYMD(now);
+  const remindDays = Math.max(0, Math.min(30, Number(occasion.remind_days_before ?? 3)));
+  const startYMD = subtractDaysYMD(occasion.occasion_date, remindDays);
+  return todayYMD < startYMD;
+}
+
+/**
  * Interpolates variables into template string without ever outputting 'undefined' or 'null'.
  * Clamped to 1000 characters.
  */
@@ -332,30 +427,34 @@ export function renderTemplate(
     business?: string | null;
     reward?: string | null;
     offer?: string | null;
+    occasion?: string | null;
   }
 ): string {
   const name = variables.name?.trim() || "Customer";
   const business = variables.business?.trim() || "TAPX Business";
   const reward = variables.reward?.trim() || "Loyalty Reward";
   const offer = variables.offer?.trim() || "Special Offer";
+  const occasion = variables.occasion?.trim() || "Special Occasion";
 
   const rendered = (template || "")
     .replace(/\{name\}/gi, name)
     .replace(/\{business\}/gi, business)
     .replace(/\{reward\}/gi, reward)
-    .replace(/\{offer\}/gi, offer);
+    .replace(/\{offer\}/gi, offer)
+    .replace(/\{occasion\}/gi, occasion);
 
   return rendered.slice(0, 1000);
 }
 
 /**
- * Computes the pending and sent lists across Welcome, Rewards, and Offers,
+ * Computes the pending and sent lists across Welcome, Rewards, Offers, and Occasions,
  * as well as the 30-day sent history list.
  */
 export function computeReminders(params: {
   members: LoyaltyMemberData[];
   rewards: LoyaltyRewardData[];
   offers: OfferData[];
+  occasions?: OccasionData[];
   messageLogs: MessageLogRow[];
   now?: Date;
   normalizePhoneFn: (input: string | null | undefined) => string | null;
@@ -364,6 +463,7 @@ export function computeReminders(params: {
     members,
     rewards,
     offers,
+    occasions = [],
     messageLogs,
     now = new Date(),
     normalizePhoneFn,
@@ -528,7 +628,90 @@ export function computeReminders(params: {
   const offerSent = offerAll.filter((item) => item.isSent);
 
   // -------------------------------------------------------------
-  // 4. SENT HISTORY (Last 30 days)
+  // 4. OCCASIONS REMINDERS (Active and Past)
+  // -------------------------------------------------------------
+  const activeOccasionList = occasions.filter((o) => isOccasionActive(o, now));
+  const pastOccasionList = occasions.filter((o) => isOccasionPast(o, now));
+
+  const activeOccasionGroups: ActiveOccasionGroup[] = [];
+  let totalOccasionPending = 0;
+
+  for (const occ of activeOccasionList) {
+    const pendingItems: OccasionReminderItem[] = [];
+    const sentItems: OccasionReminderItem[] = [];
+    let totalEligible = 0;
+    let messagedCount = 0;
+
+    for (const m of members) {
+      if (!m.id) continue;
+      const { name, rawPhone, phoneDigits } = extractMemberContact(m);
+      // Only members with a valid phone are listed for occasions
+      if (!phoneDigits) continue;
+
+      totalEligible++;
+      const key = `${m.id}__occasion__${occ.id}`;
+      const logRow = logMap.get(key) || null;
+      const isSent = Boolean(logRow);
+
+      const item: OccasionReminderItem = {
+        type: "occasion",
+        occasionId: occ.id,
+        occasionTitle: occ.title,
+        occasionMessage: occ.message,
+        occasionDate: occ.occasion_date,
+        membershipId: m.id,
+        customerName: name,
+        customerPhone: rawPhone,
+        phoneDigits,
+        refId: occ.id,
+        logRow,
+        isSent,
+        sentAt: logRow?.sent_at || null,
+      };
+
+      if (isSent) {
+        messagedCount++;
+        sentItems.push(item);
+      } else {
+        pendingItems.push(item);
+      }
+    }
+
+    totalOccasionPending += pendingItems.length;
+
+    activeOccasionGroups.push({
+      occasion: occ,
+      totalEligibleCount: totalEligible,
+      messagedCount,
+      pendingItems,
+      sentItems,
+    });
+  }
+
+  // Summary for past occasions
+  const pastOccasions: PastOccasionSummary[] = [];
+  for (const occ of pastOccasionList) {
+    let totalEligible = 0;
+    let messagedCount = 0;
+    for (const m of members) {
+      if (!m.id) continue;
+      const { phoneDigits } = extractMemberContact(m);
+      if (!phoneDigits) continue;
+      totalEligible++;
+      const key = `${m.id}__occasion__${occ.id}`;
+      if (logMap.has(key)) {
+        messagedCount++;
+      }
+    }
+    pastOccasions.push({
+      occasion: occ,
+      totalEligibleCount: totalEligible,
+      messagedCount,
+    });
+  }
+
+  // -------------------------------------------------------------
+  // 5. SENT HISTORY (Last 30 days)
   // -------------------------------------------------------------
   const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
   const cutoffTime = now.getTime() - thirtyDaysMs;
@@ -551,6 +734,9 @@ export function computeReminders(params: {
     } else if (log.message_type === "offer") {
       const matchedOffer = offers.find((o) => getOfferRefId(o) === log.ref_id);
       detailLabel = matchedOffer?.title || matchedOffer?.name || log.ref_id || "Offer";
+    } else if (log.message_type === "occasion") {
+      const matchedOccasion = occasions.find((o) => o.id === log.ref_id);
+      detailLabel = matchedOccasion ? matchedOccasion.title : "Occasion deleted";
     } else {
       detailLabel = "Special Message";
     }
@@ -570,9 +756,13 @@ export function computeReminders(params: {
   sentHistory.sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
 
   // -------------------------------------------------------------
-  // Total pending count
+  // Total pending count (includes active occasions)
   // -------------------------------------------------------------
-  const totalPendingCount = welcomePending.length + rewardPending.length + offerPending.length;
+  const totalPendingCount =
+    welcomePending.length +
+    rewardPending.length +
+    offerPending.length +
+    totalOccasionPending;
 
   return {
     welcomePending,
@@ -582,6 +772,10 @@ export function computeReminders(params: {
     offerPending,
     offerSent,
     liveOffersCount: liveOffers.length,
+    activeOccasionGroups,
+    pastOccasions,
+    totalOccasionPending,
+    allOccasionsCount: occasions.length,
     sentHistory,
     totalPendingCount,
   };
