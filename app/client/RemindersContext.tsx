@@ -7,9 +7,14 @@ import {
   LoyaltyMemberData,
   LoyaltyRewardData,
   OfferData,
+  OccasionData,
+  OccasionReminderItem,
+  ActiveOccasionGroup,
+  PastOccasionSummary,
   MessageLogRow,
   computeReminders,
   DEFAULT_TEMPLATES,
+  getIndiaYMD,
   WelcomeReminderItem,
   RewardReminderItem,
   OfferReminderItem,
@@ -19,6 +24,7 @@ import {
 export interface RemindersData {
   loading: boolean;
   isTableMissing: boolean;
+  isOccasionsMissing: boolean;
   totalPendingCount: number;
   badge: string | number | undefined;
   welcomePending: WelcomeReminderItem[];
@@ -28,6 +34,10 @@ export interface RemindersData {
   offerPending: OfferReminderItem[];
   offerSent: OfferReminderItem[];
   liveOffersCount: number;
+  occasions: OccasionData[];
+  activeOccasionGroups: ActiveOccasionGroup[];
+  pastOccasions: PastOccasionSummary[];
+  totalOccasionPending: number;
   sentHistory: SentHistoryItem[];
   templates: {
     welcome: string;
@@ -35,6 +45,22 @@ export interface RemindersData {
     offer: string;
   };
   setTemplate: (type: "welcome" | "reward" | "offer", text: string) => void;
+  createOccasion: (params: {
+    title: string;
+    message: string;
+    occasion_date: string;
+    remind_days_before: number;
+  }) => Promise<{ success: boolean; error?: string; occasion?: OccasionData }>;
+  updateOccasion: (
+    id: string,
+    params: {
+      title: string;
+      message: string;
+      occasion_date: string;
+      remind_days_before: number;
+    }
+  ) => Promise<{ success: boolean; error?: string }>;
+  deleteOccasion: (id: string) => Promise<{ success: boolean; error?: string }>;
   markAsSent: (params: {
     membershipId: string;
     messageType: "welcome" | "reward" | "offer" | "occasion";
@@ -64,9 +90,11 @@ export function useRemindersData({
 }): RemindersData {
   const [loading, setLoading] = useState(true);
   const [isTableMissing, setIsTableMissing] = useState(false);
+  const [isOccasionsMissing, setIsOccasionsMissing] = useState(false);
   const [members, setMembers] = useState<LoyaltyMemberData[]>([]);
   const [rewards, setRewards] = useState<LoyaltyRewardData[]>([]);
   const [offers, setOffers] = useState<OfferData[]>([]);
+  const [occasions, setOccasions] = useState<OccasionData[]>([]);
   const [messageLogs, setMessageLogs] = useState<MessageLogRow[]>([]);
   const [nowDate, setNowDate] = useState<Date>(new Date());
 
@@ -101,48 +129,62 @@ export function useRemindersData({
       let loadedMembers: LoyaltyMemberData[] = [];
       if (hasLoyalty) {
         try {
-          const { data: rpcMembers, error: rpcErr } = await supabase.rpc(
-            "get_tapx_loyalty_members",
-            { p_business_id: businessId }
-          );
+          const { data: memberData, error: memberErr } = await supabase
+            .from("loyalty_memberships")
+            .select(`
+              id,
+              customer_id,
+              visits,
+              redemption_count,
+              reward_claimed,
+              created_at,
+              updated_at,
+              customer:customers(name, phone)
+            `)
+            .eq("business_id", businessId)
+            .order("visits", { ascending: false });
 
-          if (!rpcErr && Array.isArray(rpcMembers)) {
-            loadedMembers = rpcMembers;
-          } else {
-            const { data: memberData } = await supabase
-              .from("loyalty_memberships")
-              .select(
-                "id, customer_id, visits, redemption_count, reward_claimed, created_at, updated_at, customer:customers(name, phone)"
-              )
-              .eq("business_id", businessId)
-              .order("updated_at", { ascending: false });
-
-            if (memberData) loadedMembers = memberData as unknown as LoyaltyMemberData[];
+          if (memberErr) {
+            console.error("Error loading loyalty members for reminders:", memberErr);
+          } else if (memberData) {
+            loadedMembers = memberData as LoyaltyMemberData[];
           }
         } catch (err) {
-          console.error("Error loading loyalty members for reminders:", err);
+          console.error("Error in members query:", err);
         }
       }
 
-      // 2. Fetch Rewards if loyalty is enabled
+      // 2. Fetch Unclaimed / Pending Rewards if loyalty is enabled
       let loadedRewards: LoyaltyRewardData[] = [];
       if (hasLoyalty) {
         try {
-          const { data: rewardData } = await supabase
+          const { data: rewardData, error: rewardErr } = await supabase
             .from("loyalty_rewards")
-            .select(
-              "id, business_id, customer_id, membership_id, visit_count_at_reward, reward_description, status, created_at, customer:customers(name, phone)"
-            )
+            .select(`
+              id,
+              business_id,
+              membership_id,
+              visit_count_at_reward,
+              reward_description,
+              status,
+              created_at,
+              customer:customers(name, phone)
+            `)
             .eq("business_id", businessId)
+            .eq("status", "pending")
             .order("created_at", { ascending: false });
 
-          if (rewardData) loadedRewards = rewardData as unknown as LoyaltyRewardData[];
+          if (rewardErr) {
+            console.error("Error loading loyalty rewards for reminders:", rewardErr);
+          } else if (rewardData) {
+            loadedRewards = rewardData as LoyaltyRewardData[];
+          }
         } catch (err) {
-          console.error("Error loading loyalty rewards for reminders:", err);
+          console.error("Error in rewards query:", err);
         }
       }
 
-      // 3. Fetch Offers if offers is enabled
+      // 3. Fetch Offers from module configs
       let loadedOffers: OfferData[] = [];
       if (hasOffers) {
         try {
@@ -171,9 +213,9 @@ export function useRemindersData({
 
         if (logErr) {
           console.warn("tapx_message_log read note:", logErr.message || logErr);
-          // If table doesn't exist or RLS denies
           if (
             logErr.code === "42P01" ||
+            logErr.code === "42501" ||
             logErr.message?.includes("does not exist") ||
             logErr.code === "PGRST204"
           ) {
@@ -188,9 +230,38 @@ export function useRemindersData({
         setIsTableMissing(true);
       }
 
+      // 5. Fetch Occasions from tapx_occasions
+      let loadedOccasions: OccasionData[] = [];
+      try {
+        const { data: occData, error: occErr } = await supabase
+          .from("tapx_occasions")
+          .select("id, business_id, title, message, occasion_date, remind_days_before, created_at, created_by")
+          .eq("business_id", businessId)
+          .order("occasion_date", { ascending: true });
+
+        if (occErr) {
+          console.warn("tapx_occasions read note:", occErr.message || occErr);
+          if (
+            occErr.code === "42P01" ||
+            occErr.code === "42501" ||
+            occErr.message?.includes("does not exist") ||
+            occErr.code === "PGRST204"
+          ) {
+            setIsOccasionsMissing(true);
+          }
+        } else if (occData) {
+          loadedOccasions = occData as OccasionData[];
+          setIsOccasionsMissing(false);
+        }
+      } catch (err: any) {
+        console.error("Error reading tapx_occasions:", err?.message || err);
+        setIsOccasionsMissing(true);
+      }
+
       setMembers(loadedMembers);
       setRewards(loadedRewards);
       setOffers(loadedOffers);
+      setOccasions(loadedOccasions);
       setMessageLogs(loadedLogs);
       setNowDate(new Date());
     } finally {
@@ -254,6 +325,16 @@ export function useRemindersData({
         },
         triggerDebouncedLoad
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "tapx_occasions",
+          filter: `business_id=eq.${businessId}`,
+        },
+        triggerDebouncedLoad
+      )
       .subscribe();
 
     // 60-second fallback polling interval in case realtime websocket connection drops
@@ -266,7 +347,6 @@ export function useRemindersData({
     // Midnight rollover timer in India Time (Asia/Kolkata)
     // Recalculates reminders right after midnight IST
     const now = new Date();
-    // Current IST hours/minutes
     const istOffset = 5.5 * 60 * 60 * 1000;
     const nowIST = new Date(now.getTime() + istOffset);
     const msUntilMidnightIST =
@@ -292,6 +372,198 @@ export function useRemindersData({
       supabase.removeChannel(channel);
     };
   }, [businessId, hasLoyalty, hasOffers, loadData]);
+
+  // Create an occasion
+  const createOccasion = useCallback(
+    async (params: {
+      title: string;
+      message: string;
+      occasion_date: string;
+      remind_days_before: number;
+    }): Promise<{ success: boolean; error?: string; occasion?: OccasionData }> => {
+      if (!businessId) {
+        return { success: false, error: "Business ID is required." };
+      }
+      if (isOccasionsMissing) {
+        return { success: false, error: "Occasions are not available yet." };
+      }
+      if (occasions.length >= 20) {
+        return {
+          success: false,
+          error: "Maximum limit of 20 occasions reached. Please delete an older occasion first.",
+        };
+      }
+
+      const title = params.title.trim();
+      if (!title || title.length > 80) {
+        return { success: false, error: "Title is required (1-80 characters)." };
+      }
+
+      const message = params.message.trim();
+      if (!message || message.length > 1000) {
+        return { success: false, error: "Message is required (1-1000 characters)." };
+      }
+
+      const occasion_date = params.occasion_date.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(occasion_date)) {
+        return { success: false, error: "Invalid occasion date format (YYYY-MM-DD)." };
+      }
+
+      const todayIST = getIndiaYMD(new Date());
+      if (occasion_date < todayIST) {
+        return { success: false, error: "Occasion date cannot be in the past." };
+      }
+
+      const remind_days_before = Math.max(
+        0,
+        Math.min(30, Math.floor(Number(params.remind_days_before ?? 3)))
+      );
+
+      try {
+        const { data, error } = await supabase
+          .from("tapx_occasions")
+          .insert({
+            business_id: businessId,
+            title,
+            message,
+            occasion_date,
+            remind_days_before,
+          })
+          .select()
+          .single();
+
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          setOccasions((prev) => {
+            const updated = [...prev, data as OccasionData];
+            updated.sort((a, b) => (a.occasion_date || "").localeCompare(b.occasion_date || ""));
+            return updated;
+          });
+        }
+        return { success: true, occasion: data as OccasionData };
+      } catch (err: any) {
+        console.error("Error creating occasion:", err?.message || err);
+        return {
+          success: false,
+          error: err?.message || "Failed to create occasion.",
+        };
+      }
+    },
+    [businessId, isOccasionsMissing, occasions.length]
+  );
+
+  // Update an occasion
+  const updateOccasion = useCallback(
+    async (
+      id: string,
+      params: {
+        title: string;
+        message: string;
+        occasion_date: string;
+        remind_days_before: number;
+      }
+    ): Promise<{ success: boolean; error?: string }> => {
+      if (!businessId) {
+        return { success: false, error: "Business ID is required." };
+      }
+      if (isOccasionsMissing) {
+        return { success: false, error: "Occasions are not available yet." };
+      }
+
+      const title = params.title.trim();
+      if (!title || title.length > 80) {
+        return { success: false, error: "Title is required (1-80 characters)." };
+      }
+
+      const message = params.message.trim();
+      if (!message || message.length > 1000) {
+        return { success: false, error: "Message is required (1-1000 characters)." };
+      }
+
+      const occasion_date = params.occasion_date.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(occasion_date)) {
+        return { success: false, error: "Invalid occasion date format (YYYY-MM-DD)." };
+      }
+
+      const remind_days_before = Math.max(
+        0,
+        Math.min(30, Math.floor(Number(params.remind_days_before ?? 3)))
+      );
+
+      try {
+        const { data, error } = await supabase
+          .from("tapx_occasions")
+          .update({
+            title,
+            message,
+            occasion_date,
+            remind_days_before,
+          })
+          .eq("id", id)
+          .eq("business_id", businessId)
+          .select()
+          .single();
+
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          setOccasions((prev) =>
+            prev
+              .map((o) => (o.id === id ? (data as OccasionData) : o))
+              .sort((a, b) => (a.occasion_date || "").localeCompare(b.occasion_date || ""))
+          );
+        }
+        return { success: true };
+      } catch (err: any) {
+        console.error("Error updating occasion:", err?.message || err);
+        return {
+          success: false,
+          error: err?.message || "Failed to update occasion.",
+        };
+      }
+    },
+    [businessId, isOccasionsMissing]
+  );
+
+  // Delete an occasion
+  const deleteOccasion = useCallback(
+    async (id: string): Promise<{ success: boolean; error?: string }> => {
+      if (!businessId) {
+        return { success: false, error: "Business ID is required." };
+      }
+      if (isOccasionsMissing) {
+        return { success: false, error: "Occasions are not available yet." };
+      }
+
+      // Note: Sent log rows in tapx_message_log are preserved. They will show as 'Occasion deleted' in Sent history.
+      try {
+        const { error } = await supabase
+          .from("tapx_occasions")
+          .delete()
+          .eq("id", id)
+          .eq("business_id", businessId);
+
+        if (error) {
+          throw error;
+        }
+
+        setOccasions((prev) => prev.filter((o) => o.id !== id));
+        return { success: true };
+      } catch (err: any) {
+        console.error("Error deleting occasion:", err?.message || err);
+        return {
+          success: false,
+          error: err?.message || "Failed to delete occasion.",
+        };
+      }
+    },
+    [businessId, isOccasionsMissing]
+  );
 
   // Mark a reminder message as sent (Inserts log row; handles 23505 unique conflict safely)
   const markAsSent = useCallback(
@@ -418,6 +690,7 @@ export function useRemindersData({
     members,
     rewards,
     offers,
+    occasions,
     messageLogs,
     now: nowDate,
     normalizePhoneFn: normalizePhone,
@@ -433,6 +706,7 @@ export function useRemindersData({
   return {
     loading,
     isTableMissing,
+    isOccasionsMissing,
     totalPendingCount: computed.totalPendingCount,
     badge,
     welcomePending: computed.welcomePending,
@@ -442,9 +716,16 @@ export function useRemindersData({
     offerPending: computed.offerPending,
     offerSent: computed.offerSent,
     liveOffersCount: computed.liveOffersCount,
+    occasions,
+    activeOccasionGroups: computed.activeOccasionGroups,
+    pastOccasions: computed.pastOccasions,
+    totalOccasionPending: computed.totalOccasionPending,
     sentHistory: computed.sentHistory,
     templates,
     setTemplate,
+    createOccasion,
+    updateOccasion,
+    deleteOccasion,
     markAsSent,
     markAsNotSent,
     refresh: loadData,
