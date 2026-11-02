@@ -1084,6 +1084,23 @@ function Menu({
       title="Digital Menu"
       description="Create a branded, easy-to-browse menu with your own categories and items."
     >
+      <div style={{ marginBottom: "20px" }}>
+        <label className="field">
+          <span className="field-label">How customers open the menu</span>
+          <select
+            value={config.menu_presentation === "full" ? "full" : "button"}
+            onChange={(event) =>
+              onChange({
+                ...config,
+                menu_presentation: event.target.value,
+              })
+            }
+          >
+            <option value="button">A button on the tap page (recommended)</option>
+            <option value="full">Full page experience</option>
+          </select>
+        </label>
+      </div>
       <div className="menu-builder">
         <div className="menu-builder-intro">
           <div>
@@ -2058,6 +2075,21 @@ function TableOrdering({
       title="Table Ordering"
       description="Configure table-based ordering for restaurants and cafés."
     >
+      <label className="field" style={{ marginBottom: "16px" }}>
+        <span className="field-label">How customers open the menu</span>
+        <select
+          value={config.menu_presentation === "full" ? "full" : "button"}
+          onChange={(event) =>
+            onChange({
+              ...config,
+              menu_presentation: event.target.value,
+            })
+          }
+        >
+          <option value="button">A button on the tap page (recommended)</option>
+          <option value="full">Full page experience</option>
+        </select>
+      </label>
       <Field
         label="Number of tables"
         placeholder="e.g. 20"

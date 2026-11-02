@@ -1838,6 +1838,7 @@ export default function ClientPortalPage() {
               business={business}
               email={currentUserEmail}
               hasOnlineOrdering={hasOnlineOrdering}
+              hasDiningMenu={hasMenu || hasOrders}
               moduleConfigs={moduleConfigs}
               features={features}
               onUpdateBusiness={(updated) => setBusiness(updated)}
@@ -5239,6 +5240,7 @@ function SettingsPage({
   business,
   email,
   hasOnlineOrdering,
+  hasDiningMenu,
   moduleConfigs,
   features,
   onUpdateBusiness,
@@ -5246,6 +5248,7 @@ function SettingsPage({
   business: Business;
   email: string;
   hasOnlineOrdering?: boolean;
+  hasDiningMenu?: boolean;
   moduleConfigs?: ModuleConfig[];
   features?: Feature[];
   onUpdateBusiness?: (updated: Business) => void;
@@ -5267,6 +5270,7 @@ function SettingsPage({
 
   const [onlineOrderingLinks, setOnlineOrderingLinks] = useState<OnlineOrderingLink[]>([]);
   const [onlineOrderingFeatureId, setOnlineOrderingFeatureId] = useState<string | null>(null);
+  const [menuPresentation, setMenuPresentation] = useState<"button" | "full">("button");
 
   const [saving, setSaving] = useState(false);
   const [savedBanner, setSavedBanner] = useState(false);
@@ -5315,6 +5319,31 @@ function SettingsPage({
     );
     if (feat) {
       setOnlineOrderingFeatureId(feat.id);
+    }
+
+    const diningRow = (moduleConfigs || []).find(
+      (m: any) =>
+        normalizeKey(m.module_key) === "digital_menu" ||
+        normalizeKey(m.module_key) === "table_ordering"
+    );
+    if (diningRow?.config?.menu_presentation === "full") {
+      setMenuPresentation("full");
+    } else if (diningRow?.config?.menu_presentation === "button") {
+      setMenuPresentation("button");
+    } else {
+      supabase
+        .from("business_module_configs")
+        .select("config, module_key")
+        .eq("business_id", business.id)
+        .in("module_key", ["digital_menu", "table_ordering"])
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            const hasFull = data.some(
+              (row: any) => row.config?.menu_presentation === "full"
+            );
+            setMenuPresentation(hasFull ? "full" : "button");
+          }
+        });
     }
   }, [business, moduleConfigs, features]);
 
@@ -5405,6 +5434,50 @@ function SettingsPage({
               status: "active",
             });
           if (cfgErr) throw cfgErr;
+        }
+      }
+
+      if (hasDiningMenu) {
+        const { data: diningRows } = await supabase
+          .from("business_module_configs")
+          .select("id, module_key, feature_id, config")
+          .eq("business_id", business.id)
+          .in("module_key", ["digital_menu", "table_ordering"]);
+
+        if (diningRows && diningRows.length > 0) {
+          for (const row of diningRows) {
+            const existingConfig =
+              row.config && typeof row.config === "object" ? row.config : {};
+            const updatedConfig = {
+              ...existingConfig,
+              menu_presentation: menuPresentation,
+            };
+            const { error: updateErr } = await supabase
+              .from("business_module_configs")
+              .update({
+                config: updatedConfig,
+                status: "active",
+              })
+              .eq("id", row.id);
+            if (updateErr) throw updateErr;
+          }
+        } else {
+          const diningFeats = (features || []).filter((f) => {
+            const k = normalizeKey(f.feature_key);
+            return k === "digital_menu" || k === "table_ordering";
+          });
+          for (const feat of diningFeats) {
+            const { error: insertErr } = await supabase
+              .from("business_module_configs")
+              .insert({
+                business_id: business.id,
+                feature_id: feat.id,
+                module_key: feat.feature_key,
+                config: { menu_presentation: menuPresentation },
+                status: "active",
+              });
+            if (insertErr) throw insertErr;
+          }
         }
       }
 
@@ -5659,6 +5732,48 @@ function SettingsPage({
             <input type="text" disabled value={email || "Authenticated account"} />
           </div>
         </div>
+
+        {/* PANEL: MENU PRESENTATION */}
+        {hasDiningMenu && (
+          <div className="settings-panel">
+            <div className="settings-heading">
+              <div>
+                <h3>Digital Menu & Dining</h3>
+                <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#64748b" }}>
+                  Choose how the menu appears to customers tapping your device.
+                </p>
+              </div>
+              <span>MENU</span>
+            </div>
+
+            <div className="input-group">
+              <label>How customers open the menu</label>
+              <select
+                value={menuPresentation}
+                onChange={(e) =>
+                  setMenuPresentation(e.target.value as "button" | "full")
+                }
+              >
+                <option value="button">
+                  A button on the tap page (recommended)
+                </option>
+                <option value="full">Full page experience</option>
+              </select>
+              <span
+                style={{
+                  fontSize: "11px",
+                  color: "#64748b",
+                  marginTop: "4px",
+                  display: "block",
+                }}
+              >
+                {menuPresentation === "button"
+                  ? "Customers see your standard tap page with review, social links, and a card to open the dining menu."
+                  : "The tap page opens directly into the full dining & ordering screen."}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* PANEL 5: ORDER ONLINE */}
         {(hasOnlineOrdering || onlineOrderingLinks.length > 0) && (
