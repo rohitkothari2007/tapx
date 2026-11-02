@@ -4,6 +4,10 @@ import { useEffect, useState, type CSSProperties } from "react";
 import RestaurantExperience, {
   type RestaurantExperienceProps,
 } from "./RestaurantExperience";
+import {
+  parseStandTableNumber,
+  getDiningCardSubtitle,
+} from "../lib/tableNumber";
 
 function UtensilsIcon({ size = 22 }: { size?: number }) {
   return (
@@ -29,6 +33,7 @@ function UtensilsIcon({ size = 22 }: { size?: number }) {
 
 export type DiningLayerWrapperProps = RestaurantExperienceProps & {
   tableOrderingEnabled?: boolean;
+  tableCount?: number;
 };
 
 export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
@@ -36,6 +41,7 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
     business,
     device,
     tableOrderingEnabled,
+    tableCount,
     onTrackAction,
     onOpenFeedback,
     onOpenLoyalty,
@@ -130,11 +136,9 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
     }
   };
 
+  const standTableNum = parseStandTableNumber(device.label, device.location);
   const cardTitle = tableOrderingEnabled ? "Menu & order" : "View menu";
-  const cardSubtitle =
-    device.location && device.location.trim()
-      ? `Order from ${device.location.trim()}`
-      : "Browse and order";
+  const cardSubtitle = getDiningCardSubtitle(Boolean(tableOrderingEnabled), standTableNum);
 
   return (
     <>
@@ -191,6 +195,9 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
           {hasEverOpened && (
             <RestaurantExperience
               {...props}
+              initialTab="menu"
+              tableOrderingEnabled={tableOrderingEnabled}
+              tableCount={tableCount}
               onOpenFeedback={
                 onOpenFeedback
                   ? () => {

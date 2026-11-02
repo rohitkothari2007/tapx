@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { parseStandTableNumber } from "../lib/tableNumber";
 import { InstagramIcon, WhatsAppIcon } from "./BrandIcons";
 import UpiPaymentModal from "./UpiPaymentModal";
 
@@ -26,6 +27,7 @@ export type RestaurantExperienceProps = {
     id: string;
     device_code: string;
     location: string | null;
+    label?: string | null;
   };
   categories: Array<{
     id: string;
@@ -34,14 +36,17 @@ export type RestaurantExperienceProps = {
   }>;
   items: Array<{
     id: string;
-    categoryId: string;
+    categoryId?: string;
+    category_id?: string;
     name: string;
-    price?: string;
+    price?: string | number;
     description?: string;
     imageUrl?: string;
-    dietary?: "veg" | "non_veg" | "egg" | "none";
+    image_url?: string;
+    dietary?: "veg" | "non_veg" | "egg" | "none" | "vegan";
     popular?: boolean;
     available?: boolean;
+    badge?: string;
   }>;
   offers?: Array<{
     id: string;
@@ -51,6 +56,8 @@ export type RestaurantExperienceProps = {
     discount?: string;
   }>;
   initialTab?: "home" | "menu" | "search" | "orders";
+  tableOrderingEnabled?: boolean;
+  tableCount?: number;
   loyaltyEnabled?: boolean;
   feedbackEnabled?: boolean;
   onOpenFeedback?: () => void;
@@ -86,7 +93,9 @@ export default function RestaurantExperience({
   categories,
   items,
   offers = [],
-  initialTab = "home",
+  initialTab = "menu",
+  tableOrderingEnabled = false,
+  tableCount,
   loyaltyEnabled,
   feedbackEnabled,
   onOpenFeedback,
@@ -98,15 +107,21 @@ export default function RestaurantExperience({
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
 
+  const standTableNum = useMemo(
+    () => parseStandTableNumber(device.label, device.location),
+    [device.label, device.location]
+  );
+
   // Cart state
   const [cart, setCart] = useState<Record<string, number>>({});
   const [showCheckoutSheet, setShowCheckoutSheet] = useState(false);
+  const [showTablePicker, setShowTablePicker] = useState(false);
+  const [tablePickerInput, setTablePickerInput] = useState("");
   const [tableNumber, setTableNumber] = useState<string>(() => {
-    if (device.location) {
-      const match = device.location.replace(/\D/g, "");
-      if (match) return match;
+    if (standTableNum !== null && standTableNum > 0) {
+      return String(standTableNum);
     }
-    return "1";
+    return "";
   });
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -234,8 +249,8 @@ export default function RestaurantExperience({
   // Place Table Order
   const handlePlaceOrder = async () => {
     setOrderError("");
-    if (!tableNumber) {
-      setOrderError("Please enter your table number.");
+    if (!tableNumber || !tableNumber.trim()) {
+      setShowTablePicker(true);
       return;
     }
     if (!customerName.trim()) {
@@ -382,24 +397,48 @@ export default function RestaurantExperience({
           </div>
           <div>
             <h1 style={styles.businessNameHeading}>{business.name}</h1>
-            <div style={styles.tableBadgeSubtitle}>
-              Table {tableNumber || "1"} • Dine In
-            </div>
+            {tableOrderingEnabled && (
+              <div style={styles.tableBadgeSubtitle}>
+                {tableNumber ? `Table ${tableNumber} • Dine In` : "Dine In"}
+              </div>
+            )}
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("search")}
-          style={{
-            ...styles.iconButton,
-            background: activeTab === "search" ? "#111827" : "#f1f5f9",
-            color: activeTab === "search" ? "#ffffff" : "#334155",
-          }}
-          title="Search menu"
-        >
-          🔍
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          {tableOrderingEnabled && (business.whatsapp_number || business.phone) && (
+            <a
+              href={
+                business.whatsapp_number
+                  ? `https://wa.me/${business.whatsapp_number.replace(/\D/g, "")}?text=${encodeURIComponent(
+                      tableNumber ? `Table ${tableNumber} needs help` : "A customer needs help"
+                    )}`
+                  : `tel:${business.phone}`
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => onTrackAction && onTrackAction("whatsapp_click")}
+              style={styles.headerCallStaffBtn}
+              title="Call Staff"
+            >
+              <WhatsAppIcon size={14} />
+              <span>Call Staff</span>
+            </a>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("search")}
+            style={{
+              ...styles.iconButton,
+              background: activeTab === "search" ? "#111827" : "#f1f5f9",
+              color: activeTab === "search" ? "#ffffff" : "#334155",
+            }}
+            title="Search menu"
+          >
+            🔍
+          </button>
+        </div>
       </header>
 
       {/* ---------------------------------------------------- */}
@@ -407,7 +446,7 @@ export default function RestaurantExperience({
       {/* ---------------------------------------------------- */}
       <main style={styles.contentBody}>
         {/* --- TAB 1: HOME --- */}
-        {activeTab === "home" && (
+        {/* Clean dining layer: bypass hero/offers/review entries */ false && activeTab === "home" && (
           <div style={styles.tabContent}>
             {/* HERO RESTAURANT BANNER */}
             <div style={styles.heroCard}>
@@ -564,7 +603,7 @@ export default function RestaurantExperience({
         )}
 
         {/* --- TAB 2: MENU --- */}
-        {activeTab === "menu" && (
+        {(activeTab === "menu" || activeTab === "home") && (
           <div style={styles.tabContent}>
             {/* SEARCH BAR */}
             <div style={styles.searchBoxWrapper}>
@@ -678,35 +717,39 @@ export default function RestaurantExperience({
                           </div>
                         )}
 
-                        <div style={styles.addBtnContainer}>
-                          {qty > 0 ? (
-                            <div style={styles.qtyStepper}>
+                        {tableOrderingEnabled && (
+                          <div style={styles.addBtnContainer}>
+                            {qty > 0 ? (
+                              <div style={styles.qtyStepper}>
+                                <button
+                                  type="button"
+                                  onClick={() => removeFromCart(dish.id)}
+                                  style={styles.stepperBtn}
+                                >
+                                  −
+                                </button>
+                                <span style={styles.stepperCount}>{qty}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => addToCart(dish.id)}
+                                  style={styles.stepperBtn}
+                                >
+                                  +
+                                </button>
+                              </div>
+                            ) : (
                               <button
                                 type="button"
-                                onClick={() => removeFromCart(dish.id)}
-                                style={styles.stepperBtn}
+                                onClick={() => {
+                                  addToCart(dish.id);
+                                }}
+                                style={styles.addButton}
                               >
-                                −
+                                ADD +
                               </button>
-                              <span style={styles.stepperCount}>{qty}</span>
-                              <button
-                                type="button"
-                                onClick={() => addToCart(dish.id)}
-                                style={styles.stepperBtn}
-                              >
-                                +
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => addToCart(dish.id)}
-                              style={styles.addButton}
-                            >
-                              ADD +
-                            </button>
-                          )}
-                        </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -951,7 +994,7 @@ export default function RestaurantExperience({
       {/* ---------------------------------------------------- */}
       {/* 3. FLOATING ACTION BUBBLE (FAB) */}
       {/* ---------------------------------------------------- */}
-      {hasActiveOrder && activeTab !== "orders" && (
+      {tableOrderingEnabled && hasActiveOrder && activeTab !== "orders" && (
         <button
           type="button"
           onClick={() => setActiveTab("orders")}
@@ -966,7 +1009,7 @@ export default function RestaurantExperience({
       {/* ---------------------------------------------------- */}
       {/* 4. STICKY CART BAR (WHEN ITEMS IN CART) */}
       {/* ---------------------------------------------------- */}
-      {cartCount > 0 && (
+      {tableOrderingEnabled && cartCount > 0 && (
         <div style={styles.stickyCartBarWrapper}>
           <div style={styles.stickyCartBar}>
             <div>
@@ -988,7 +1031,7 @@ export default function RestaurantExperience({
       {/* ---------------------------------------------------- */}
       {/* 5. CHECKOUT / PLACE ORDER SHEET MODAL */}
       {/* ---------------------------------------------------- */}
-      {showCheckoutSheet && (
+      {tableOrderingEnabled && showCheckoutSheet && (
         <div style={styles.modalOverlay}>
           <div style={styles.checkoutSheet}>
             <div style={styles.sheetHeader}>
@@ -1102,70 +1145,124 @@ export default function RestaurantExperience({
         </div>
       )}
 
+      {/* Which table are you at? Modal */}
+      {tableOrderingEnabled && showTablePicker && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.tablePickerModal}>
+            <div style={styles.tablePickerHeader}>
+              <div>
+                <h3 style={styles.tablePickerTitle}>Which table are you at?</h3>
+                <p style={styles.tablePickerSubtitle}>
+                  Please choose or enter your table number to complete your order.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTablePicker(false)}
+                style={styles.closeSheetBtn}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.tablePickerBody}>
+              {tableCount && tableCount > 0 && tableCount <= 50 ? (
+                <div style={styles.tablePillGrid}>
+                  {Array.from({ length: tableCount }, (_, i) => i + 1).map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => {
+                        setTableNumber(String(num));
+                        setShowTablePicker(false);
+                        setOrderError("");
+                        if (cartCount > 0) setShowCheckoutSheet(true);
+                      }}
+                      style={{
+                        ...styles.tablePillBtn,
+                        background: tableNumber === String(num) ? "#111827" : "#f1f5f9",
+                        color: tableNumber === String(num) ? "#ffffff" : "#0f172a",
+                        borderColor: tableNumber === String(num) ? "#111827" : "#cbd5e1",
+                      }}
+                    >
+                      Table {num}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  <label style={styles.inputLabel}>
+                    Table Number <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={tableCount || 999}
+                    placeholder="e.g. 5"
+                    value={tablePickerInput}
+                    onChange={(e) => setTablePickerInput(e.target.value)}
+                    style={styles.sheetInput}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const parsed = parseInt(tablePickerInput, 10);
+                      if (!parsed || parsed <= 0) {
+                        setOrderError("Please enter a valid table number.");
+                        return;
+                      }
+                      setTableNumber(String(parsed));
+                      setShowTablePicker(false);
+                      setOrderError("");
+                      if (cartCount > 0) setShowCheckoutSheet(true);
+                    }}
+                    style={styles.confirmTableBtn}
+                  >
+                    Confirm Table
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ---------------------------------------------------- */}
       {/* 6. FIXED BOTTOM NAVIGATION DOCK (4 TABS) */}
       {/* ---------------------------------------------------- */}
-      <nav style={styles.bottomNavDock}>
-        {/* Tab 1: Home */}
-        <button
-          type="button"
-          onClick={() => setActiveTab("home")}
-          style={{
-            ...styles.navTabBtn,
-            background: activeTab === "home" ? "#111827" : "transparent",
-            color: activeTab === "home" ? "#ffffff" : "#64748b",
-          }}
-        >
-          <span style={styles.navIcon}>🏠</span>
-          <span style={styles.navLabel}>Home</span>
-        </button>
+      {tableOrderingEnabled && (
+        <nav style={styles.bottomNavDock}>
+          {/* Tab 1: Menu */}
+          <button
+            type="button"
+            onClick={() => setActiveTab("menu")}
+            style={{
+              ...styles.navTabBtn,
+              background: activeTab === "menu" ? "#111827" : "transparent",
+              color: activeTab === "menu" ? "#ffffff" : "#64748b",
+            }}
+          >
+            <span style={styles.navIcon}>🍴</span>
+            <span style={styles.navLabel}>Menu</span>
+          </button>
 
-        {/* Tab 2: Menu */}
-        <button
-          type="button"
-          onClick={() => setActiveTab("menu")}
-          style={{
-            ...styles.navTabBtn,
-            background: activeTab === "menu" ? "#111827" : "transparent",
-            color: activeTab === "menu" ? "#ffffff" : "#64748b",
-          }}
-        >
-          <span style={styles.navIcon}>🍴</span>
-          <span style={styles.navLabel}>Menu</span>
-        </button>
-
-        {/* Tab 3: Search */}
-        <button
-          type="button"
-          onClick={() => setActiveTab("search")}
-          style={{
-            ...styles.navTabBtn,
-            background: activeTab === "search" ? "#111827" : "transparent",
-            color: activeTab === "search" ? "#ffffff" : "#64748b",
-          }}
-        >
-          <span style={styles.navIcon}>🔍</span>
-          <span style={styles.navLabel}>Search</span>
-        </button>
-
-        {/* Tab 4: My Orders */}
-        <button
-          type="button"
-          onClick={() => setActiveTab("orders")}
-          style={{
-            ...styles.navTabBtn,
-            background: activeTab === "orders" ? "#111827" : "transparent",
-            color: activeTab === "orders" ? "#ffffff" : "#64748b",
-            position: "relative",
-          }}
-        >
-          <span style={styles.navIcon}>📋</span>
-          <span style={styles.navLabel}>My Orders</span>
-          {hasActiveOrder && (
-            <span style={styles.navActiveDot} />
-          )}
-        </button>
-      </nav>
+          {/* Tab 2: My Orders */}
+          <button
+            type="button"
+            onClick={() => setActiveTab("orders")}
+            style={{
+              ...styles.navTabBtn,
+              background: activeTab === "orders" ? "#111827" : "transparent",
+              color: activeTab === "orders" ? "#ffffff" : "#64748b",
+              position: "relative",
+            }}
+          >
+            <span style={styles.navIcon}>📋</span>
+            <span style={styles.navLabel}>My Orders</span>
+            {hasActiveOrder && <span style={styles.navActiveDot} />}
+          </button>
+        </nav>
+      )}
 
       <UpiPaymentModal
         isOpen={isPaymentModalOpen}

@@ -1,5 +1,7 @@
 "use client";
 
+import LiveOrdersPanel from "./LiveOrdersPanel";
+
 import {
   useCallback,
   useEffect,
@@ -1701,6 +1703,10 @@ export default function ClientPortalPage() {
               appointments={appointments}
               todayAppointments={todayAppointments}
               pendingAppointments={pendingAppointments}
+              orderItems={orderItems}
+              updateOrderStatus={updateOrderStatus}
+              updatingOrderId={updatingOrderId}
+              hasTableOrdering={hasOrders}
             />
           )}
 
@@ -2545,6 +2551,10 @@ function Overview({
   pendingOrders,
   completedRevenue,
   orders,
+  orderItems,
+  updateOrderStatus,
+  updatingOrderId,
+  hasTableOrdering,
   enabledPaidFeatures,
   navigate,
   hasOrders,
@@ -2563,6 +2573,10 @@ function Overview({
   pendingOrders: Order[];
   completedRevenue: number;
   orders: Order[];
+  orderItems: OrderItem[];
+  updateOrderStatus: (id: string, status: string) => Promise<void>;
+  updatingOrderId: string | null;
+  hasTableOrdering: boolean;
   enabledPaidFeatures: Feature[];
   navigate: (page: PageKey) => void;
   hasOrders: boolean;
@@ -2663,6 +2677,18 @@ function Overview({
           </small>
         </div>
       </section>
+
+      {/* LIVE ORDERS PANEL: only when table ordering is on */}
+      {hasTableOrdering && (
+        <LiveOrdersPanel
+          key={business.id}
+          businessId={business.id}
+          orders={orders}
+          orderItems={orderItems}
+          updateOrderStatus={updateOrderStatus}
+          updatingOrderId={updatingOrderId}
+        />
+      )}
 
       <section className="stats">
         <StatCard
@@ -5270,8 +5296,6 @@ function SettingsPage({
 
   const [onlineOrderingLinks, setOnlineOrderingLinks] = useState<OnlineOrderingLink[]>([]);
   const [onlineOrderingFeatureId, setOnlineOrderingFeatureId] = useState<string | null>(null);
-  const [menuPresentation, setMenuPresentation] = useState<"button" | "full">("button");
-  const [loadedMenuPresentation, setLoadedMenuPresentation] = useState<"button" | "full">("button");
 
   const [saving, setSaving] = useState(false);
   const [savedBanner, setSavedBanner] = useState(false);
@@ -5322,29 +5346,7 @@ function SettingsPage({
       setOnlineOrderingFeatureId(feat.id);
     }
 
-    const digitalMenuRow = (moduleConfigs || []).find(
-      (m: any) => normalizeKey(m.module_key) === "digital_menu"
-    );
-    if (digitalMenuRow?.config?.menu_presentation === "full") {
-      setMenuPresentation("full");
-      setLoadedMenuPresentation("full");
-    } else if (digitalMenuRow?.config?.menu_presentation === "button") {
-      setMenuPresentation("button");
-      setLoadedMenuPresentation("button");
-    } else {
-      supabase
-        .from("business_module_configs")
-        .select("config")
-        .eq("business_id", business.id)
-        .eq("module_key", "digital_menu")
-        .maybeSingle()
-        .then(({ data }) => {
-          const pres =
-            data?.config?.menu_presentation === "full" ? "full" : "button";
-          setMenuPresentation(pres);
-          setLoadedMenuPresentation(pres);
-        });
-    }
+    // menu_presentation retired
   }, [business, moduleConfigs, features]);
 
   function updateOrderLink(index: number, patch: Partial<OnlineOrderingLink>) {
@@ -5437,61 +5439,7 @@ function SettingsPage({
         }
       }
 
-      if (hasDiningMenu && menuPresentation !== loadedMenuPresentation) {
-        const { data: dmRow } = await supabase
-          .from("business_module_configs")
-          .select("id, feature_id, config")
-          .eq("business_id", business.id)
-          .eq("module_key", "digital_menu")
-          .maybeSingle();
-
-        const existingConfig =
-          dmRow?.config && typeof dmRow.config === "object" ? dmRow.config : {};
-        const updatedConfig = {
-          ...existingConfig,
-          menu_presentation: menuPresentation,
-        };
-
-        if (dmRow?.id) {
-          const { error: updateErr } = await supabase
-            .from("business_module_configs")
-            .update({
-              config: updatedConfig,
-              status: "active",
-            })
-            .eq("id", dmRow.id);
-          if (updateErr) throw updateErr;
-        } else {
-          let resolvedFeatureId: string | null = null;
-          const feat = (features || []).find(
-            (f) => normalizeKey(f.feature_key) === "digital_menu"
-          );
-          if (feat?.id) {
-            resolvedFeatureId = feat.id;
-          } else {
-            const { data: fcRow } = await supabase
-              .from("feature_catalog")
-              .select("id")
-              .eq("feature_key", "digital_menu")
-              .maybeSingle();
-            if (fcRow?.id) resolvedFeatureId = fcRow.id;
-          }
-
-          if (resolvedFeatureId) {
-            const { error: insertErr } = await supabase
-              .from("business_module_configs")
-              .insert({
-                business_id: business.id,
-                feature_id: resolvedFeatureId,
-                module_key: "digital_menu",
-                config: updatedConfig,
-                status: "active",
-              });
-            if (insertErr) throw insertErr;
-          }
-        }
-        setLoadedMenuPresentation(menuPresentation);
-      }
+      // menu_presentation retired
 
       const payload = {
         name: name.trim(),
@@ -5745,47 +5693,7 @@ function SettingsPage({
           </div>
         </div>
 
-        {/* PANEL: MENU PRESENTATION */}
-        {hasDiningMenu && (
-          <div className="settings-panel">
-            <div className="settings-heading">
-              <div>
-                <h3>Digital Menu & Dining</h3>
-                <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#64748b" }}>
-                  Choose how the menu appears to customers tapping your device.
-                </p>
-              </div>
-              <span>MENU</span>
-            </div>
 
-            <div className="input-group">
-              <label>How customers open the menu</label>
-              <select
-                value={menuPresentation}
-                onChange={(e) =>
-                  setMenuPresentation(e.target.value as "button" | "full")
-                }
-              >
-                <option value="button">
-                  A button on the tap page (recommended)
-                </option>
-                <option value="full">Full page experience</option>
-              </select>
-              <span
-                style={{
-                  fontSize: "11px",
-                  color: "#64748b",
-                  marginTop: "4px",
-                  display: "block",
-                }}
-              >
-                {menuPresentation === "button"
-                  ? "Customers see your standard tap page with review, social links, and a card to open the dining menu."
-                  : "The tap page opens directly into the full dining & ordering screen."}
-              </span>
-            </div>
-          </div>
-        )}
 
         {/* PANEL 5: ORDER ONLINE */}
         {(hasOnlineOrdering || onlineOrderingLinks.length > 0) && (
