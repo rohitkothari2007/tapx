@@ -42,6 +42,7 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
   } = props;
 
   const [isOpen, setIsOpen] = useState(false);
+  const [hasEverOpened, setHasEverOpened] = useState(false);
   const [hasActiveOrder, setHasActiveOrder] = useState(false);
 
   const storageKey = `tapx_active_order_${business.id}_${device.device_code}`;
@@ -111,6 +112,7 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
   }, [storageKey]);
 
   const openLayer = () => {
+    setHasEverOpened(true);
     setIsOpen(true);
     if (typeof window !== "undefined") {
       window.location.hash = "menu";
@@ -184,27 +186,29 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
           </button>
         </div>
 
-        {/* Dining Interface Content (keeps cart, orders, and form state in memory) */}
+        {/* Dining Interface Content (keeps cart, orders, and form state in memory once opened) */}
         <div style={styles.layerContent}>
-          <RestaurantExperience
-            {...props}
-            onOpenFeedback={
-              onOpenFeedback
-                ? () => {
-                    closeLayer();
-                    onOpenFeedback();
-                  }
-                : undefined
-            }
-            onOpenLoyalty={
-              onOpenLoyalty
-                ? () => {
-                    closeLayer();
-                    onOpenLoyalty();
-                  }
-                : undefined
-            }
-          />
+          {hasEverOpened && (
+            <RestaurantExperience
+              {...props}
+              onOpenFeedback={
+                onOpenFeedback
+                  ? () => {
+                      closeLayer();
+                      onOpenFeedback();
+                    }
+                  : undefined
+              }
+              onOpenLoyalty={
+                onOpenLoyalty
+                  ? () => {
+                      closeLayer();
+                      onOpenLoyalty();
+                    }
+                  : undefined
+              }
+            />
+          )}
         </div>
       </div>
     </>

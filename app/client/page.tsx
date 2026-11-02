@@ -5271,6 +5271,7 @@ function SettingsPage({
   const [onlineOrderingLinks, setOnlineOrderingLinks] = useState<OnlineOrderingLink[]>([]);
   const [onlineOrderingFeatureId, setOnlineOrderingFeatureId] = useState<string | null>(null);
   const [menuPresentation, setMenuPresentation] = useState<"button" | "full">("button");
+  const [loadedMenuPresentation, setLoadedMenuPresentation] = useState<"button" | "full">("button");
 
   const [saving, setSaving] = useState(false);
   const [savedBanner, setSavedBanner] = useState(false);
@@ -5321,28 +5322,27 @@ function SettingsPage({
       setOnlineOrderingFeatureId(feat.id);
     }
 
-    const diningRow = (moduleConfigs || []).find(
-      (m: any) =>
-        normalizeKey(m.module_key) === "digital_menu" ||
-        normalizeKey(m.module_key) === "table_ordering"
+    const digitalMenuRow = (moduleConfigs || []).find(
+      (m: any) => normalizeKey(m.module_key) === "digital_menu"
     );
-    if (diningRow?.config?.menu_presentation === "full") {
+    if (digitalMenuRow?.config?.menu_presentation === "full") {
       setMenuPresentation("full");
-    } else if (diningRow?.config?.menu_presentation === "button") {
+      setLoadedMenuPresentation("full");
+    } else if (digitalMenuRow?.config?.menu_presentation === "button") {
       setMenuPresentation("button");
+      setLoadedMenuPresentation("button");
     } else {
       supabase
         .from("business_module_configs")
-        .select("config, module_key")
+        .select("config")
         .eq("business_id", business.id)
-        .in("module_key", ["digital_menu", "table_ordering"])
+        .eq("module_key", "digital_menu")
+        .maybeSingle()
         .then(({ data }) => {
-          if (data && data.length > 0) {
-            const hasFull = data.some(
-              (row: any) => row.config?.menu_presentation === "full"
-            );
-            setMenuPresentation(hasFull ? "full" : "button");
-          }
+          const pres =
+            data?.config?.menu_presentation === "full" ? "full" : "button";
+          setMenuPresentation(pres);
+          setLoadedMenuPresentation(pres);
         });
     }
   }, [business, moduleConfigs, features]);
@@ -5437,48 +5437,60 @@ function SettingsPage({
         }
       }
 
-      if (hasDiningMenu) {
-        const { data: diningRows } = await supabase
+      if (hasDiningMenu && menuPresentation !== loadedMenuPresentation) {
+        const { data: dmRow } = await supabase
           .from("business_module_configs")
-          .select("id, module_key, feature_id, config")
+          .select("id, feature_id, config")
           .eq("business_id", business.id)
-          .in("module_key", ["digital_menu", "table_ordering"]);
+          .eq("module_key", "digital_menu")
+          .maybeSingle();
 
-        if (diningRows && diningRows.length > 0) {
-          for (const row of diningRows) {
-            const existingConfig =
-              row.config && typeof row.config === "object" ? row.config : {};
-            const updatedConfig = {
-              ...existingConfig,
-              menu_presentation: menuPresentation,
-            };
-            const { error: updateErr } = await supabase
-              .from("business_module_configs")
-              .update({
-                config: updatedConfig,
-                status: "active",
-              })
-              .eq("id", row.id);
-            if (updateErr) throw updateErr;
-          }
+        const existingConfig =
+          dmRow?.config && typeof dmRow.config === "object" ? dmRow.config : {};
+        const updatedConfig = {
+          ...existingConfig,
+          menu_presentation: menuPresentation,
+        };
+
+        if (dmRow?.id) {
+          const { error: updateErr } = await supabase
+            .from("business_module_configs")
+            .update({
+              config: updatedConfig,
+              status: "active",
+            })
+            .eq("id", dmRow.id);
+          if (updateErr) throw updateErr;
         } else {
-          const diningFeats = (features || []).filter((f) => {
-            const k = normalizeKey(f.feature_key);
-            return k === "digital_menu" || k === "table_ordering";
-          });
-          for (const feat of diningFeats) {
+          let resolvedFeatureId: string | null = null;
+          const feat = (features || []).find(
+            (f) => normalizeKey(f.feature_key) === "digital_menu"
+          );
+          if (feat?.id) {
+            resolvedFeatureId = feat.id;
+          } else {
+            const { data: fcRow } = await supabase
+              .from("feature_catalog")
+              .select("id")
+              .eq("feature_key", "digital_menu")
+              .maybeSingle();
+            if (fcRow?.id) resolvedFeatureId = fcRow.id;
+          }
+
+          if (resolvedFeatureId) {
             const { error: insertErr } = await supabase
               .from("business_module_configs")
               .insert({
                 business_id: business.id,
-                feature_id: feat.id,
-                module_key: feat.feature_key,
-                config: { menu_presentation: menuPresentation },
+                feature_id: resolvedFeatureId,
+                module_key: "digital_menu",
+                config: updatedConfig,
                 status: "active",
               });
             if (insertErr) throw insertErr;
           }
         }
+        setLoadedMenuPresentation(menuPresentation);
       }
 
       const payload = {

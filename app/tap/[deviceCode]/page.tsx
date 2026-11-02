@@ -898,8 +898,8 @@ export default function TapPage({
       });
 
       const rawMenuPresentation =
-        (rawTableOrderingConfig as Record<string, unknown>)?.menu_presentation ||
-        (menuConfig as Record<string, unknown>)?.menu_presentation;
+        (menuConfig as Record<string, unknown>)?.menu_presentation ||
+        (rawTableOrderingConfig as Record<string, unknown>)?.menu_presentation;
       setMenuPresentation(
         rawMenuPresentation === "full" ? "full" : "button"
       );
