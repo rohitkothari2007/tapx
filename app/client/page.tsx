@@ -1,6 +1,7 @@
 "use client";
 
 import LiveOrdersPanel from "./LiveOrdersPanel";
+import MenuManagerSection from "./MenuManagerSection";
 
 import {
   useCallback,
@@ -102,6 +103,7 @@ type OrderItem = {
   unit_price: number;
   quantity: number;
   line_total: number;
+  special_request?: string | null;
 };
 
 type AppointmentStatus =
@@ -785,7 +787,8 @@ export default function ClientPortalPage() {
                 item_name,
                 unit_price,
                 quantity,
-                line_total
+                line_total,
+                special_request
               `
             )
             .in("order_id", orderIds);
@@ -1764,21 +1767,10 @@ export default function ClientPortalPage() {
             )}
 
           {activePage === "menu" && hasMenu && (
-            <ModulePage
-              title="Digital Menu"
-              eyebrow="CUSTOMER EXPERIENCE"
-              description="Manage the digital menu customers see through your TAPX touchpoint."
-              icon="☷"
-              items={[
-                "Categories",
-                "Menu items",
-                "Prices",
-                "Availability",
-                "Item descriptions",
-                "Menu preview",
-              ]}
-              status="Connected"
-              emptyText="Your Digital Menu workspace is connected. Menu management will use the same configuration that powers your customer experience."
+            <MenuManagerSection
+              businessId={business.id}
+              businessName={business.name}
+              deviceCode={clientDevices[0]?.device_code}
             />
           )}
 
@@ -4576,6 +4568,11 @@ function OrdersPage({
                           item.unit_price
                         )}
                       </span>
+                      {item.special_request && (
+                        <div className="item-special-request-badge">
+                          <strong>Request:</strong> {item.special_request}
+                        </div>
+                      )}
                     </div>
 
                     <strong>
@@ -4897,6 +4894,25 @@ function OrdersPage({
           color: #98a1ad;
           font-size: 10px;
           margin-top: 4px;
+        }
+
+        .item-special-request-badge {
+          display: inline-block;
+          margin-top: 6px;
+          padding: 3px 8px;
+          background: #fef3c7;
+          border: 1px solid #fde68a;
+          border-radius: 6px;
+          color: #92400e;
+          font-size: 11px;
+          line-height: 1.4;
+        }
+
+        .item-special-request-badge strong {
+          display: inline !important;
+          font-weight: 700;
+          color: #78350f;
+          margin-right: 4px;
         }
 
         .no-items {

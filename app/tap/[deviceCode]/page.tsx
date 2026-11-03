@@ -323,6 +323,9 @@ export default function TapPage({
   const [digitalMenuItems, setDigitalMenuItems] =
     useState<DigitalMenuItem[]>([]);
 
+  const [quickRequests, setQuickRequests] =
+    useState<string[] | undefined>(undefined);
+
   const [enabledModuleKeys, setEnabledModuleKeys] =
     useState<string[]>([]);
 
@@ -641,6 +644,19 @@ export default function TapPage({
 
       setDigitalMenuItems(
         validMenuItems
+      );
+
+      const parsedQuickRequests = Array.isArray(menuConfig.quick_requests)
+        ? (menuConfig.quick_requests as unknown[])
+            .map((q) => (typeof q === "string" ? q.trim() : ""))
+            .filter((q) => q.length > 0 && q.length <= 30)
+            .slice(0, 12)
+        : undefined;
+
+      setQuickRequests(
+        parsedQuickRequests && parsedQuickRequests.length > 0
+          ? parsedQuickRequests
+          : undefined
       );
 
       // ====================================================
@@ -1492,6 +1508,7 @@ export default function TapPage({
                     items={digitalMenuItems}
                     offers={offerItems}
                     tableOrderingEnabled={tableOrderingEnabled}
+                    quickRequests={quickRequests}
                     tableCount={
                       tableOrderingConfig?.table_count
                         ? Number(tableOrderingConfig.table_count)

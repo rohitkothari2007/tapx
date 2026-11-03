@@ -356,7 +356,7 @@ export default function LiveOrdersPanel({
                           <span style={styles.itemName}>{item.item_name}</span>
                           {(item.special_request || item.notes) && (
                             <div style={styles.itemNote}>
-                              Note: {item.special_request || item.notes}
+                              <strong style={styles.itemNoteLabel}>Request:</strong> {item.special_request || item.notes}
                             </div>
                           )}
                         </div>
@@ -632,10 +632,21 @@ const styles: Record<string, CSSProperties> = {
     color: "#334155",
   },
   itemNote: {
+    display: "inline-block",
+    marginTop: "3px",
+    padding: "2px 7px",
+    background: "#fef3c7",
+    border: "1px solid #fde68a",
+    borderRadius: "5px",
+    color: "#92400e",
     fontSize: "11px",
-    fontStyle: "italic",
-    color: "#b45309",
-    marginTop: "1px",
+    fontWeight: 600,
+    lineHeight: 1.4,
+  },
+  itemNoteLabel: {
+    fontWeight: 800,
+    color: "#78350f",
+    marginRight: "4px",
   },
   itemPrice: {
     fontWeight: 700,
