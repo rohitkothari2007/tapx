@@ -9,7 +9,6 @@ import {
 import { useParams } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import RestaurantExperience from "../../components/RestaurantExperience";
-import DiningLayerWrapper from "../../components/DiningLayerWrapper";
 import { InstagramIcon, WhatsAppIcon } from "../../components/BrandIcons";
 import UpiPaymentModal from "../../components/UpiPaymentModal";
 import {
@@ -334,7 +333,6 @@ export default function TapPage({
 
   const [tableOrderingConfig, setTableOrderingConfig] =
     useState<TableOrderingConfig>({});
-  const [menuPresentation, setMenuPresentation] = useState<"button" | "full">("button");
 
   const [appointmentConfig, setAppointmentConfig] =
     useState<AppointmentConfig>({});
@@ -897,13 +895,6 @@ export default function TapPage({
             : "",
       });
 
-      const rawMenuPresentation =
-        (menuConfig as Record<string, unknown>)?.menu_presentation ||
-        (rawTableOrderingConfig as Record<string, unknown>)?.menu_presentation;
-      setMenuPresentation(
-        rawMenuPresentation === "full" ? "full" : "button"
-      );
-
       // ====================================================
       // APPOINTMENT BOOKING
       // ====================================================
@@ -1369,7 +1360,6 @@ export default function TapPage({
 
   if (
     isRestaurantDining &&
-    menuPresentation === "full" &&
     (activeModule === null ||
       activeModule === "table-ordering" ||
       activeModule === "digital-menu")
@@ -1521,23 +1511,6 @@ export default function TapPage({
                   styles.actionGrid
                 }
               >
-                {isRestaurantDining && menuPresentation === "button" && (
-                  <DiningLayerWrapper
-                    business={{ ...business, payment_enabled: showPaymentButton }}
-                    device={device}
-                    categories={digitalMenuCategories}
-                    items={digitalMenuItems}
-                    offers={offerItems}
-                    tableOrderingEnabled={tableOrderingEnabled}
-                    initialTab="home"
-                    loyaltyEnabled={loyaltyEnabled}
-                    feedbackEnabled={feedbackEnabled}
-                    onOpenFeedback={() => setActiveModule("feedback")}
-                    onOpenLoyalty={() => setActiveModule("loyalty")}
-                    onTrackAction={(type) => void trackActionClick(type)}
-                  />
-                )}
-
                 {/* CORE */}
 
                 <ActionCard
@@ -1647,7 +1620,7 @@ export default function TapPage({
 
                 {/* PAID MODULES */}
 
-                {digitalMenuEnabled && !isRestaurantDining && (
+                {digitalMenuEnabled && (
                   <ModuleActionCard
                     icon={String.fromCodePoint(
                       0x1f37d,
@@ -1748,7 +1721,7 @@ export default function TapPage({
                   />
                 )}
 
-                {tableOrderingEnabled && !isRestaurantDining && (
+                {tableOrderingEnabled && (
                   <ModuleActionCard
                     icon={String.fromCodePoint(
                       0x1f6d2
