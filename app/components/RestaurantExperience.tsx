@@ -991,8 +991,8 @@ export default function RestaurantExperience({
                               size={88}
                             />
 
-                            {/* Ordering controls */}
-                            {tableOrderingEnabled && (
+                            {/* Ordering controls or menu-only sold out label */}
+                            {tableOrderingEnabled ? (
                               <div style={styles.dishBtnWrap}>
                                 {isSoldOut ? (
                                   <button
@@ -1042,7 +1042,20 @@ export default function RestaurantExperience({
                                   </button>
                                 )}
                               </div>
-                            )}
+                            ) : isSoldOut ? (
+                              <div style={styles.dishBtnWrap}>
+                                <div
+                                  style={{
+                                    ...styles.soldOutBtn,
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                  }}
+                                >
+                                  Sold out
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       );
