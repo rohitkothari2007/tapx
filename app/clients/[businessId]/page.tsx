@@ -2708,6 +2708,17 @@ export default function ClientPage() {
                             {device.label}
                           </span>
                         )}
+                        {(() => {
+                          const tableNum = parseStandTableNumber(device.label, device.location);
+                          if (tableNum) {
+                            return (
+                              <span style={{ background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0", padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 700 }}>
+                                Table {tableNum}
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
 
                       <div style={deviceLocation}>
@@ -2891,19 +2902,41 @@ export default function ClientPage() {
         <div style={modalBackdropStyle}>
           <div style={{ ...modalContentStyle, maxWidth: "420px" }}>
             <div style={modalHeaderStyle}>
-              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 800 }}>Edit Label</h3>
+              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 800 }}>Edit Device Label & Table Number</h3>
               <button type="button" onClick={() => setEditingLabelDevice(null)} style={closeBtnStyle}>×</button>
             </div>
             <div style={{ padding: "18px" }}>
-              <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "6px" }}>
-                Device Label for {editingLabelDevice.device_code}
-              </label>
-              <input
-                value={editLabelInput}
-                onChange={(e) => setEditLabelInput(e.target.value)}
-                placeholder="e.g. Table 4 or Room 204"
-                style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
-              />
+              <div style={{ marginBottom: "14px" }}>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "4px" }}>
+                  Table number
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="e.g. 4"
+                  value={parseStandTableNumber(editLabelInput, null) || ""}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    setEditLabelInput(val ? `Table ${val}` : "");
+                  }}
+                  style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
+                />
+                <span style={{ fontSize: "11px", color: "#64748b", marginTop: "3px", display: "block" }}>
+                  Sets the stand table number for customer table ordering.
+                </span>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "4px" }}>
+                  Device Label (Full) for {editingLabelDevice.device_code}
+                </label>
+                <input
+                  value={editLabelInput}
+                  onChange={(e) => setEditLabelInput(e.target.value)}
+                  placeholder="e.g. Table 4 or Room 204"
+                  style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
+                />
+              </div>
               {(() => {
                 const parsed = parseStandTableNumber(editLabelInput, null);
                 if (parsed) {

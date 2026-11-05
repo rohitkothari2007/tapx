@@ -268,6 +268,8 @@ export default function RestaurantExperience({
   const [customQty, setCustomQty] = useState<number>(1);
 
   // Checkout inputs
+  const [showTablePicker, setShowTablePicker] = useState(false);
+  const [tablePickerInput, setTablePickerInput] = useState("");
   const [tableNumber, setTableNumber] = useState<string>(() => {
     if (standTableNum !== null && standTableNum > 0) return String(standTableNum);
     return "";
@@ -747,20 +749,31 @@ export default function RestaurantExperience({
           <div style={styles.brandTextWrap}>
             <h1 style={styles.businessNameHeading}>{business.name}</h1>
             {tableOrderingEnabled && (
-              <div style={styles.tableChip}>
-                {tableNumber ? `Table ${tableNumber}` : "Dine In"}
-              </div>
+              standTableNum ? (
+                <div style={styles.tableChip}>
+                  Table {tableNumber}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowTablePicker(true)}
+                  style={styles.tablePickerTriggerBtn}
+                  title="Choose table number"
+                >
+                  {tableNumber ? `Table ${tableNumber} ✎` : "Choose Table ›"}
+                </button>
+              )
             )}
           </div>
         </div>
 
         <div style={styles.headerRightActions}>
-          {tableOrderingEnabled && (business.whatsapp_number || business.phone) && (
+          {tableOrderingEnabled && Boolean(tableNumber && tableNumber.trim()) && (business.whatsapp_number || business.phone) && (
             <a
               href={
                 business.whatsapp_number
                   ? `https://wa.me/${business.whatsapp_number.replace(/\D/g, "")}?text=${encodeURIComponent(
-                      tableNumber ? `Table ${tableNumber} needs assistance` : "A customer needs assistance"
+                      `Table ${tableNumber} needs assistance`
                     )}`
                   : `tel:${business.phone}`
               }
@@ -1478,9 +1491,20 @@ export default function RestaurantExperience({
               <div style={styles.customerInputsBox}>
                 {!standTableNum && (
                   <div style={{ marginBottom: "12px" }}>
-                    <label style={styles.inputLabel}>
-                      Table Number <span style={{ color: "#ef4444" }}>*</span>
-                    </label>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                      <label style={styles.inputLabel}>
+                        Table Number <span style={{ color: "#ef4444" }}>*</span>
+                      </label>
+                      {tableCount && tableCount > 0 && tableCount <= 50 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowTablePicker(true)}
+                          style={{ background: "none", border: "none", color: "#2563eb", fontSize: "12px", fontWeight: 700, cursor: "pointer", padding: 0 }}
+                        >
+                          Pick from list ›
+                        </button>
+                      )}
+                    </div>
                     <input
                       type="number"
                       min="1"
@@ -1534,6 +1558,94 @@ export default function RestaurantExperience({
               >
                 {placingOrder ? "Placing Order..." : `Place Order (₹${cartTotal.toFixed(0)})`}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* 6.5 WHICH TABLE ARE YOU AT? MODAL */}
+      {/* ---------------------------------------------------- */}
+      {tableOrderingEnabled && showTablePicker && (
+        <div style={styles.modalOverlay} onClick={() => setShowTablePicker(false)}>
+          <div
+            style={styles.tablePickerModal}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div style={styles.modalHeader}>
+              <div>
+                <h3 style={styles.modalTitle}>Which table are you at?</h3>
+                <p style={styles.tablePickerSubtitle}>
+                  Please choose or enter your table number to complete your order.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTablePicker(false)}
+                style={styles.modalCloseBtn}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.tablePickerBody}>
+              {tableCount && tableCount > 0 && tableCount <= 50 ? (
+                <div style={styles.tablePillGrid}>
+                  {Array.from({ length: tableCount }, (_, i) => i + 1).map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => {
+                        setTableNumber(String(num));
+                        setShowTablePicker(false);
+                        setOrderError("");
+                      }}
+                      style={{
+                        ...styles.tablePillBtn,
+                        backgroundColor: tableNumber === String(num) ? "#0f172a" : "#f1f5f9",
+                        color: tableNumber === String(num) ? "#ffffff" : "#0f172a",
+                        borderColor: tableNumber === String(num) ? "#0f172a" : "#cbd5e1",
+                      }}
+                    >
+                      Table {num}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  <label style={styles.inputLabel}>
+                    Table Number <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={tableCount || 999}
+                    placeholder="e.g. 5"
+                    value={tablePickerInput}
+                    onChange={(e) => setTablePickerInput(e.target.value)}
+                    style={styles.inputField}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const parsed = parseInt(tablePickerInput, 10);
+                      if (!parsed || parsed <= 0) {
+                        setOrderError("Please enter a valid table number.");
+                        return;
+                      }
+                      setTableNumber(String(parsed));
+                      setShowTablePicker(false);
+                      setOrderError("");
+                    }}
+                    style={styles.confirmAddBtn}
+                  >
+                    Confirm Table
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2618,5 +2730,51 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: "50%",
     backgroundColor: "#16a34a",
     boxShadow: "0 0 0 2px #ffffff",
+  },
+  tablePickerTriggerBtn: {
+    display: "inline-block",
+    fontSize: "11px",
+    fontWeight: 700,
+    color: "#2563eb",
+    backgroundColor: "#eff6ff",
+    border: "1px dashed #93c5fd",
+    padding: "3px 8px",
+    borderRadius: "6px",
+    marginTop: "2px",
+    cursor: "pointer",
+  },
+  tablePickerModal: {
+    width: "100%",
+    maxWidth: "480px",
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: "24px",
+    borderTopRightRadius: "24px",
+    maxHeight: "85vh",
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    boxShadow: "0 -4px 20px rgba(0,0,0,0.15)",
+  },
+  tablePickerSubtitle: {
+    fontSize: "12px",
+    color: "#64748b",
+    margin: "4px 0 0 0",
+  },
+  tablePickerBody: {
+    padding: "16px 20px 24px 20px",
+  },
+  tablePillGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, 1fr)",
+    gap: "10px",
+  },
+  tablePillBtn: {
+    minHeight: "44px",
+    padding: "8px 4px",
+    borderRadius: "10px",
+    border: "1px solid",
+    fontSize: "13px",
+    fontWeight: 700,
+    cursor: "pointer",
+    boxSizing: "border-box",
   },
 };
