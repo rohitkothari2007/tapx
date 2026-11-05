@@ -259,6 +259,7 @@ export default function ClientPage() {
 
   const [editingLabelDevice, setEditingLabelDevice] = useState<Device | null>(null);
   const [editLabelInput, setEditLabelInput] = useState("");
+  const [editTableInput, setEditTableInput] = useState("");
 
   async function openAssignModal() {
     setShowAssignModal(true);
@@ -352,10 +353,19 @@ export default function ClientPage() {
     if (!editingLabelDevice) return;
     try {
       const newLabel = editLabelInput.trim() || null;
-      const tableNum = parseStandTableNumber(newLabel, null);
+      const parsedTable = editTableInput.trim() ? parseInt(editTableInput.trim(), 10) : null;
+      const validTable = parsedTable !== null && !isNaN(parsedTable) && parsedTable >= 1 && parsedTable <= 999 ? parsedTable : null;
+
       const updatePayload: Record<string, any> = { label: newLabel };
-      if (tableNum) {
-        updatePayload.location = `Table ${tableNum}`;
+
+      if (validTable !== null) {
+        updatePayload.location = `Table ${validTable}`;
+      } else if (editTableInput.trim() === "") {
+        // Table number was emptied/cleared by user: clear location if it was previously a table number
+        const prevWasTable = parseStandTableNumber(null, editingLabelDevice.location) !== null;
+        if (prevWasTable) {
+          updatePayload.location = null;
+        }
       }
 
       const { error: updateErr } = await supabase
@@ -368,7 +378,11 @@ export default function ClientPage() {
       setDevices((curr) =>
         curr.map((d) =>
           d.id === editingLabelDevice.id
-            ? { ...d, label: newLabel, ...(tableNum ? { location: `Table ${tableNum}` } : {}) }
+            ? {
+                ...d,
+                label: newLabel,
+                ...("location" in updatePayload ? { location: updatePayload.location } : {}),
+              }
             : d
         )
       );
@@ -2752,6 +2766,8 @@ export default function ClientPage() {
                         onClick={() => {
                           setEditingLabelDevice(device);
                           setEditLabelInput(device.label || "");
+                          const currentTable = parseStandTableNumber(device.label, device.location);
+                          setEditTableInput(currentTable ? String(currentTable) : "");
                         }}
                         style={secondaryButton}
                         title="Edit Label"
@@ -2908,38 +2924,39 @@ export default function ClientPage() {
             <div style={{ padding: "18px" }}>
               <div style={{ marginBottom: "14px" }}>
                 <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "4px" }}>
-                  Table number
+                  Friendly label
                 </label>
                 <input
-                  type="number"
-                  min="1"
-                  placeholder="e.g. 4"
-                  value={parseStandTableNumber(editLabelInput, null) || ""}
-                  onChange={(e) => {
-                    const val = e.target.value.trim();
-                    setEditLabelInput(val ? `Table ${val}` : "");
-                  }}
+                  value={editLabelInput}
+                  onChange={(e) => setEditLabelInput(e.target.value)}
+                  placeholder="e.g. Patio Corner, Cash Counter, Bar"
                   style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
                 />
                 <span style={{ fontSize: "11px", color: "#64748b", marginTop: "3px", display: "block" }}>
-                  Sets the stand table number for customer table ordering.
+                  Friendly name for this stand (used in inventory and QR downloads).
                 </span>
               </div>
 
               <div>
                 <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "4px" }}>
-                  Device Label (Full) for {editingLabelDevice.device_code}
+                  Table number
                 </label>
                 <input
-                  value={editLabelInput}
-                  onChange={(e) => setEditLabelInput(e.target.value)}
-                  placeholder="e.g. Table 4 or Room 204"
+                  type="number"
+                  min="1"
+                  max="999"
+                  placeholder="e.g. 4 (1 to 999)"
+                  value={editTableInput}
+                  onChange={(e) => setEditTableInput(e.target.value)}
                   style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", boxSizing: "border-box" }}
                 />
+                <span style={{ fontSize: "11px", color: "#64748b", marginTop: "3px", display: "block" }}>
+                  This replaces the stand&apos;s location text.
+                </span>
               </div>
               {(() => {
-                const parsed = parseStandTableNumber(editLabelInput, null);
-                if (parsed) {
+                const parsed = editTableInput.trim() ? parseInt(editTableInput.trim(), 10) : null;
+                if (parsed && !isNaN(parsed) && parsed >= 1 && parsed <= 999) {
                   const isDup = devices.some(
                     (d) => d.id !== editingLabelDevice.id && parseStandTableNumber(d.label, d.location) === parsed
                   );

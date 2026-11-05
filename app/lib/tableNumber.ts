@@ -7,7 +7,8 @@ export function parseStandTableNumber(
   label?: string | null,
   location?: string | null
 ): number | null {
-  const candidates = [label, location].filter(
+  // Check location first, then fallback to label
+  const candidates = [location, label].filter(
     (val): val is string => typeof val === "string" && val.trim().length > 0
   );
 
@@ -17,13 +18,13 @@ export function parseStandTableNumber(
     const tableMatch = trimmed.match(/(?:table|t)[-.\s#]*(\d+)/i);
     if (tableMatch && tableMatch[1]) {
       const num = parseInt(tableMatch[1], 10);
-      if (!isNaN(num) && num > 0) return num;
+      if (!isNaN(num) && num > 0 && num <= 999) return num;
     }
 
     // 2. Pure digits "5"
     if (/^\d+$/.test(trimmed)) {
       const num = parseInt(trimmed, 10);
-      if (!isNaN(num) && num > 0) return num;
+      if (!isNaN(num) && num > 0 && num <= 999) return num;
     }
   }
 
