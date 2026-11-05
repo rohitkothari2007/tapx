@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState, type CSSProperties } from "react";
-import { MENU_TOKENS } from "../lib/menuTheme";
+import { MENU_TOKENS, formatDisplayName } from "../lib/menuTheme";
+import { menuFontClassNames } from "../lib/menuFonts";
 
 export type MenuCategory = {
   id: string;
@@ -517,7 +518,7 @@ export default function DigitalMenuEditor({
   ========================================================= */
 
   return (
-    <div style={styles.container}>
+    <div className={menuFontClassNames} style={styles.container}>
       {/* HEADER BAR */}
       <div style={styles.topBar}>
         <div>
@@ -1234,7 +1235,7 @@ export default function DigitalMenuEditor({
                           <span style={styles.eggDot} />
                         </span>
                       )}
-                      <h4 style={styles.previewItemName}>{previewItem.name}</h4>
+                      <h4 style={styles.previewItemName}>{formatDisplayName(previewItem.name)}</h4>
                     </div>
 
                     <div style={styles.previewItemPrice}>
@@ -1380,7 +1381,7 @@ const styles: Record<string, CSSProperties> = {
     padding: "8px 16px",
     borderRadius: MENU_TOKENS.radii.input,
     background: MENU_TOKENS.colors.light.accentLight,
-    color: MENU_TOKENS.colors.light.accent,
+    color: MENU_TOKENS.colors.light.accentInk,
     border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     fontSize: "12px",
     fontWeight: 700,
@@ -1462,12 +1463,10 @@ const styles: Record<string, CSSProperties> = {
   },
   inputLabel: {
     display: "block",
-    fontSize: "11px",
-    fontWeight: 700,
+    fontSize: "12px",
+    fontWeight: 600,
     color: MENU_TOKENS.colors.light.muted,
     marginBottom: "5px",
-    textTransform: "uppercase",
-    letterSpacing: "0.03em",
   },
   input: {
     width: "100%",
@@ -1836,7 +1835,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: "4px",
     background: MENU_TOKENS.colors.light.accentLight,
     border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
-    color: MENU_TOKENS.colors.light.accent,
+    color: MENU_TOKENS.colors.light.accentInk,
     fontSize: "10px",
     fontWeight: 700,
   },
@@ -1964,7 +1963,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: "4px",
     background: MENU_TOKENS.colors.light.accentLight,
     border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
-    color: MENU_TOKENS.colors.light.accent,
+    color: MENU_TOKENS.colors.light.accentInk,
     fontSize: "10px",
     fontWeight: 700,
   },
@@ -1977,9 +1976,8 @@ const styles: Record<string, CSSProperties> = {
     placeItems: "center",
     color: "#FFFFFF",
     fontSize: "13px",
-    fontWeight: 800,
-    letterSpacing: "0.05em",
-    textTransform: "uppercase",
+    fontWeight: 700,
+    letterSpacing: "0.02em",
   },
   previewContentBox: {
     padding: "14px",

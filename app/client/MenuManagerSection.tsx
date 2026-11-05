@@ -9,6 +9,7 @@ import DigitalMenuEditor, {
   DEFAULT_QUICK_REQUESTS,
 } from "../components/DigitalMenuEditor";
 import { MENU_TOKENS } from "../lib/menuTheme";
+import { menuFontClassNames } from "../lib/menuFonts";
 
 type Props = {
   businessId: string;
@@ -234,7 +235,7 @@ export default function MenuManagerSection({
   }
 
   return (
-    <div style={styles.wrapper}>
+    <div className={menuFontClassNames} style={styles.wrapper}>
       {/* STATUS & ACTIONS BAR */}
       <div style={styles.statusBar}>
         <div style={styles.statusLeft}>
@@ -345,13 +346,13 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: MENU_TOKENS.radii.badge,
     background: MENU_TOKENS.colors.light.accentLight,
     border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
-    color: "#8A6424",
+    color: MENU_TOKENS.colors.light.accentInk,
     fontSize: "12px",
     fontWeight: 700,
   },
   unsavedDot: {
     fontSize: "10px",
-    color: MENU_TOKENS.colors.light.accent,
+    color: MENU_TOKENS.colors.light.accentInk,
   },
   savedBadge: {
     display: "inline-flex",

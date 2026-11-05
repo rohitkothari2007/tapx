@@ -5,7 +5,8 @@ import { supabase } from "../lib/supabase";
 import { parseStandTableNumber } from "../lib/tableNumber";
 import { WhatsAppIcon } from "./BrandIcons";
 import UpiPaymentModal from "./UpiPaymentModal";
-import { MENU_TOKENS, MENU_THEME_GLOBAL_CSS } from "../lib/menuTheme";
+import { MENU_TOKENS, MENU_THEME_GLOBAL_CSS, formatDisplayName } from "../lib/menuTheme";
+import { menuFontClassNames } from "../lib/menuFonts";
 
 export type RestaurantExperienceProps = {
   business: {
@@ -780,7 +781,7 @@ export default function RestaurantExperience({
   };
 
   return (
-    <div style={styles.container}>
+    <div className={menuFontClassNames} style={styles.container}>
       {/* Inject Design System CSS Keyframes, CSS variables, and overrides */}
       <style dangerouslySetInnerHTML={{ __html: MENU_THEME_GLOBAL_CSS }} />
 
@@ -961,7 +962,7 @@ export default function RestaurantExperience({
                     borderColor: activeCategoryChip === group.cat.id ? MENU_TOKENS.colors.light.ink : MENU_TOKENS.colors.light.hairline,
                   }}
                 >
-                  {group.cat.name} ({group.items.length})
+                  {formatDisplayName(group.cat.name)} ({group.items.length})
                 </button>
               ))}
             </div>
@@ -985,7 +986,7 @@ export default function RestaurantExperience({
                   style={styles.categorySection}
                 >
                   <div style={styles.sectionHeaderRow}>
-                    <h2 style={styles.sectionCategoryTitle}>{group.cat.name}</h2>
+                    <h2 style={styles.sectionCategoryTitle}>{formatDisplayName(group.cat.name)}</h2>
                     <span style={styles.sectionItemCountBadge}>
                       {group.items.length} {group.items.length === 1 ? "dish" : "dishes"}
                     </span>
@@ -1028,7 +1029,7 @@ export default function RestaurantExperience({
                               )}
                             </div>
 
-                            <h3 style={styles.dishName}>{dish.name}</h3>
+                            <h3 style={styles.dishName}>{formatDisplayName(dish.name)}</h3>
 
                             <div style={styles.dishPriceText}>
                               ₹{numPrice.toFixed(0)}
@@ -1140,7 +1141,7 @@ export default function RestaurantExperience({
       {tableOrderingEnabled && activeTab === "orders" && (
         <div style={styles.ordersTabContainer}>
           <div style={styles.ordersHeaderBox}>
-            <div style={styles.ordersTablePill}>TABLE {tableNumber || "1"}</div>
+            <div style={styles.ordersTablePill}>Table {tableNumber || "1"}</div>
             <h2 style={styles.ordersPageTitle}>My Orders</h2>
             <p style={styles.ordersPageSub}>
               Live status updates for your dine-in table order
@@ -1178,13 +1179,13 @@ export default function RestaurantExperience({
                     <div
                       style={{
                         ...styles.progressBarFill,
-                        width: `${Math.min(
-                          100,
+                        transform: `scaleX(${Math.min(
+                          1,
                           Math.max(
                             0,
-                            ((getStatusDisplay(currentOrder.status).step - 1) / 3) * 100
+                            (getStatusDisplay(currentOrder.status).step - 1) / 3
                           )
-                        )}%`,
+                        )})`,
                       }}
                     />
                   </div>
@@ -1237,7 +1238,7 @@ export default function RestaurantExperience({
                     <div key={item.id} style={styles.orderItemCardRow}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={styles.orderItemNameLine}>
-                          <span style={styles.orderItemName}>{item.item_name}</span>
+                          <span style={styles.orderItemName}>{formatDisplayName(item.item_name)}</span>
                           <span style={styles.orderItemQtyTag}>x{item.quantity}</span>
                         </div>
 
@@ -1358,7 +1359,7 @@ export default function RestaurantExperience({
             <div style={styles.modalHeader}>
               <div style={styles.modalTitleRow}>
                 <DietaryBadge dietary={detailItem.dietary} size={16} />
-                <h3 style={styles.modalTitle}>{detailItem.name}</h3>
+                <h3 style={styles.modalTitle}>{formatDisplayName(detailItem.name)}</h3>
               </div>
               <button
                 type="button"
@@ -1411,9 +1412,9 @@ export default function RestaurantExperience({
                           className="menu-tap-press"
                           style={{
                             ...styles.quickChipBtn,
-                            backgroundColor: isSelected ? MENU_TOKENS.colors.light.accent : MENU_TOKENS.colors.light.accentLight,
+                            backgroundColor: isSelected ? MENU_TOKENS.colors.light.accentInk : MENU_TOKENS.colors.light.accentLight,
                             color: isSelected ? "#FFFFFF" : MENU_TOKENS.colors.light.ink,
-                            borderColor: isSelected ? MENU_TOKENS.colors.light.accent : MENU_TOKENS.colors.light.accentBorder,
+                            borderColor: isSelected ? MENU_TOKENS.colors.light.accentInk : MENU_TOKENS.colors.light.accentBorder,
                           }}
                         >
                           {isSelected ? "✓ " : "+ "}
@@ -1526,7 +1527,7 @@ export default function RestaurantExperience({
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={styles.checkoutItemNameRow}>
                         <DietaryBadge dietary={line.dietary} size={14} />
-                        <span style={styles.checkoutItemName}>{line.name}</span>
+                        <span style={styles.checkoutItemName}>{formatDisplayName(line.name)}</span>
                       </div>
                       <div style={styles.checkoutItemUnit}>
                         ₹{line.unitPrice.toFixed(0)} each
@@ -1595,7 +1596,7 @@ export default function RestaurantExperience({
                         <button
                           type="button"
                           onClick={() => setShowTablePicker(true)}
-                          style={{ background: "none", border: "none", color: MENU_TOKENS.colors.light.accent, fontSize: "12px", fontWeight: 700, cursor: "pointer", padding: 0 }}
+                          style={{ background: "none", border: "none", color: MENU_TOKENS.colors.light.accentInk, fontSize: "12px", fontWeight: 700, cursor: "pointer", padding: 0 }}
                         >
                           Pick from list ›
                         </button>
@@ -1846,7 +1847,7 @@ const styles: Record<string, CSSProperties> = {
     height: "40px",
     borderRadius: MENU_TOKENS.radii.input,
     backgroundColor: MENU_TOKENS.colors.light.accentLight,
-    color: MENU_TOKENS.colors.light.accent,
+    color: MENU_TOKENS.colors.light.accentInk,
     border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     display: "flex",
     alignItems: "center",
@@ -1874,7 +1875,7 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-block",
     fontSize: "11px",
     fontWeight: 600,
-    color: MENU_TOKENS.colors.light.accent,
+    color: MENU_TOKENS.colors.light.accentInk,
     backgroundColor: MENU_TOKENS.colors.light.accentLight,
     border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     padding: "1px 7px",
@@ -2079,7 +2080,7 @@ const styles: Record<string, CSSProperties> = {
   popularTag: {
     fontSize: "10px",
     fontWeight: 700,
-    color: MENU_TOKENS.colors.light.accent,
+    color: MENU_TOKENS.colors.light.accentInk,
     backgroundColor: MENU_TOKENS.colors.light.accentLight,
     border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     padding: "1px 6px",
@@ -2451,7 +2452,7 @@ const styles: Record<string, CSSProperties> = {
   },
   checkoutTableLabel: {
     fontSize: "12px",
-    color: MENU_TOKENS.colors.light.accent,
+    color: MENU_TOKENS.colors.light.accentInk,
     fontWeight: 600,
     marginTop: "2px",
   },
@@ -2494,7 +2495,7 @@ const styles: Record<string, CSSProperties> = {
     marginTop: "6px",
     padding: "3px 8px",
     backgroundColor: MENU_TOKENS.colors.light.accentLight,
-    color: "#8A6424",
+    color: MENU_TOKENS.colors.light.accentInk,
     border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     borderRadius: "6px",
     fontSize: "11px",
@@ -2600,7 +2601,7 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-block",
     padding: "3px 10px",
     backgroundColor: MENU_TOKENS.colors.light.accentLight,
-    color: MENU_TOKENS.colors.light.accent,
+    color: MENU_TOKENS.colors.light.accentInk,
     border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     borderRadius: MENU_TOKENS.radii.badge,
     fontSize: "11px",
@@ -2666,9 +2667,11 @@ const styles: Record<string, CSSProperties> = {
   },
   progressBarFill: {
     height: "100%",
+    width: "100%",
+    transformOrigin: "left",
     backgroundColor: MENU_TOKENS.colors.light.veg,
     borderRadius: "2px",
-    transition: "width 0.3s ease",
+    transition: "transform 0.3s ease",
   },
   stepsRow: {
     position: "relative",
@@ -2741,7 +2744,7 @@ const styles: Record<string, CSSProperties> = {
     marginTop: "4px",
     padding: "2px 8px",
     backgroundColor: MENU_TOKENS.colors.light.accentLight,
-    color: "#8A6424",
+    color: MENU_TOKENS.colors.light.accentInk,
     border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     borderRadius: "4px",
     fontSize: "11px",
@@ -2887,7 +2890,7 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-block",
     fontSize: "11px",
     fontWeight: 700,
-    color: MENU_TOKENS.colors.light.accent,
+    color: MENU_TOKENS.colors.light.accentInk,
     backgroundColor: MENU_TOKENS.colors.light.accentLight,
     border: `1px dashed ${MENU_TOKENS.colors.light.accentBorder}`,
     padding: "3px 8px",

@@ -69,7 +69,7 @@ export const MENU_TOKENS = {
       hairline: "#ECE6DC", // Hairline border
       accent: "#B8893B", // Champagne gold
       accentHover: "#A4772E",
-      accentInk: "#FFFFFF",
+      accentInk: "#8A6424", // Warm amber bronze text/ink (contrast >= 4.5:1)
       accentLight: "#F7F2E8",
       accentBorder: "#E8D9BF",
       veg: "#1E8E3E",
@@ -140,6 +140,7 @@ export const MENU_TOKENS = {
  */
 export const MENU_THEME_GLOBAL_CSS = `
 :root {
+  color-scheme: light;
   --menu-bg: #FBF8F3;
   --menu-surface: #FFFFFF;
   --menu-surface-elevated: #FFFFFF;
@@ -147,7 +148,7 @@ export const MENU_THEME_GLOBAL_CSS = `
   --menu-muted: #6B645C;
   --menu-hairline: #ECE6DC;
   --menu-accent: #B8893B;
-  --menu-accent-ink: #FFFFFF;
+  --menu-accent-ink: #8A6424;
   --menu-accent-light: #F7F2E8;
   --menu-accent-border: #E8D9BF;
   --menu-veg: #1E8E3E;
@@ -162,33 +163,6 @@ export const MENU_THEME_GLOBAL_CSS = `
   --menu-card-shadow: 0 2px 4px rgba(28, 25, 23, 0.02), 0 8px 16px rgba(28, 25, 23, 0.04);
   --menu-elevated-shadow: 0 4px 12px rgba(28, 25, 23, 0.05), 0 16px 32px rgba(28, 25, 23, 0.08);
   --menu-floating-shadow: 0 4px 12px rgba(28, 25, 23, 0.08), 0 12px 28px rgba(28, 25, 23, 0.12);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --menu-bg: #121110;
-    --menu-surface: #1B1917;
-    --menu-surface-elevated: #24211E;
-    --menu-ink: #F5EFE6;
-    --menu-muted: #A8A096;
-    --menu-hairline: #2A2724;
-    --menu-accent: #C99B4C;
-    --menu-accent-ink: #121110;
-    --menu-accent-light: #262118;
-    --menu-accent-border: #4A3B22;
-    --menu-veg: #2EAA50;
-    --menu-veg-bg: #132E1B;
-    --menu-nonveg: #E04848;
-    --menu-nonveg-bg: #331414;
-    --menu-egg: #F0A020;
-    --menu-egg-bg: #33220E;
-    --menu-soldout-text: #64748B;
-    --menu-soldout-bg: #1E293B;
-    --menu-soldout-border: #334155;
-    --menu-card-shadow: 0 2px 4px rgba(0, 0, 0, 0.2), 0 8px 16px rgba(0, 0, 0, 0.3);
-    --menu-elevated-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 16px 32px rgba(0, 0, 0, 0.4);
-    --menu-floating-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 12px 28px rgba(0, 0, 0, 0.45);
-  }
 }
 
 @keyframes menuCardFadeIn {
@@ -274,3 +248,54 @@ export const MENU_THEME_GLOBAL_CSS = `
   }
 }
 `;
+
+const PRESERVED_ACRONYMS = new Set([
+  "BBQ",
+  "BLT",
+  "IPA",
+  "DOP",
+  "USA",
+  "UK",
+  "NY",
+  "LA",
+  "CBD",
+  "GST",
+  "VAP",
+]);
+
+/**
+ * Render-time display helper: converts ALL-CAPS Latin strings to Title Case,
+ * while leaving mixed case (e.g. "Pizza Slice"), non-Latin scripts (e.g. Devanagari),
+ * and recognised acronyms (e.g. "BBQ") untouched.
+ */
+export function formatDisplayName(text?: string | null): string {
+  if (!text) return "";
+  const trimmed = text.trim();
+  if (!trimmed) return text;
+
+  const hasLatinLower = /[a-z]/.test(trimmed);
+  const hasLatinUpper = /[A-Z]/.test(trimmed);
+
+  // If string already has lowercase Latin, or has no uppercase Latin (e.g. Devanagari only), keep as is
+  if (!hasLatinUpper || hasLatinLower) {
+    return text;
+  }
+
+  // Pure Latin uppercase string: convert each word to Title Case, preserving acronyms
+  return trimmed.replace(/[A-Za-z]+(?:'[A-Za-z]+)?/g, (word) => {
+    const upperWord = word.toUpperCase();
+    if (PRESERVED_ACRONYMS.has(upperWord)) {
+      return upperWord;
+    }
+    if (word.includes("'")) {
+      const parts = word.split("'");
+      return (
+        parts[0].charAt(0).toUpperCase() +
+        parts[0].slice(1).toLowerCase() +
+        "'" +
+        parts[1].toLowerCase()
+      );
+    }
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  });
+}

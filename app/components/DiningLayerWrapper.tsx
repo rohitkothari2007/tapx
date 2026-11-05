@@ -9,6 +9,7 @@ import {
   getDiningCardSubtitle,
 } from "../lib/tableNumber";
 import { MENU_TOKENS } from "../lib/menuTheme";
+import { menuFontClassNames } from "../lib/menuFonts";
 
 function UtensilsIcon({ size = 22 }: { size?: number }) {
   return (
@@ -147,7 +148,7 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
       <button
         type="button"
         onClick={openLayer}
-        className="menu-tap-press"
+        className={`menu-tap-press ${menuFontClassNames}`}
         style={styles.cardButton}
       >
         <div style={styles.cardIconBox}>
@@ -173,6 +174,7 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
 
       {/* 2. FULL-SCREEN DINING LAYER OVER THE TAP PAGE */}
       <div
+        className={menuFontClassNames}
         style={{
           ...styles.layerOverlay,
           display: isOpen ? "block" : "none",
