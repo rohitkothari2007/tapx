@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase";
 import { parseStandTableNumber } from "../lib/tableNumber";
 import { WhatsAppIcon } from "./BrandIcons";
 import UpiPaymentModal from "./UpiPaymentModal";
+import { MENU_TOKENS, MENU_THEME_GLOBAL_CSS } from "../lib/menuTheme";
 
 export type RestaurantExperienceProps = {
   business: {
@@ -116,7 +117,7 @@ function parsePrice(raw?: string | number): number {
   return isNaN(val) ? 0 : val;
 }
 
-// Dietary indicator icon
+// Geometric dietary indicator badge
 function DietaryBadge({
   dietary,
   size = 14,
@@ -128,7 +129,11 @@ function DietaryBadge({
 
   const isVeg = dietary === "veg" || dietary === "vegan";
   const isEgg = dietary === "egg";
-  const borderColor = isVeg ? "#16a34a" : isEgg ? "#d97706" : "#dc2626";
+  const borderColor = isVeg
+    ? MENU_TOKENS.colors.light.veg
+    : isEgg
+    ? MENU_TOKENS.colors.light.egg
+    : MENU_TOKENS.colors.light.nonVeg;
   const dotColor = borderColor;
 
   return (
@@ -140,36 +145,62 @@ function DietaryBadge({
         width: `${size}px`,
         height: `${size}px`,
         border: `1.5px solid ${borderColor}`,
-        borderRadius: "3px",
+        borderRadius: "4px",
         flexShrink: 0,
         backgroundColor: "#ffffff",
+        boxSizing: "border-box",
       }}
-      aria-label={isVeg ? "Vegetarian" : isEgg ? "Egg" : "Non-Vegetarian"}
-      title={isVeg ? "Vegetarian" : isEgg ? "Egg" : "Non-Vegetarian"}
+      aria-label={isVeg ? "Vegetarian" : isEgg ? "Contains Egg" : "Non-Vegetarian"}
+      title={isVeg ? "Vegetarian" : isEgg ? "Contains Egg" : "Non-Vegetarian"}
     >
-      <span
-        style={{
-          width: `${Math.max(5, Math.floor(size * 0.45))}px`,
-          height: `${Math.max(5, Math.floor(size * 0.45))}px`,
-          borderRadius: isVeg || isEgg ? "50%" : "2px",
-          backgroundColor: dotColor,
-        }}
-      />
+      {isVeg ? (
+        <span
+          style={{
+            width: `${Math.max(5, Math.floor(size * 0.45))}px`,
+            height: `${Math.max(5, Math.floor(size * 0.45))}px`,
+            borderRadius: "50%",
+            backgroundColor: dotColor,
+          }}
+        />
+      ) : isEgg ? (
+        <span
+          style={{
+            width: `${Math.max(5, Math.floor(size * 0.45))}px`,
+            height: `${Math.max(6, Math.floor(size * 0.52))}px`,
+            borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%",
+            backgroundColor: dotColor,
+          }}
+        />
+      ) : (
+        // Non-veg red triangle
+        <span
+          style={{
+            width: 0,
+            height: 0,
+            borderLeft: `${Math.max(3, Math.floor(size * 0.25))}px solid transparent`,
+            borderRight: `${Math.max(3, Math.floor(size * 0.25))}px solid transparent`,
+            borderBottom: `${Math.max(5, Math.floor(size * 0.45))}px solid ${dotColor}`,
+          }}
+        />
+      )}
     </span>
   );
 }
 
-// Fixed aspect-ratio image with fallback letter placeholder
+// 4:3 Aspect-ratio Dish Image with shimmer background and fade-in
 function DishImage({
   src,
   name,
-  size = 96,
+  width = 92,
+  height = 69,
 }: {
   src?: string;
   name: string;
-  size?: number;
+  width?: number;
+  height?: number;
 }) {
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   const initial = (name || "D").trim().charAt(0).toUpperCase();
 
@@ -177,19 +208,21 @@ function DishImage({
     return (
       <div
         style={{
-          width: `${size}px`,
-          height: `${size}px`,
-          borderRadius: "12px",
-          backgroundColor: "#f1f5f9",
-          border: "1px solid #e2e8f0",
+          width: `${width}px`,
+          height: `${height}px`,
+          borderRadius: "14px",
+          background: "linear-gradient(135deg, #F5EFE6 0%, #E8DCCB 100%)",
+          border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          color: "#475569",
-          fontSize: `${Math.floor(size * 0.4)}px`,
+          color: MENU_TOKENS.colors.light.muted,
+          fontFamily: MENU_TOKENS.fonts.serif,
+          fontSize: `${Math.floor(height * 0.42)}px`,
           fontWeight: 700,
           flexShrink: 0,
           userSelect: "none",
+          boxSizing: "border-box",
         }}
       >
         {initial}
@@ -199,15 +232,17 @@ function DishImage({
 
   return (
     <div
+      className={!loaded ? "menu-shimmer-bg" : undefined}
       style={{
-        width: `${size}px`,
-        height: `${size}px`,
-        borderRadius: "12px",
+        width: `${width}px`,
+        height: `${height}px`,
+        borderRadius: "14px",
         overflow: "hidden",
-        backgroundColor: "#f8fafc",
-        border: "1px solid #e2e8f0",
+        backgroundColor: "#F5EFE6",
+        border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
         flexShrink: 0,
         position: "relative",
+        boxSizing: "border-box",
       }}
     >
       <img
@@ -215,12 +250,15 @@ function DishImage({
         alt={name}
         loading="lazy"
         decoding="async"
+        onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
         style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
           display: "block",
+          opacity: loaded ? 1 : 0,
+          transition: "opacity 200ms ease",
         }}
       />
     </div>
@@ -286,6 +324,9 @@ export default function RestaurantExperience({
   const [cancellingOrder, setCancellingOrder] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
 
+  // Cart animation trigger counter
+  const [cartPopTrigger, setCartPopTrigger] = useState(0);
+
   // Active quick request options
   const activeQuickRequests = useMemo(() => {
     if (Array.isArray(quickRequests) && quickRequests.length > 0) {
@@ -306,6 +347,13 @@ export default function RestaurantExperience({
     () => cartLinesList.reduce((acc, line) => acc + line.unitPrice * line.quantity, 0),
     [cartLinesList]
   );
+
+  // Trigger bounce animation when cart count changes
+  useEffect(() => {
+    if (totalCartCount > 0) {
+      setCartPopTrigger((c) => c + 1);
+    }
+  }, [totalCartCount]);
 
   // Quick helper to get standard line count (no special request)
   const getStandardItemQty = (itemId: string) => {
@@ -716,23 +764,26 @@ export default function RestaurantExperience({
     switch (status) {
       case "pending":
       case "accepted":
-        return { label: "Received", step: 1, bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" };
+        return { label: "Received", step: 1, bg: "#EBF3FF", color: "#1D4ED8", border: "#BFDBFE" };
       case "preparing":
-        return { label: "Preparing", step: 2, bg: "#fef3c7", color: "#b45309", border: "#fde68a" };
+        return { label: "Preparing", step: 2, bg: "#FEF7EC", color: "#B45309", border: "#FDE68A" };
       case "ready":
-        return { label: "Ready to Serve", step: 3, bg: "#ecfdf5", color: "#047857", border: "#a7f3d0" };
+        return { label: "Ready to Serve", step: 3, bg: "#EAF7EE", color: "#047857", border: "#A7F3D0" };
       case "served":
       case "completed":
-        return { label: "Served", step: 4, bg: "#f0fdf4", color: "#15803d", border: "#bbf7d0" };
+        return { label: "Served", step: 4, bg: "#EAF7EE", color: "#15803D", border: "#BBF7D0" };
       case "cancelled":
-        return { label: "Cancelled", step: 0, bg: "#fee2e2", color: "#b91c1c", border: "#fecaca" };
+        return { label: "Cancelled", step: 0, bg: "#FDF2F2", color: "#B91C1C", border: "#FECACA" };
       default:
-        return { label: "Active", step: 1, bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" };
+        return { label: "Active", step: 1, bg: "#EBF3FF", color: "#1D4ED8", border: "#BFDBFE" };
     }
   };
 
   return (
     <div style={styles.container}>
+      {/* Inject Design System CSS Keyframes, CSS variables, and overrides */}
+      <style dangerouslySetInnerHTML={{ __html: MENU_THEME_GLOBAL_CSS }} />
+
       {/* ---------------------------------------------------- */}
       {/* 1. TOP BRAND & ACTION HEADER */}
       {/* ---------------------------------------------------- */}
@@ -757,6 +808,7 @@ export default function RestaurantExperience({
                 <button
                   type="button"
                   onClick={() => setShowTablePicker(true)}
+                  className="menu-tap-press"
                   style={styles.tablePickerTriggerBtn}
                   title="Choose table number"
                 >
@@ -780,6 +832,7 @@ export default function RestaurantExperience({
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => onTrackAction && onTrackAction("whatsapp_click")}
+              className="menu-tap-press"
               style={styles.callStaffBtn}
               title="Call Staff"
             >
@@ -826,11 +879,12 @@ export default function RestaurantExperience({
               <button
                 type="button"
                 onClick={() => setDietaryFilter("all")}
+                className="menu-tap-press"
                 style={{
                   ...styles.dietFilterPill,
-                  backgroundColor: dietaryFilter === "all" ? "#0f172a" : "#ffffff",
-                  color: dietaryFilter === "all" ? "#ffffff" : "#475569",
-                  borderColor: dietaryFilter === "all" ? "#0f172a" : "#e2e8f0",
+                  backgroundColor: dietaryFilter === "all" ? MENU_TOKENS.colors.light.ink : "#FFFFFF",
+                  color: dietaryFilter === "all" ? "#FFFFFF" : MENU_TOKENS.colors.light.muted,
+                  borderColor: dietaryFilter === "all" ? MENU_TOKENS.colors.light.ink : MENU_TOKENS.colors.light.hairline,
                 }}
               >
                 All
@@ -838,11 +892,12 @@ export default function RestaurantExperience({
               <button
                 type="button"
                 onClick={() => setDietaryFilter("veg")}
+                className="menu-tap-press"
                 style={{
                   ...styles.dietFilterPill,
-                  backgroundColor: dietaryFilter === "veg" ? "#15803d" : "#ffffff",
-                  color: dietaryFilter === "veg" ? "#ffffff" : "#15803d",
-                  borderColor: dietaryFilter === "veg" ? "#15803d" : "#bbf7d0",
+                  backgroundColor: dietaryFilter === "veg" ? MENU_TOKENS.colors.light.veg : "#FFFFFF",
+                  color: dietaryFilter === "veg" ? "#FFFFFF" : MENU_TOKENS.colors.light.veg,
+                  borderColor: dietaryFilter === "veg" ? MENU_TOKENS.colors.light.veg : "#C8EBD4",
                 }}
               >
                 <DietaryBadge dietary="veg" size={12} />
@@ -851,11 +906,12 @@ export default function RestaurantExperience({
               <button
                 type="button"
                 onClick={() => setDietaryFilter("non_veg")}
+                className="menu-tap-press"
                 style={{
                   ...styles.dietFilterPill,
-                  backgroundColor: dietaryFilter === "non_veg" ? "#b91c1c" : "#ffffff",
-                  color: dietaryFilter === "non_veg" ? "#ffffff" : "#b91c1c",
-                  borderColor: dietaryFilter === "non_veg" ? "#b91c1c" : "#fecaca",
+                  backgroundColor: dietaryFilter === "non_veg" ? MENU_TOKENS.colors.light.nonVeg : "#FFFFFF",
+                  color: dietaryFilter === "non_veg" ? "#FFFFFF" : MENU_TOKENS.colors.light.nonVeg,
+                  borderColor: dietaryFilter === "non_veg" ? MENU_TOKENS.colors.light.nonVeg : "#FBCBCB",
                 }}
               >
                 <DietaryBadge dietary="non_veg" size={12} />
@@ -864,11 +920,12 @@ export default function RestaurantExperience({
               <button
                 type="button"
                 onClick={() => setDietaryFilter("egg")}
+                className="menu-tap-press"
                 style={{
                   ...styles.dietFilterPill,
-                  backgroundColor: dietaryFilter === "egg" ? "#b45309" : "#ffffff",
-                  color: dietaryFilter === "egg" ? "#ffffff" : "#b45309",
-                  borderColor: dietaryFilter === "egg" ? "#b45309" : "#fed7aa",
+                  backgroundColor: dietaryFilter === "egg" ? MENU_TOKENS.colors.light.egg : "#FFFFFF",
+                  color: dietaryFilter === "egg" ? "#FFFFFF" : MENU_TOKENS.colors.light.egg,
+                  borderColor: dietaryFilter === "egg" ? MENU_TOKENS.colors.light.egg : "#FCE0B0",
                 }}
               >
                 <DietaryBadge dietary="egg" size={12} />
@@ -881,11 +938,12 @@ export default function RestaurantExperience({
               <button
                 type="button"
                 onClick={() => scrollToCategory("all")}
+                className="menu-tap-press"
                 style={{
                   ...styles.categoryChip,
-                  backgroundColor: activeCategoryChip === "all" ? "#0f172a" : "#ffffff",
-                  color: activeCategoryChip === "all" ? "#ffffff" : "#475569",
-                  borderColor: activeCategoryChip === "all" ? "#0f172a" : "#e2e8f0",
+                  backgroundColor: activeCategoryChip === "all" ? MENU_TOKENS.colors.light.ink : "#FFFFFF",
+                  color: activeCategoryChip === "all" ? "#FFFFFF" : MENU_TOKENS.colors.light.muted,
+                  borderColor: activeCategoryChip === "all" ? MENU_TOKENS.colors.light.ink : MENU_TOKENS.colors.light.hairline,
                 }}
               >
                 All ({filteredItems.length})
@@ -895,11 +953,12 @@ export default function RestaurantExperience({
                   key={group.cat.id}
                   type="button"
                   onClick={() => scrollToCategory(group.cat.id)}
+                  className="menu-tap-press"
                   style={{
                     ...styles.categoryChip,
-                    backgroundColor: activeCategoryChip === group.cat.id ? "#0f172a" : "#ffffff",
-                    color: activeCategoryChip === group.cat.id ? "#ffffff" : "#475569",
-                    borderColor: activeCategoryChip === group.cat.id ? "#0f172a" : "#e2e8f0",
+                    backgroundColor: activeCategoryChip === group.cat.id ? MENU_TOKENS.colors.light.ink : "#FFFFFF",
+                    color: activeCategoryChip === group.cat.id ? "#FFFFFF" : MENU_TOKENS.colors.light.muted,
+                    borderColor: activeCategoryChip === group.cat.id ? MENU_TOKENS.colors.light.ink : MENU_TOKENS.colors.light.hairline,
                   }}
                 >
                   {group.cat.name} ({group.items.length})
@@ -933,7 +992,7 @@ export default function RestaurantExperience({
                   </div>
 
                   <div style={styles.cardsGrid}>
-                    {group.items.map((dish) => {
+                    {group.items.map((dish, idx) => {
                       const isSoldOut = dish.available === false;
                       const numPrice = parsePrice(dish.price);
                       const stdQty = getStandardItemQty(dish.id);
@@ -941,10 +1000,13 @@ export default function RestaurantExperience({
                       return (
                         <div
                           key={dish.id}
+                          className="menu-tap-press"
                           style={{
                             ...styles.dishCard,
-                            opacity: isSoldOut ? 0.6 : 1,
-                            backgroundColor: isSoldOut ? "#f8fafc" : "#ffffff",
+                            opacity: isSoldOut ? 0.55 : 1,
+                            backgroundColor: isSoldOut ? "#F7F5F0" : "#FFFFFF",
+                            filter: isSoldOut ? "grayscale(25%)" : "none",
+                            animation: idx < 6 ? `menuCardFadeIn 260ms cubic-bezier(0.22, 1, 0.36, 1) ${idx * 40}ms both` : undefined,
                           }}
                           onClick={() => {
                             if (tableOrderingEnabled && !isSoldOut) {
@@ -988,7 +1050,8 @@ export default function RestaurantExperience({
                             <DishImage
                               src={dish.imageUrl || dish.image_url}
                               name={dish.name}
-                              size={88}
+                              width={92}
+                              height={69}
                             />
 
                             {/* Ordering controls or menu-only sold out label */}
@@ -1007,6 +1070,7 @@ export default function RestaurantExperience({
                                     <button
                                       type="button"
                                       onClick={() => removeStandardItem(dish.id)}
+                                      className="menu-tap-press"
                                       style={styles.stepperActionBtn}
                                       aria-label={`Remove one ${dish.name}`}
                                     >
@@ -1016,6 +1080,7 @@ export default function RestaurantExperience({
                                     <button
                                       type="button"
                                       onClick={() => addStandardItem(dish)}
+                                      className="menu-tap-press"
                                       style={styles.stepperActionBtn}
                                       aria-label={`Add one ${dish.name}`}
                                     >
@@ -1026,6 +1091,7 @@ export default function RestaurantExperience({
                                   <button
                                     type="button"
                                     onClick={() => addStandardItem(dish)}
+                                    className="menu-tap-press"
                                     style={styles.addBtn}
                                   >
                                     + ADD
@@ -1139,9 +1205,10 @@ export default function RestaurantExperience({
                           <div
                             style={{
                               ...styles.stepNode,
-                              backgroundColor: isDone ? "#16a34a" : "#f1f5f9",
-                              borderColor: isCurrent ? "#059669" : isDone ? "#16a34a" : "#cbd5e1",
-                              color: isDone ? "#ffffff" : "#64748b",
+                              backgroundColor: isDone ? MENU_TOKENS.colors.light.veg : "#FFFFFF",
+                              borderColor: isCurrent ? MENU_TOKENS.colors.light.accent : isDone ? MENU_TOKENS.colors.light.veg : MENU_TOKENS.colors.light.hairline,
+                              color: isDone ? "#FFFFFF" : MENU_TOKENS.colors.light.muted,
+                              animation: isCurrent ? "livePulseStep 2s infinite ease-in-out" : undefined,
                             }}
                           >
                             {isDone ? "✓" : s.step}
@@ -1149,7 +1216,7 @@ export default function RestaurantExperience({
                           <span
                             style={{
                               ...styles.stepNodeLabel,
-                              color: isCurrent ? "#0f172a" : isDone ? "#16a34a" : "#94a3b8",
+                              color: isCurrent ? MENU_TOKENS.colors.light.ink : isDone ? MENU_TOKENS.colors.light.veg : MENU_TOKENS.colors.light.muted,
                               fontWeight: isCurrent ? 700 : 500,
                             }}
                           >
@@ -1205,6 +1272,7 @@ export default function RestaurantExperience({
                 <button
                   type="button"
                   onClick={() => setActiveTab("menu")}
+                  className="menu-tap-press"
                   style={styles.orderMoreBtn}
                 >
                   🍴 Order More Items
@@ -1215,6 +1283,7 @@ export default function RestaurantExperience({
                     type="button"
                     disabled={cancellingOrder}
                     onClick={handleCancelOrder}
+                    className="menu-tap-press"
                     style={styles.cancelBtn}
                   >
                     {cancellingOrder ? "Cancelling..." : "Cancel Order"}
@@ -1232,6 +1301,7 @@ export default function RestaurantExperience({
               <button
                 type="button"
                 onClick={() => setActiveTab("menu")}
+                className="menu-tap-press"
                 style={styles.browseMenuBtn}
               >
                 Browse Menu
@@ -1246,7 +1316,13 @@ export default function RestaurantExperience({
       {/* ---------------------------------------------------- */}
       {tableOrderingEnabled && totalCartCount > 0 && activeTab === "menu" && (
         <div style={styles.stickyCartBarWrap}>
-          <div style={styles.stickyCartBar}>
+          <div
+            key={cartPopTrigger}
+            style={{
+              ...styles.stickyCartBar,
+              animation: "cartBarPop 220ms ease",
+            }}
+          >
             <div>
               <div style={styles.cartCountLabel}>
                 {totalCartCount} {totalCartCount === 1 ? "item" : "items"}
@@ -1257,6 +1333,7 @@ export default function RestaurantExperience({
             <button
               type="button"
               onClick={() => setShowCheckoutSheet(true)}
+              className="menu-tap-press"
               style={styles.viewCartBtn}
             >
               <span>View Order</span>
@@ -1331,11 +1408,12 @@ export default function RestaurantExperience({
                           key={chip}
                           type="button"
                           onClick={() => toggleQuickChip(chip)}
+                          className="menu-tap-press"
                           style={{
                             ...styles.quickChipBtn,
-                            backgroundColor: isSelected ? "#0f172a" : "#f1f5f9",
-                            color: isSelected ? "#ffffff" : "#334155",
-                            borderColor: isSelected ? "#0f172a" : "#cbd5e1",
+                            backgroundColor: isSelected ? MENU_TOKENS.colors.light.accent : MENU_TOKENS.colors.light.accentLight,
+                            color: isSelected ? "#FFFFFF" : MENU_TOKENS.colors.light.ink,
+                            borderColor: isSelected ? MENU_TOKENS.colors.light.accent : MENU_TOKENS.colors.light.accentBorder,
                           }}
                         >
                           {isSelected ? "✓ " : "+ "}
@@ -1345,7 +1423,7 @@ export default function RestaurantExperience({
                     })}
                   </div>
 
-                  <label style={{ ...styles.customLabel, marginTop: "12px" }}>
+                  <label style={{ ...styles.customLabel, marginTop: "14px" }}>
                     Special instructions for kitchen:
                   </label>
                   <textarea
@@ -1367,6 +1445,7 @@ export default function RestaurantExperience({
                       <button
                         type="button"
                         onClick={() => setCustomQty((q) => Math.max(1, q - 1))}
+                        className="menu-tap-press"
                         style={styles.stepperActionBtn}
                         aria-label="Decrease quantity"
                       >
@@ -1376,6 +1455,7 @@ export default function RestaurantExperience({
                       <button
                         type="button"
                         onClick={() => setCustomQty((q) => q + 1)}
+                        className="menu-tap-press"
                         style={styles.stepperActionBtn}
                         aria-label="Increase quantity"
                       >
@@ -1399,6 +1479,7 @@ export default function RestaurantExperience({
                 <button
                   type="button"
                   onClick={handleAddCustomizedItem}
+                  className="menu-tap-press"
                   style={styles.confirmAddBtn}
                 >
                   Add to order • ₹{(parsePrice(detailItem.price) * customQty).toFixed(0)}
@@ -1464,6 +1545,7 @@ export default function RestaurantExperience({
                         <button
                           type="button"
                           onClick={() => updateLineQty(line.lineId, -1)}
+                          className="menu-tap-press"
                           style={styles.stepperActionBtn}
                           aria-label={`Decrease ${line.name}`}
                         >
@@ -1473,6 +1555,7 @@ export default function RestaurantExperience({
                         <button
                           type="button"
                           onClick={() => updateLineQty(line.lineId, 1)}
+                          className="menu-tap-press"
                           style={styles.stepperActionBtn}
                           aria-label={`Increase ${line.name}`}
                         >
@@ -1512,7 +1595,7 @@ export default function RestaurantExperience({
                         <button
                           type="button"
                           onClick={() => setShowTablePicker(true)}
-                          style={{ background: "none", border: "none", color: "#2563eb", fontSize: "12px", fontWeight: 700, cursor: "pointer", padding: 0 }}
+                          style={{ background: "none", border: "none", color: MENU_TOKENS.colors.light.accent, fontSize: "12px", fontWeight: 700, cursor: "pointer", padding: 0 }}
                         >
                           Pick from list ›
                         </button>
@@ -1567,6 +1650,7 @@ export default function RestaurantExperience({
                 type="button"
                 disabled={placingOrder}
                 onClick={handlePlaceOrder}
+                className="menu-tap-press"
                 style={styles.placeOrderBtn}
               >
                 {placingOrder ? "Placing Order..." : `Place Order (₹${cartTotal.toFixed(0)})`}
@@ -1616,11 +1700,12 @@ export default function RestaurantExperience({
                         setShowTablePicker(false);
                         setOrderError("");
                       }}
+                      className="menu-tap-press"
                       style={{
                         ...styles.tablePillBtn,
-                        backgroundColor: tableNumber === String(num) ? "#0f172a" : "#f1f5f9",
-                        color: tableNumber === String(num) ? "#ffffff" : "#0f172a",
-                        borderColor: tableNumber === String(num) ? "#0f172a" : "#cbd5e1",
+                        backgroundColor: tableNumber === String(num) ? MENU_TOKENS.colors.light.ink : "#FFFFFF",
+                        color: tableNumber === String(num) ? "#FFFFFF" : MENU_TOKENS.colors.light.ink,
+                        borderColor: tableNumber === String(num) ? MENU_TOKENS.colors.light.ink : MENU_TOKENS.colors.light.hairline,
                       }}
                     >
                       Table {num}
@@ -1653,6 +1738,7 @@ export default function RestaurantExperience({
                       setShowTablePicker(false);
                       setOrderError("");
                     }}
+                    className="menu-tap-press"
                     style={styles.confirmAddBtn}
                   >
                     Confirm Table
@@ -1672,10 +1758,11 @@ export default function RestaurantExperience({
           <button
             type="button"
             onClick={() => setActiveTab("menu")}
+            className="menu-tap-press"
             style={{
               ...styles.navBtn,
-              backgroundColor: activeTab === "menu" ? "#0f172a" : "transparent",
-              color: activeTab === "menu" ? "#ffffff" : "#64748b",
+              backgroundColor: activeTab === "menu" ? MENU_TOKENS.colors.light.ink : "transparent",
+              color: activeTab === "menu" ? "#FFFFFF" : MENU_TOKENS.colors.light.muted,
             }}
           >
             <span style={{ fontSize: "18px" }}>🍴</span>
@@ -1685,10 +1772,11 @@ export default function RestaurantExperience({
           <button
             type="button"
             onClick={() => setActiveTab("orders")}
+            className="menu-tap-press"
             style={{
               ...styles.navBtn,
-              backgroundColor: activeTab === "orders" ? "#0f172a" : "transparent",
-              color: activeTab === "orders" ? "#ffffff" : "#64748b",
+              backgroundColor: activeTab === "orders" ? MENU_TOKENS.colors.light.ink : "transparent",
+              color: activeTab === "orders" ? "#FFFFFF" : MENU_TOKENS.colors.light.muted,
               position: "relative",
             }}
           >
@@ -1713,16 +1801,16 @@ export default function RestaurantExperience({
 
 const styles: Record<string, CSSProperties> = {
   container: {
-    maxWidth: "480px",
+    maxWidth: MENU_TOKENS.layout.maxContentWidth,
     margin: "0 auto",
     minHeight: "100vh",
-    backgroundColor: "#f8fafc",
+    backgroundColor: MENU_TOKENS.colors.light.bg,
     display: "flex",
     flexDirection: "column",
-    paddingBottom: "90px",
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+    paddingBottom: "100px",
+    fontFamily: MENU_TOKENS.fonts.sans,
     position: "relative",
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
     boxSizing: "border-box",
   },
   topHeader: {
@@ -1730,12 +1818,14 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     padding: "12px 16px",
-    backgroundColor: "#ffffff",
-    borderBottom: "1px solid #e2e8f0",
+    backgroundColor: "rgba(251, 248, 243, 0.94)",
+    backdropFilter: "blur(14px)",
+    WebkitBackdropFilter: "blur(14px)",
+    borderBottom: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     position: "sticky",
     top: 0,
     zIndex: 100,
-    boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+    boxShadow: "0 1px 3px rgba(28, 25, 23, 0.03)",
   },
   brandRow: {
     display: "flex",
@@ -1744,23 +1834,25 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
   },
   brandLogo: {
-    width: "38px",
-    height: "38px",
-    borderRadius: "10px",
+    width: "40px",
+    height: "40px",
+    borderRadius: MENU_TOKENS.radii.input,
     objectFit: "cover",
-    border: "1px solid #e2e8f0",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     flexShrink: 0,
   },
   brandLogoPlaceholder: {
-    width: "38px",
-    height: "38px",
-    borderRadius: "10px",
-    backgroundColor: "#0f172a",
-    color: "#ffffff",
+    width: "40px",
+    height: "40px",
+    borderRadius: MENU_TOKENS.radii.input,
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    color: MENU_TOKENS.colors.light.accent,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    fontWeight: 800,
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontWeight: 700,
     fontSize: "18px",
     flexShrink: 0,
   },
@@ -1768,10 +1860,12 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
   },
   businessNameHeading: {
-    fontSize: "16px",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "17px",
     fontWeight: 700,
     margin: 0,
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
+    letterSpacing: "-0.01em",
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
@@ -1780,10 +1874,11 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-block",
     fontSize: "11px",
     fontWeight: 600,
-    color: "#475569",
-    backgroundColor: "#f1f5f9",
-    padding: "1px 6px",
-    borderRadius: "4px",
+    color: MENU_TOKENS.colors.light.accent,
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
+    padding: "1px 7px",
+    borderRadius: MENU_TOKENS.radii.badge,
     marginTop: "2px",
   },
   headerRightActions: {
@@ -1796,38 +1891,40 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     gap: "6px",
-    minHeight: "44px",
-    padding: "0 12px",
-    backgroundColor: "#ecfdf5",
-    color: "#047857",
-    border: "1px solid #a7f3d0",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
+    padding: "0 14px",
+    backgroundColor: MENU_TOKENS.colors.light.vegBg,
+    color: MENU_TOKENS.colors.light.veg,
+    border: "1px solid #A7F3D0",
     borderRadius: "10px",
     fontSize: "12px",
     fontWeight: 700,
     textDecoration: "none",
     boxSizing: "border-box",
     cursor: "pointer",
+    boxShadow: "0 1px 2px rgba(30, 142, 62, 0.08)",
   },
   menuTabContainer: {
     flex: 1,
   },
   searchBarWrapper: {
     padding: "12px 16px 8px 16px",
-    backgroundColor: "#ffffff",
+    backgroundColor: MENU_TOKENS.colors.light.bg,
   },
   searchInputBox: {
     display: "flex",
     alignItems: "center",
-    backgroundColor: "#f1f5f9",
-    borderRadius: "12px",
-    padding: "0 12px",
-    border: "1px solid #e2e8f0",
-    minHeight: "44px",
+    backgroundColor: "#FFFFFF",
+    borderRadius: MENU_TOKENS.radii.chip,
+    padding: "0 14px",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
     boxSizing: "border-box",
+    boxShadow: "0 1px 3px rgba(28, 25, 23, 0.02)",
   },
   searchIcon: {
     fontSize: "14px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     marginRight: "8px",
   },
   searchInput: {
@@ -1835,14 +1932,15 @@ const styles: Record<string, CSSProperties> = {
     border: "none",
     backgroundColor: "transparent",
     fontSize: "14px",
-    color: "#0f172a",
+    fontFamily: MENU_TOKENS.fonts.sans,
+    color: MENU_TOKENS.colors.light.ink,
     outline: "none",
     padding: "8px 0",
   },
   clearSearchBtn: {
     background: "none",
     border: "none",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     fontSize: "14px",
     cursor: "pointer",
     padding: "4px 8px",
@@ -1852,11 +1950,13 @@ const styles: Record<string, CSSProperties> = {
   },
   stickyFilterContainer: {
     position: "sticky",
-    top: "63px",
+    top: "64px",
     zIndex: 90,
-    backgroundColor: "#ffffff",
-    borderBottom: "1px solid #e2e8f0",
-    boxShadow: "0 2px 4px rgba(0,0,0,0.02)",
+    backgroundColor: "rgba(251, 248, 243, 0.94)",
+    backdropFilter: "blur(14px)",
+    WebkitBackdropFilter: "blur(14px)",
+    borderBottom: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    boxShadow: "0 2px 6px rgba(28, 25, 23, 0.02)",
   },
   dietaryFilterRow: {
     display: "flex",
@@ -1870,14 +1970,15 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     gap: "6px",
     minHeight: "36px",
-    padding: "0 12px",
-    borderRadius: "20px",
+    padding: "0 14px",
+    borderRadius: MENU_TOKENS.radii.chip,
     border: "1px solid",
     fontSize: "12px",
     fontWeight: 600,
     cursor: "pointer",
     whiteSpace: "nowrap",
     boxSizing: "border-box",
+    boxShadow: "0 1px 2px rgba(28, 25, 23, 0.03)",
   },
   categoryScrollContainer: {
     display: "flex",
@@ -1890,58 +1991,62 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     minHeight: "34px",
-    padding: "0 12px",
-    borderRadius: "8px",
+    padding: "0 14px",
+    borderRadius: MENU_TOKENS.radii.chip,
     border: "1px solid",
     fontSize: "13px",
     fontWeight: 600,
     cursor: "pointer",
     whiteSpace: "nowrap",
     boxSizing: "border-box",
+    boxShadow: "0 1px 2px rgba(28, 25, 23, 0.03)",
   },
   sectionsList: {
     padding: "12px 16px",
   },
   emptyStateCard: {
-    padding: "40px 20px",
+    padding: "48px 20px",
     textAlign: "center",
-    backgroundColor: "#ffffff",
-    borderRadius: "16px",
-    border: "1px solid #e2e8f0",
+    backgroundColor: "#FFFFFF",
+    borderRadius: MENU_TOKENS.radii.card,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     marginTop: "20px",
+    boxShadow: MENU_TOKENS.shadows.card,
   },
   emptyStateTitle: {
-    fontSize: "16px",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "18px",
     fontWeight: 700,
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
   },
   emptyStateSubtitle: {
     fontSize: "13px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     marginTop: "6px",
   },
   categorySection: {
-    marginBottom: "24px",
+    marginBottom: "28px",
   },
   sectionHeaderRow: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: "12px",
-    paddingBottom: "6px",
-    borderBottom: "1px solid #e2e8f0",
+    paddingBottom: "8px",
+    borderBottom: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
   },
   sectionCategoryTitle: {
-    fontSize: "16px",
-    fontWeight: 800,
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "18px",
+    fontWeight: 700,
     margin: 0,
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
     letterSpacing: "-0.01em",
   },
   sectionItemCountBadge: {
     fontSize: "12px",
     fontWeight: 600,
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
   },
   cardsGrid: {
     display: "flex",
@@ -1953,13 +2058,13 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: "12px",
-    padding: "14px",
-    borderRadius: "16px",
-    border: "1px solid #e2e8f0",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
+    padding: "16px",
+    borderRadius: MENU_TOKENS.radii.card,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    boxShadow: MENU_TOKENS.shadows.card,
     cursor: "pointer",
     boxSizing: "border-box",
-    transition: "background-color 0.15s ease",
+    transition: "background-color 0.15s ease, transform 160ms cubic-bezier(0.22, 1, 0.36, 1)",
   },
   dishInfoCol: {
     flex: 1,
@@ -1974,37 +2079,41 @@ const styles: Record<string, CSSProperties> = {
   popularTag: {
     fontSize: "10px",
     fontWeight: 700,
-    color: "#b45309",
-    backgroundColor: "#fef3c7",
+    color: MENU_TOKENS.colors.light.accent,
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     padding: "1px 6px",
     borderRadius: "4px",
   },
   soldOutBadge: {
     fontSize: "10px",
     fontWeight: 700,
-    color: "#991b1b",
-    backgroundColor: "#fee2e2",
+    color: MENU_TOKENS.colors.light.soldOutText,
+    backgroundColor: MENU_TOKENS.colors.light.soldOutBg,
+    border: `1px solid ${MENU_TOKENS.colors.light.soldOutBorder}`,
     padding: "1px 6px",
     borderRadius: "4px",
   },
   dishName: {
-    fontSize: "15px",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "16px",
     fontWeight: 700,
     margin: "0 0 4px 0",
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
     lineHeight: 1.3,
   },
   dishPriceText: {
-    fontSize: "14px",
-    fontWeight: 800,
-    color: "#0f172a",
+    fontSize: "15px",
+    fontWeight: 600,
+    color: MENU_TOKENS.colors.light.ink,
+    fontVariantNumeric: "tabular-nums",
     marginBottom: "6px",
   },
   dishDescription: {
-    fontSize: "12px",
-    color: "#64748b",
+    fontSize: "12.5px",
+    color: MENU_TOKENS.colors.light.muted,
     margin: 0,
-    lineHeight: 1.4,
+    lineHeight: 1.45,
     display: "-webkit-box",
     WebkitLineClamp: 2,
     WebkitBoxOrient: "vertical",
@@ -2025,29 +2134,29 @@ const styles: Record<string, CSSProperties> = {
     width: "100%",
   },
   addBtn: {
-    minHeight: "44px",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
     width: "100%",
     padding: "0 16px",
-    backgroundColor: "#ffffff",
-    color: "#16a34a",
-    border: "1.5px solid #16a34a",
+    backgroundColor: "#FFFFFF",
+    color: MENU_TOKENS.colors.light.veg,
+    border: `1.5px solid ${MENU_TOKENS.colors.light.veg}`,
     borderRadius: "10px",
     fontSize: "13px",
     fontWeight: 800,
     cursor: "pointer",
-    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+    boxShadow: "0 1px 3px rgba(30, 142, 62, 0.08)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     boxSizing: "border-box",
   },
   soldOutBtn: {
-    minHeight: "44px",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
     width: "100%",
     padding: "0 10px",
-    backgroundColor: "#f1f5f9",
-    color: "#94a3b8",
-    border: "1px solid #e2e8f0",
+    backgroundColor: MENU_TOKENS.colors.light.soldOutBg,
+    color: MENU_TOKENS.colors.light.soldOutText,
+    border: `1px solid ${MENU_TOKENS.colors.light.soldOutBorder}`,
     borderRadius: "10px",
     fontSize: "12px",
     fontWeight: 600,
@@ -2057,7 +2166,7 @@ const styles: Record<string, CSSProperties> = {
   customizeLinkBtn: {
     background: "none",
     border: "none",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     fontSize: "11px",
     fontWeight: 600,
     padding: "2px 4px",
@@ -2066,18 +2175,18 @@ const styles: Record<string, CSSProperties> = {
   stepperBox: {
     display: "inline-flex",
     alignItems: "center",
-    minHeight: "44px",
-    backgroundColor: "#0f172a",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
+    backgroundColor: MENU_TOKENS.colors.light.ink,
     borderRadius: "10px",
     overflow: "hidden",
     boxSizing: "border-box",
   },
   stepperActionBtn: {
-    minWidth: "44px",
-    minHeight: "44px",
+    minWidth: "40px",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
     backgroundColor: "transparent",
     border: "none",
-    color: "#ffffff",
+    color: "#FFFFFF",
     fontSize: "16px",
     fontWeight: 700,
     cursor: "pointer",
@@ -2086,15 +2195,16 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
   },
   stepperValue: {
-    color: "#ffffff",
+    color: "#FFFFFF",
     fontSize: "14px",
-    fontWeight: 800,
+    fontWeight: 700,
+    fontVariantNumeric: "tabular-nums",
     minWidth: "22px",
     textAlign: "center",
   },
   stickyCartBarWrap: {
     position: "fixed",
-    bottom: "65px",
+    bottom: "calc(64px + env(safe-area-inset-bottom, 0px) + 12px)",
     left: 0,
     right: 0,
     display: "flex",
@@ -2104,34 +2214,35 @@ const styles: Record<string, CSSProperties> = {
     padding: "0 16px",
   },
   stickyCartBar: {
-    maxWidth: "480px",
+    maxWidth: MENU_TOKENS.layout.maxContentWidth,
     width: "100%",
-    backgroundColor: "#0f172a",
-    color: "#ffffff",
-    borderRadius: "16px",
-    padding: "10px 16px",
+    backgroundColor: MENU_TOKENS.colors.light.ink,
+    color: "#FFFFFF",
+    borderRadius: MENU_TOKENS.radii.card,
+    padding: "10px 18px",
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+    boxShadow: MENU_TOKENS.shadows.floatingBar,
     pointerEvents: "auto",
     boxSizing: "border-box",
   },
   cartCountLabel: {
     fontSize: "12px",
-    color: "#94a3b8",
+    color: "#A8A096",
     fontWeight: 500,
   },
   cartTotalLabel: {
-    fontSize: "17px",
-    fontWeight: 800,
-    color: "#ffffff",
+    fontSize: "18px",
+    fontWeight: 700,
+    fontVariantNumeric: "tabular-nums",
+    color: "#FFFFFF",
   },
   viewCartBtn: {
-    minHeight: "44px",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
     padding: "0 18px",
-    backgroundColor: "#16a34a",
-    color: "#ffffff",
+    backgroundColor: MENU_TOKENS.colors.light.veg,
+    color: "#FFFFFF",
     border: "none",
     borderRadius: "10px",
     fontSize: "14px",
@@ -2145,35 +2256,37 @@ const styles: Record<string, CSSProperties> = {
   modalOverlay: {
     position: "fixed",
     inset: 0,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    backdropFilter: "blur(4px)",
+    backgroundColor: "rgba(28, 25, 23, 0.6)",
+    backdropFilter: "blur(6px)",
+    WebkitBackdropFilter: "blur(6px)",
     zIndex: 999,
     display: "flex",
     alignItems: "flex-end",
     justifyContent: "center",
+    animation: "menuBackdropFadeIn 200ms ease",
   },
   modalSheet: {
     width: "100%",
-    maxWidth: "480px",
-    backgroundColor: "#ffffff",
-    borderTopLeftRadius: "24px",
-    borderTopRightRadius: "24px",
+    maxWidth: MENU_TOKENS.layout.maxContentWidth,
+    backgroundColor: "#FFFFFF",
+    borderRadius: MENU_TOKENS.radii.sheetTop,
     maxHeight: "88vh",
     overflowY: "auto",
     WebkitOverflowScrolling: "touch",
     display: "flex",
     flexDirection: "column",
-    boxShadow: "0 -4px 20px rgba(0,0,0,0.15)",
+    boxShadow: MENU_TOKENS.shadows.modal,
+    animation: "menuSheetSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1)",
   },
   modalHeader: {
     padding: "16px 20px",
-    borderBottom: "1px solid #e2e8f0",
+    borderBottom: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     position: "sticky",
     top: 0,
-    backgroundColor: "#ffffff",
+    backgroundColor: "#FFFFFF",
     zIndex: 10,
   },
   modalTitleRow: {
@@ -2183,18 +2296,19 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
   },
   modalTitle: {
-    fontSize: "17px",
-    fontWeight: 800,
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "18px",
+    fontWeight: 700,
     margin: 0,
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
   },
   modalCloseBtn: {
-    minWidth: "44px",
-    minHeight: "44px",
-    backgroundColor: "#f1f5f9",
-    border: "none",
+    minWidth: "40px",
+    minHeight: "40px",
+    backgroundColor: MENU_TOKENS.colors.light.bg,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     borderRadius: "50%",
-    color: "#475569",
+    color: MENU_TOKENS.colors.light.muted,
     fontSize: "15px",
     fontWeight: 700,
     cursor: "pointer",
@@ -2208,11 +2322,12 @@ const styles: Record<string, CSSProperties> = {
   },
   modalImageWrap: {
     width: "100%",
-    height: "190px",
-    borderRadius: "14px",
+    height: "200px",
+    borderRadius: "16px",
     overflow: "hidden",
-    marginBottom: "14px",
-    backgroundColor: "#f1f5f9",
+    marginBottom: "16px",
+    backgroundColor: "#F5EFE6",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
   },
   modalImg: {
     width: "100%",
@@ -2221,26 +2336,27 @@ const styles: Record<string, CSSProperties> = {
   },
   modalPriceText: {
     fontSize: "18px",
-    fontWeight: 800,
-    color: "#0f172a",
+    fontWeight: 700,
+    fontVariantNumeric: "tabular-nums",
+    color: MENU_TOKENS.colors.light.ink,
     marginBottom: "6px",
   },
   modalDescription: {
-    fontSize: "13px",
-    color: "#475569",
+    fontSize: "13.5px",
+    color: MENU_TOKENS.colors.light.muted,
     lineHeight: 1.5,
     margin: "0 0 16px 0",
   },
   customizationSection: {
     marginTop: "16px",
-    borderTop: "1px solid #f1f5f9",
+    borderTop: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     paddingTop: "14px",
   },
   customLabel: {
     display: "block",
     fontSize: "13px",
     fontWeight: 700,
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
     marginBottom: "8px",
   },
   quickChipsWrap: {
@@ -2251,8 +2367,8 @@ const styles: Record<string, CSSProperties> = {
   },
   quickChipBtn: {
     minHeight: "36px",
-    padding: "0 10px",
-    borderRadius: "18px",
+    padding: "0 12px",
+    borderRadius: MENU_TOKENS.radii.chip,
     border: "1px solid",
     fontSize: "12px",
     fontWeight: 600,
@@ -2261,18 +2377,20 @@ const styles: Record<string, CSSProperties> = {
   },
   customTextarea: {
     width: "100%",
-    borderRadius: "10px",
-    border: "1px solid #cbd5e1",
-    padding: "10px",
+    borderRadius: MENU_TOKENS.radii.input,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    padding: "12px",
     fontSize: "13px",
-    fontFamily: "inherit",
+    fontFamily: MENU_TOKENS.fonts.sans,
+    color: MENU_TOKENS.colors.light.ink,
+    backgroundColor: "#FFFFFF",
     boxSizing: "border-box",
     outline: "none",
     resize: "none",
   },
   charCountText: {
     fontSize: "11px",
-    color: "#94a3b8",
+    color: MENU_TOKENS.colors.light.muted,
     textAlign: "right",
     marginTop: "2px",
   },
@@ -2282,55 +2400,58 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     marginTop: "16px",
     paddingTop: "12px",
-    borderTop: "1px solid #f1f5f9",
+    borderTop: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
   },
   modalQtyLabel: {
     fontSize: "14px",
     fontWeight: 700,
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
   },
   soldOutNoticeBanner: {
     marginTop: "14px",
-    padding: "10px 14px",
-    backgroundColor: "#fee2e2",
-    color: "#991b1b",
+    padding: "12px 14px",
+    backgroundColor: MENU_TOKENS.colors.light.soldOutBg,
+    color: MENU_TOKENS.colors.light.soldOutText,
+    border: `1px solid ${MENU_TOKENS.colors.light.soldOutBorder}`,
     fontSize: "12px",
     fontWeight: 600,
-    borderRadius: "8px",
+    borderRadius: "10px",
   },
   modalFooter: {
     padding: "14px 20px",
-    borderTop: "1px solid #e2e8f0",
-    backgroundColor: "#ffffff",
+    borderTop: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    backgroundColor: "#FFFFFF",
+    paddingBottom: "max(16px, env(safe-area-inset-bottom, 16px))",
   },
   confirmAddBtn: {
     width: "100%",
     minHeight: "48px",
-    backgroundColor: "#16a34a",
-    color: "#ffffff",
+    backgroundColor: MENU_TOKENS.colors.light.veg,
+    color: "#FFFFFF",
     border: "none",
     borderRadius: "12px",
     fontSize: "15px",
-    fontWeight: 800,
+    fontWeight: 700,
+    fontVariantNumeric: "tabular-nums",
     cursor: "pointer",
     boxSizing: "border-box",
   },
   checkoutSheet: {
     width: "100%",
-    maxWidth: "480px",
-    backgroundColor: "#ffffff",
-    borderTopLeftRadius: "24px",
-    borderTopRightRadius: "24px",
+    maxWidth: MENU_TOKENS.layout.maxContentWidth,
+    backgroundColor: "#FFFFFF",
+    borderRadius: MENU_TOKENS.radii.sheetTop,
     maxHeight: "90vh",
     overflowY: "auto",
     WebkitOverflowScrolling: "touch",
     display: "flex",
     flexDirection: "column",
-    boxShadow: "0 -4px 20px rgba(0,0,0,0.15)",
+    boxShadow: MENU_TOKENS.shadows.modal,
+    animation: "menuSheetSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1)",
   },
   checkoutTableLabel: {
     fontSize: "12px",
-    color: "#047857",
+    color: MENU_TOKENS.colors.light.accent,
     fontWeight: 600,
     marginTop: "2px",
   },
@@ -2350,7 +2471,7 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     gap: "12px",
     paddingBottom: "12px",
-    borderBottom: "1px solid #f1f5f9",
+    borderBottom: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
   },
   checkoutItemNameRow: {
     display: "flex",
@@ -2358,21 +2479,23 @@ const styles: Record<string, CSSProperties> = {
     gap: "6px",
   },
   checkoutItemName: {
-    fontSize: "14px",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "15px",
     fontWeight: 700,
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
   },
   checkoutItemUnit: {
     fontSize: "12px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
+    fontVariantNumeric: "tabular-nums",
     marginTop: "2px",
   },
   checkoutRequestPill: {
     marginTop: "6px",
     padding: "3px 8px",
-    backgroundColor: "#fef3c7",
-    color: "#92400e",
-    border: "1px solid #fde68a",
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    color: "#8A6424",
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     borderRadius: "6px",
     fontSize: "11px",
     lineHeight: 1.3,
@@ -2385,32 +2508,35 @@ const styles: Record<string, CSSProperties> = {
     gap: "4px",
   },
   checkoutLineTotal: {
-    fontSize: "14px",
-    fontWeight: 800,
-    color: "#0f172a",
+    fontSize: "15px",
+    fontWeight: 700,
+    fontVariantNumeric: "tabular-nums",
+    color: MENU_TOKENS.colors.light.ink,
   },
   billBox: {
-    backgroundColor: "#f8fafc",
-    borderRadius: "12px",
-    padding: "12px 14px",
+    backgroundColor: MENU_TOKENS.colors.light.bg,
+    borderRadius: MENU_TOKENS.radii.input,
+    padding: "14px 16px",
     marginBottom: "16px",
-    border: "1px solid #e2e8f0",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
   },
   billRow: {
     display: "flex",
     justifyContent: "space-between",
     fontSize: "13px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
+    fontVariantNumeric: "tabular-nums",
     marginBottom: "6px",
   },
   billTotalRow: {
     display: "flex",
     justifyContent: "space-between",
-    fontSize: "15px",
-    fontWeight: 800,
-    color: "#0f172a",
-    paddingTop: "6px",
-    borderTop: "1px dashed #cbd5e1",
+    fontSize: "16px",
+    fontWeight: 700,
+    fontVariantNumeric: "tabular-nums",
+    color: MENU_TOKENS.colors.light.ink,
+    paddingTop: "8px",
+    borderTop: `1px dashed ${MENU_TOKENS.colors.light.hairline}`,
   },
   customerInputsBox: {
     marginBottom: "12px",
@@ -2419,24 +2545,26 @@ const styles: Record<string, CSSProperties> = {
     display: "block",
     fontSize: "12px",
     fontWeight: 700,
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
     marginBottom: "4px",
   },
   inputField: {
     width: "100%",
-    minHeight: "44px",
-    padding: "0 12px",
-    borderRadius: "10px",
-    border: "1px solid #cbd5e1",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
+    padding: "0 14px",
+    borderRadius: MENU_TOKENS.radii.input,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     fontSize: "14px",
-    fontFamily: "inherit",
+    fontFamily: MENU_TOKENS.fonts.sans,
+    color: MENU_TOKENS.colors.light.ink,
+    backgroundColor: "#FFFFFF",
     boxSizing: "border-box",
     outline: "none",
   },
   orderErrorAlert: {
     padding: "10px 12px",
-    backgroundColor: "#fee2e2",
-    color: "#991b1b",
+    backgroundColor: "#FDF2F2",
+    color: "#B91C1C",
     fontSize: "12px",
     fontWeight: 600,
     borderRadius: "8px",
@@ -2444,18 +2572,20 @@ const styles: Record<string, CSSProperties> = {
   },
   checkoutFooter: {
     padding: "14px 20px",
-    borderTop: "1px solid #e2e8f0",
-    backgroundColor: "#ffffff",
+    borderTop: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    backgroundColor: "#FFFFFF",
+    paddingBottom: "max(16px, env(safe-area-inset-bottom, 16px))",
   },
   placeOrderBtn: {
     width: "100%",
     minHeight: "48px",
-    backgroundColor: "#16a34a",
-    color: "#ffffff",
+    backgroundColor: MENU_TOKENS.colors.light.veg,
+    color: "#FFFFFF",
     border: "none",
     borderRadius: "12px",
     fontSize: "15px",
-    fontWeight: 800,
+    fontWeight: 700,
+    fontVariantNumeric: "tabular-nums",
     cursor: "pointer",
     boxSizing: "border-box",
   },
@@ -2468,32 +2598,33 @@ const styles: Record<string, CSSProperties> = {
   },
   ordersTablePill: {
     display: "inline-block",
-    padding: "2px 8px",
-    backgroundColor: "#ecfdf5",
-    color: "#047857",
-    border: "1px solid #a7f3d0",
-    borderRadius: "6px",
+    padding: "3px 10px",
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    color: MENU_TOKENS.colors.light.accent,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
+    borderRadius: MENU_TOKENS.radii.badge,
     fontSize: "11px",
     fontWeight: 800,
     marginBottom: "6px",
   },
   ordersPageTitle: {
-    fontSize: "20px",
-    fontWeight: 800,
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "22px",
+    fontWeight: 700,
     margin: 0,
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
   },
   ordersPageSub: {
     fontSize: "13px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     margin: "4px 0 0 0",
   },
   orderCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: "18px",
-    border: "1px solid #e2e8f0",
-    padding: "18px",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+    backgroundColor: "#FFFFFF",
+    borderRadius: MENU_TOKENS.radii.card,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    padding: "20px",
+    boxShadow: MENU_TOKENS.shadows.card,
   },
   orderTopMetaRow: {
     display: "flex",
@@ -2502,24 +2633,25 @@ const styles: Record<string, CSSProperties> = {
     marginBottom: "16px",
   },
   orderIdText: {
-    fontSize: "16px",
-    fontWeight: 800,
-    color: "#0f172a",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "17px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.ink,
   },
   orderTimeText: {
     fontSize: "12px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     marginTop: "2px",
   },
   statusBadge: {
-    padding: "4px 10px",
-    borderRadius: "20px",
+    padding: "4px 12px",
+    borderRadius: MENU_TOKENS.radii.chip,
     border: "1px solid",
     fontSize: "12px",
-    fontWeight: 800,
+    fontWeight: 700,
   },
   stepperProgressContainer: {
-    margin: "18px 0 20px 0",
+    margin: "20px 0 22px 0",
     position: "relative",
   },
   progressTrack: {
@@ -2528,13 +2660,13 @@ const styles: Record<string, CSSProperties> = {
     left: "24px",
     right: "24px",
     height: "4px",
-    backgroundColor: "#e2e8f0",
+    backgroundColor: MENU_TOKENS.colors.light.hairline,
     borderRadius: "2px",
     zIndex: 1,
   },
   progressBarFill: {
     height: "100%",
-    backgroundColor: "#16a34a",
+    backgroundColor: MENU_TOKENS.colors.light.veg,
     borderRadius: "2px",
     transition: "width 0.3s ease",
   },
@@ -2560,7 +2692,7 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
     fontSize: "11px",
     fontWeight: 800,
-    backgroundColor: "#ffffff",
+    backgroundColor: "#FFFFFF",
     boxSizing: "border-box",
   },
   stepNodeLabel: {
@@ -2571,12 +2703,12 @@ const styles: Record<string, CSSProperties> = {
   orderItemsSection: {
     marginTop: "16px",
     paddingTop: "14px",
-    borderTop: "1px solid #f1f5f9",
+    borderTop: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
   },
   sectionSubHeader: {
     fontSize: "13px",
     fontWeight: 700,
-    color: "#475569",
+    color: MENU_TOKENS.colors.light.muted,
     marginBottom: "10px",
   },
   orderItemsList: {
@@ -2596,33 +2728,35 @@ const styles: Record<string, CSSProperties> = {
     gap: "6px",
   },
   orderItemName: {
-    fontWeight: 600,
-    color: "#0f172a",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.ink,
   },
   orderItemQtyTag: {
-    fontWeight: 800,
-    color: "#16a34a",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.veg,
     fontSize: "12px",
   },
   itemRequestBadge: {
     marginTop: "4px",
-    padding: "2px 6px",
-    backgroundColor: "#fef3c7",
-    color: "#92400e",
-    border: "1px solid #fde68a",
+    padding: "2px 8px",
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    color: "#8A6424",
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     borderRadius: "4px",
     fontSize: "11px",
     display: "inline-block",
   },
   orderItemPrice: {
-    fontWeight: 700,
-    color: "#0f172a",
+    fontWeight: 600,
+    fontVariantNumeric: "tabular-nums",
+    color: MENU_TOKENS.colors.light.ink,
     marginLeft: "10px",
   },
   orderTotalDivider: {
     height: "1px",
-    backgroundColor: "#e2e8f0",
-    margin: "12px 0",
+    backgroundColor: MENU_TOKENS.colors.light.hairline,
+    margin: "14px 0",
   },
   orderTotalRow: {
     display: "flex",
@@ -2632,12 +2766,13 @@ const styles: Record<string, CSSProperties> = {
   orderTotalLabel: {
     fontSize: "14px",
     fontWeight: 700,
-    color: "#475569",
+    color: MENU_TOKENS.colors.light.muted,
   },
   orderTotalAmount: {
-    fontSize: "17px",
-    fontWeight: 800,
-    color: "#0f172a",
+    fontSize: "18px",
+    fontWeight: 700,
+    fontVariantNumeric: "tabular-nums",
+    color: MENU_TOKENS.colors.light.ink,
   },
   orderActionsRow: {
     marginTop: "20px",
@@ -2647,9 +2782,9 @@ const styles: Record<string, CSSProperties> = {
   },
   orderMoreBtn: {
     width: "100%",
-    minHeight: "44px",
-    backgroundColor: "#0f172a",
-    color: "#ffffff",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
+    backgroundColor: MENU_TOKENS.colors.light.ink,
+    color: "#FFFFFF",
     border: "none",
     borderRadius: "10px",
     fontSize: "14px",
@@ -2659,10 +2794,10 @@ const styles: Record<string, CSSProperties> = {
   },
   cancelBtn: {
     width: "100%",
-    minHeight: "44px",
-    backgroundColor: "#ffffff",
-    color: "#dc2626",
-    border: "1px solid #fecaca",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
+    backgroundColor: "#FFFFFF",
+    color: MENU_TOKENS.colors.light.nonVeg,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     borderRadius: "10px",
     fontSize: "13px",
     fontWeight: 600,
@@ -2672,27 +2807,29 @@ const styles: Record<string, CSSProperties> = {
   emptyOrdersCard: {
     padding: "48px 24px",
     textAlign: "center",
-    backgroundColor: "#ffffff",
-    borderRadius: "18px",
-    border: "1px solid #e2e8f0",
+    backgroundColor: "#FFFFFF",
+    borderRadius: MENU_TOKENS.radii.card,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    boxShadow: MENU_TOKENS.shadows.card,
   },
   emptyOrdersTitle: {
-    fontSize: "17px",
-    fontWeight: 800,
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "18px",
+    fontWeight: 700,
     margin: "0 0 6px 0",
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
   },
   emptyOrdersSub: {
     fontSize: "13px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     lineHeight: 1.5,
     margin: "0 0 20px 0",
   },
   browseMenuBtn: {
-    minHeight: "44px",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
     padding: "0 24px",
-    backgroundColor: "#0f172a",
-    color: "#ffffff",
+    backgroundColor: MENU_TOKENS.colors.light.ink,
+    color: "#FFFFFF",
     border: "none",
     borderRadius: "10px",
     fontSize: "14px",
@@ -2704,17 +2841,18 @@ const styles: Record<string, CSSProperties> = {
     bottom: 0,
     left: 0,
     right: 0,
-    maxWidth: "480px",
+    maxWidth: MENU_TOKENS.layout.maxContentWidth,
     margin: "0 auto",
     height: "64px",
-    backgroundColor: "rgba(255, 255, 255, 0.96)",
-    backdropFilter: "blur(12px)",
-    borderTop: "1px solid #e2e8f0",
+    backgroundColor: "rgba(251, 248, 243, 0.94)",
+    backdropFilter: "blur(14px)",
+    WebkitBackdropFilter: "blur(14px)",
+    borderTop: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     display: "flex",
     alignItems: "center",
     justifyContent: "space-around",
     zIndex: 100,
-    boxShadow: "0 -2px 10px rgba(0,0,0,0.03)",
+    boxShadow: "0 -2px 10px rgba(28, 25, 23, 0.03)",
   },
   navBtn: {
     flex: 1,
@@ -2741,16 +2879,17 @@ const styles: Record<string, CSSProperties> = {
     width: "8px",
     height: "8px",
     borderRadius: "50%",
-    backgroundColor: "#16a34a",
-    boxShadow: "0 0 0 2px #ffffff",
+    backgroundColor: MENU_TOKENS.colors.light.veg,
+    boxShadow: "0 0 0 2px #FFFFFF",
+    animation: "livePulseStep 2s infinite ease-in-out",
   },
   tablePickerTriggerBtn: {
     display: "inline-block",
     fontSize: "11px",
     fontWeight: 700,
-    color: "#2563eb",
-    backgroundColor: "#eff6ff",
-    border: "1px dashed #93c5fd",
+    color: MENU_TOKENS.colors.light.accent,
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    border: `1px dashed ${MENU_TOKENS.colors.light.accentBorder}`,
     padding: "3px 8px",
     borderRadius: "6px",
     marginTop: "2px",
@@ -2758,18 +2897,18 @@ const styles: Record<string, CSSProperties> = {
   },
   tablePickerModal: {
     width: "100%",
-    maxWidth: "480px",
-    backgroundColor: "#ffffff",
-    borderTopLeftRadius: "24px",
-    borderTopRightRadius: "24px",
+    maxWidth: MENU_TOKENS.layout.maxContentWidth,
+    backgroundColor: "#FFFFFF",
+    borderRadius: MENU_TOKENS.radii.sheetTop,
     maxHeight: "85vh",
     overflowY: "auto",
     WebkitOverflowScrolling: "touch",
-    boxShadow: "0 -4px 20px rgba(0,0,0,0.15)",
+    boxShadow: MENU_TOKENS.shadows.modal,
+    animation: "menuSheetSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1)",
   },
   tablePickerSubtitle: {
     fontSize: "12px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     margin: "4px 0 0 0",
   },
   tablePickerBody: {
@@ -2781,7 +2920,7 @@ const styles: Record<string, CSSProperties> = {
     gap: "10px",
   },
   tablePillBtn: {
-    minHeight: "44px",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
     padding: "8px 4px",
     borderRadius: "10px",
     border: "1px solid",

@@ -8,6 +8,7 @@ import DigitalMenuEditor, {
   type MenuItem,
   DEFAULT_QUICK_REQUESTS,
 } from "../components/DigitalMenuEditor";
+import { MENU_TOKENS } from "../lib/menuTheme";
 
 type Props = {
   businessId: string;
@@ -150,27 +151,43 @@ export default function MenuManagerSection({
         throw new Error(fetchErr.message || "Failed to query module configuration.");
       }
 
-      // Merge: preserve everything else in existing row config (hero texts, etc.)
+      const existingConfigObj = (existingRow?.config || {}) as Record<string, unknown>;
+
       const mergedConfig: DigitalMenuConfig = {
-        ...(existingRow?.config || {}),
-        ...config,
+        ...existingConfigObj,
         categories,
         items,
-        quick_requests: config.quick_requests || DEFAULT_QUICK_REQUESTS,
+        quick_requests:
+          Array.isArray(config.quick_requests) && config.quick_requests.length > 0
+            ? config.quick_requests
+            : DEFAULT_QUICK_REQUESTS,
       };
 
-      // Check size limit
-      const payloadBytes = new TextEncoder().encode(JSON.stringify(mergedConfig)).length;
-      if (payloadBytes > MAX_PAYLOAD_BYTES) {
+      // 3. Payload size validation (< 300 KB)
+      const encodedBytes = new TextEncoder().encode(JSON.stringify(mergedConfig)).length;
+      if (encodedBytes > MAX_PAYLOAD_BYTES) {
         setSaveError(
-          `Cannot save: menu data is ${(payloadBytes / 1024).toFixed(1)} KB, which exceeds the 300 KB limit.`
+          `Cannot save: menu configuration size (${Math.round(
+            encodedBytes / 1024
+          )} KB) exceeds the maximum allowed 300 KB limit. Please reduce image URLs or descriptions.`
         );
         setSaving(false);
         return;
       }
 
-      // 3. Update existing or insert new without .upsert()
-      if (existingRow?.id) {
+      if (!existingRow?.id) {
+        // If row doesn't exist, insert new
+        const { error: insertErr } = await supabase
+          .from("business_module_configs")
+          .insert({
+            business_id: businessId,
+            module_key: "digital_menu",
+            config: mergedConfig,
+          });
+
+        if (insertErr) throw insertErr;
+      } else {
+        // Update existing row
         const { error: updateErr } = await supabase
           .from("business_module_configs")
           .update({
@@ -180,69 +197,57 @@ export default function MenuManagerSection({
           .eq("id", existingRow.id);
 
         if (updateErr) throw updateErr;
-      } else {
-        const { data: featureData } = await supabase
-          .from("feature_catalog")
-          .select("id")
-          .eq("feature_key", "digital_menu")
-          .maybeSingle();
-
-        const { error: insertErr } = await supabase
-          .from("business_module_configs")
-          .insert({
-            business_id: businessId,
-            module_key: "digital_menu",
-            feature_id: featureData?.id || "digital_menu",
-            config: mergedConfig,
-            status: "active",
-          });
-
-        if (insertErr) throw insertErr;
       }
 
+      // Update state
       setConfig(mergedConfig);
       setOriginalConfigJson(JSON.stringify(mergedConfig));
-      setSaveMessage("Menu saved successfully! Changes are now live on your customer tap page.");
-      setTimeout(() => setSaveMessage(""), 5000);
+      setSaveMessage("Menu changes saved successfully! Updates are live on your stands.");
+
+      // Auto-hide success message after 5 seconds
+      setTimeout(() => {
+        setSaveMessage("");
+      }, 5000);
     } catch (err: any) {
       console.error("Save menu error:", err);
-      setSaveError(err.message || "An error occurred while saving the menu.");
+      setSaveError(err.message || "An unexpected error occurred while saving the menu.");
     } finally {
       setSaving(false);
     }
   };
 
   const handleOpenCustomerMenu = () => {
-    if (typeof window !== "undefined") {
-      const url = deviceCode ? `/tap/${deviceCode}` : `/tap/`;
-      window.open(url, "_blank", "noopener,noreferrer");
+    if (deviceCode) {
+      window.open(`/tap/${deviceCode}#menu`, "_blank");
+    } else {
+      window.open(`/tap?businessId=${businessId}#menu`, "_blank");
     }
   };
 
   if (loading) {
     return (
       <div style={styles.loadingContainer}>
-        <div style={styles.loadingSpinner}>☷</div>
-        <div style={styles.loadingText}>Loading your digital menu...</div>
+        <div style={styles.loadingSpinner}>🍽️</div>
+        <div style={styles.loadingText}>Loading Digital Menu Manager...</div>
       </div>
     );
   }
 
   return (
     <div style={styles.wrapper}>
-      {/* ACTION BAR / TOP HEADER */}
+      {/* STATUS & ACTIONS BAR */}
       <div style={styles.statusBar}>
         <div style={styles.statusLeft}>
           {hasUnsavedChanges ? (
-            <div style={styles.unsavedBadge}>
+            <span style={styles.unsavedBadge}>
               <span style={styles.unsavedDot}>●</span>
-              <span>You have unsaved menu changes</span>
-            </div>
+              <span>Unsaved changes</span>
+            </span>
           ) : (
-            <div style={styles.savedBadge}>
+            <span style={styles.savedBadge}>
               <span style={styles.savedDot}>✓</span>
               <span>All changes saved</span>
-            </div>
+            </span>
           )}
         </div>
 
@@ -300,19 +305,21 @@ const styles: Record<string, CSSProperties> = {
     margin: "0 auto",
     paddingBottom: "80px",
     position: "relative",
+    fontFamily: MENU_TOKENS.fonts.sans,
   },
   loadingContainer: {
     padding: "80px 20px",
     textAlign: "center",
+    fontFamily: MENU_TOKENS.fonts.sans,
   },
   loadingSpinner: {
     fontSize: "32px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     marginBottom: "12px",
   },
   loadingText: {
     fontSize: "14px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     fontWeight: 600,
   },
   statusBar: {
@@ -321,10 +328,10 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     padding: "12px 18px",
     marginBottom: "20px",
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "14px",
-    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.04)",
+    background: "#FFFFFF",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: MENU_TOKENS.radii.card,
+    boxShadow: MENU_TOKENS.shadows.card,
   },
   statusLeft: {
     display: "flex",
@@ -335,26 +342,26 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     gap: "6px",
     padding: "4px 10px",
-    borderRadius: "8px",
-    background: "#fffbeb",
-    border: "1px solid #fde68a",
-    color: "#92400e",
+    borderRadius: MENU_TOKENS.radii.badge,
+    background: MENU_TOKENS.colors.light.accentLight,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
+    color: "#8A6424",
     fontSize: "12px",
     fontWeight: 700,
   },
   unsavedDot: {
     fontSize: "10px",
-    color: "#d97706",
+    color: MENU_TOKENS.colors.light.accent,
   },
   savedBadge: {
     display: "inline-flex",
     alignItems: "center",
     gap: "6px",
     padding: "4px 10px",
-    borderRadius: "8px",
-    background: "#f0fdf4",
-    border: "1px solid #bbf7d0",
-    color: "#166534",
+    borderRadius: MENU_TOKENS.radii.badge,
+    background: MENU_TOKENS.colors.light.vegBg,
+    border: "1px solid #A7F3D0",
+    color: MENU_TOKENS.colors.light.veg,
     fontSize: "12px",
     fontWeight: 700,
   },
@@ -369,22 +376,22 @@ const styles: Record<string, CSSProperties> = {
   saveButton: {
     padding: "10px 20px",
     borderRadius: "10px",
-    background: "#0f172a",
-    color: "#ffffff",
+    background: MENU_TOKENS.colors.light.ink,
+    color: "#FFFFFF",
     border: "none",
     fontSize: "13px",
     fontWeight: 700,
-    fontFamily: "inherit",
-    minHeight: "44px",
+    fontFamily: MENU_TOKENS.fonts.sans,
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
     transition: "background 0.15s ease",
   },
   successBanner: {
     padding: "12px 16px",
     marginBottom: "18px",
     borderRadius: "12px",
-    background: "#f0fdf4",
-    border: "1px solid #bbf7d0",
-    color: "#166534",
+    background: MENU_TOKENS.colors.light.vegBg,
+    border: "1px solid #A7F3D0",
+    color: MENU_TOKENS.colors.light.veg,
     fontSize: "13px",
     fontWeight: 700,
   },
@@ -392,9 +399,9 @@ const styles: Record<string, CSSProperties> = {
     padding: "12px 16px",
     marginBottom: "18px",
     borderRadius: "12px",
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
-    color: "#b91c1c",
+    background: "#FDF2F2",
+    border: "1px solid #FECACA",
+    color: "#B91C1C",
     fontSize: "13px",
     fontWeight: 700,
   },
@@ -407,11 +414,11 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: "16px",
-    padding: "12px 20px",
-    background: "#0f172a",
-    color: "#ffffff",
-    borderRadius: "999px",
-    boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.3)",
+    padding: "12px 22px",
+    background: MENU_TOKENS.colors.light.ink,
+    color: "#FFFFFF",
+    borderRadius: MENU_TOKENS.radii.chip,
+    boxShadow: MENU_TOKENS.shadows.floatingBar,
   },
   floatingText: {
     fontSize: "13px",
@@ -419,14 +426,14 @@ const styles: Record<string, CSSProperties> = {
   },
   floatingSaveButton: {
     padding: "8px 18px",
-    borderRadius: "999px",
-    background: "#ffffff",
-    color: "#0f172a",
+    borderRadius: MENU_TOKENS.radii.chip,
+    background: "#FFFFFF",
+    color: MENU_TOKENS.colors.light.ink,
     border: "none",
     fontSize: "12px",
     fontWeight: 800,
     cursor: "pointer",
-    fontFamily: "inherit",
+    fontFamily: MENU_TOKENS.fonts.sans,
     minHeight: "36px",
   },
 };

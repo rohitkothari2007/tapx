@@ -8,6 +8,7 @@ import {
   parseStandTableNumber,
   getDiningCardSubtitle,
 } from "../lib/tableNumber";
+import { MENU_TOKENS } from "../lib/menuTheme";
 
 function UtensilsIcon({ size = 22 }: { size?: number }) {
   return (
@@ -146,6 +147,7 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
       <button
         type="button"
         onClick={openLayer}
+        className="menu-tap-press"
         style={styles.cardButton}
       >
         <div style={styles.cardIconBox}>
@@ -182,6 +184,7 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
           <button
             type="button"
             onClick={closeLayer}
+            className="menu-tap-press"
             style={styles.backButton}
             aria-label={`Back to ${business.name}`}
           >
@@ -231,22 +234,24 @@ const styles: Record<string, CSSProperties> = {
     gap: "14px",
     padding: "16px",
     background: "#ffffff",
-    borderRadius: "18px",
-    border: "1px solid #e5e7eb",
-    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.04)",
+    borderRadius: MENU_TOKENS.radii.card,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    boxShadow: MENU_TOKENS.shadows.card,
     cursor: "pointer",
     textAlign: "left",
     boxSizing: "border-box",
-    fontFamily: "inherit",
+    fontFamily: MENU_TOKENS.fonts.sans,
     appearance: "none",
     WebkitAppearance: "none",
+    transition: "transform 160ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1)",
   },
   cardIconBox: {
     width: "44px",
     height: "44px",
-    borderRadius: "12px",
-    background: "#eff6ff",
-    color: "#2563eb",
+    borderRadius: MENU_TOKENS.radii.input,
+    background: MENU_TOKENS.colors.light.accentLight,
+    color: MENU_TOKENS.colors.light.accent,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -263,22 +268,24 @@ const styles: Record<string, CSSProperties> = {
     gap: "8px",
   },
   cardTitle: {
-    fontSize: "15px",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "17px",
     fontWeight: 700,
-    color: "#111827",
+    color: MENU_TOKENS.colors.light.ink,
     letterSpacing: "-0.01em",
   },
   cardChevron: {
     fontSize: "18px",
     fontWeight: 400,
-    color: "#9ca3af",
+    color: MENU_TOKENS.colors.light.muted,
     lineHeight: 1,
   },
   cardSubtitle: {
+    fontFamily: MENU_TOKENS.fonts.sans,
     fontSize: "13px",
-    color: "#6b7280",
+    color: MENU_TOKENS.colors.light.muted,
     marginTop: "2px",
-    lineHeight: 1.3,
+    lineHeight: 1.35,
   },
   activeOrderBadge: {
     display: "inline-flex",
@@ -287,20 +294,21 @@ const styles: Record<string, CSSProperties> = {
     marginTop: "6px",
     fontSize: "12px",
     fontWeight: 600,
-    color: "#059669",
-    background: "#ecfdf5",
+    color: MENU_TOKENS.colors.light.veg,
+    background: MENU_TOKENS.colors.light.vegBg,
     padding: "2px 8px",
-    borderRadius: "6px",
-    border: "1px solid #a7f3d0",
+    borderRadius: MENU_TOKENS.radii.badge,
+    border: "1px solid #A7F3D0",
   },
   activeOrderDot: {
     fontSize: "8px",
+    animation: "livePulseStep 2s infinite ease-in-out",
   },
   layerOverlay: {
     position: "fixed",
     inset: 0,
     zIndex: 9999,
-    background: "#f8fafc",
+    background: MENU_TOKENS.colors.light.bg,
     overflowY: "auto",
     WebkitOverflowScrolling: "touch",
   },
@@ -308,31 +316,34 @@ const styles: Record<string, CSSProperties> = {
     position: "sticky",
     top: 0,
     zIndex: 10001,
-    background: "rgba(255, 255, 255, 0.96)",
-    backdropFilter: "blur(8px)",
-    borderBottom: "1px solid #e2e8f0",
+    background: "rgba(251, 248, 243, 0.94)",
+    backdropFilter: "blur(14px)",
+    WebkitBackdropFilter: "blur(14px)",
+    borderBottom: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     padding: "10px 16px",
     display: "flex",
     alignItems: "center",
-    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)",
+    boxShadow: "0 1px 3px rgba(28, 25, 23, 0.03)",
   },
   backButton: {
     display: "inline-flex",
     alignItems: "center",
     gap: "8px",
     padding: "8px 14px",
-    background: "#f1f5f9",
-    border: "1px solid #cbd5e1",
+    background: "#ffffff",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     borderRadius: "10px",
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
     fontSize: "13px",
-    fontWeight: 700,
+    fontWeight: 600,
+    fontFamily: MENU_TOKENS.fonts.sans,
     cursor: "pointer",
     maxWidth: "90vw",
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
     boxSizing: "border-box",
+    boxShadow: "0 1px 2px rgba(28, 25, 23, 0.04)",
   },
   layerContent: {
     width: "100%",
