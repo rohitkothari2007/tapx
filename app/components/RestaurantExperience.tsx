@@ -670,7 +670,7 @@ export default function RestaurantExperience({
                       <div style={styles.dishActionCol}>
                         {dish.imageUrl ? (
                           <div style={styles.dishImageWrap}>
-                            <img src={dish.imageUrl} alt={dish.name} style={styles.dishImg} />
+                            <img src={dish.imageUrl} alt={dish.name} style={styles.dishImg} loading="lazy" decoding="async" />
                           </div>
                         ) : (
                           <div style={styles.dishImagePlaceholder}>
