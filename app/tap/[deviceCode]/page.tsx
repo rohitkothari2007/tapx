@@ -9,6 +9,7 @@ import {
 import { useParams } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import RestaurantExperience from "../../components/RestaurantExperience";
+import DiningLayerWrapper from "../../components/DiningLayerWrapper";
 import { InstagramIcon, WhatsAppIcon } from "../../components/BrandIcons";
 import UpiPaymentModal from "../../components/UpiPaymentModal";
 import {
@@ -321,6 +322,9 @@ export default function TapPage({
 
   const [digitalMenuItems, setDigitalMenuItems] =
     useState<DigitalMenuItem[]>([]);
+
+  const [quickRequests, setQuickRequests] =
+    useState<string[] | undefined>(undefined);
 
   const [enabledModuleKeys, setEnabledModuleKeys] =
     useState<string[]>([]);
@@ -642,6 +646,19 @@ export default function TapPage({
         validMenuItems
       );
 
+      const parsedQuickRequests = Array.isArray(menuConfig.quick_requests)
+        ? (menuConfig.quick_requests as unknown[])
+            .map((q) => (typeof q === "string" ? q.trim() : ""))
+            .filter((q) => q.length > 0 && q.length <= 30)
+            .slice(0, 12)
+        : undefined;
+
+      setQuickRequests(
+        parsedQuickRequests && parsedQuickRequests.length > 0
+          ? parsedQuickRequests
+          : undefined
+      );
+
       // ====================================================
       // PRODUCT CATALOGUE
       // ====================================================
@@ -894,6 +911,8 @@ export default function TapPage({
               )
             : "",
       });
+
+      // menu_presentation retired - always uses card-and-layer
 
       // ====================================================
       // APPOINTMENT BOOKING
@@ -1352,40 +1371,10 @@ export default function TapPage({
     );
 
   const isRestaurantDining =
-    (business.category === "restaurant" ||
-      business.category === "cafe" ||
-      (business.category === "hotel" && tableOrderingEnabled) ||
-      tableOrderingEnabled) &&
+    (digitalMenuEnabled || tableOrderingEnabled) &&
     digitalMenuItems.length > 0;
 
-  if (
-    isRestaurantDining &&
-    (activeModule === null ||
-      activeModule === "table-ordering" ||
-      activeModule === "digital-menu")
-  ) {
-    return (
-      <main style={styles.page}>
-        <RestaurantExperience
-          business={{ ...business, payment_enabled: showPaymentButton }}
-          device={device}
-          categories={digitalMenuCategories}
-          items={digitalMenuItems}
-          offers={offerItems}
-          initialTab={
-            activeModule === "table-ordering" || activeModule === "digital-menu"
-              ? "menu"
-              : "home"
-          }
-          loyaltyEnabled={loyaltyEnabled}
-          feedbackEnabled={feedbackEnabled}
-          onOpenFeedback={() => setActiveModule("feedback")}
-          onOpenLoyalty={() => setActiveModule("loyalty")}
-          onTrackAction={(type) => void trackActionClick(type)}
-        />
-      </main>
-    );
-  }
+  // Full page presentation retired: always renders as prominent option card
 
   return (
     <main style={styles.page}>
@@ -1511,6 +1500,29 @@ export default function TapPage({
                   styles.actionGrid
                 }
               >
+                {isRestaurantDining && (
+                  <DiningLayerWrapper
+                    business={{ ...business, payment_enabled: showPaymentButton }}
+                    device={device}
+                    categories={digitalMenuCategories}
+                    items={digitalMenuItems}
+                    offers={offerItems}
+                    tableOrderingEnabled={tableOrderingEnabled}
+                    quickRequests={quickRequests}
+                    tableCount={
+                      tableOrderingConfig?.table_count
+                        ? Number(tableOrderingConfig.table_count)
+                        : undefined
+                    }
+                    initialTab="menu"
+                    loyaltyEnabled={loyaltyEnabled}
+                    feedbackEnabled={feedbackEnabled}
+                    onOpenFeedback={() => setActiveModule("feedback")}
+                    onOpenLoyalty={() => setActiveModule("loyalty")}
+                    onTrackAction={(type) => void trackActionClick(type)}
+                  />
+                )}
+
                 {/* CORE */}
 
                 <ActionCard
@@ -1620,22 +1632,7 @@ export default function TapPage({
 
                 {/* PAID MODULES */}
 
-                {digitalMenuEnabled && (
-                  <ModuleActionCard
-                    icon={String.fromCodePoint(
-                      0x1f37d,
-                      0xfe0f
-                    )}
-                    title="Digital Menu"
-                    subtitle="View menu"
-                    accentColor={categoryAccent.main}
-                    onClick={() =>
-                      openModule(
-                        "digital-menu"
-                      )
-                    }
-                  />
-                )}
+
 
                 {offersEnabled && (
                   <ModuleActionCard
@@ -1721,21 +1718,7 @@ export default function TapPage({
                   />
                 )}
 
-                {tableOrderingEnabled && (
-                  <ModuleActionCard
-                    icon={String.fromCodePoint(
-                      0x1f6d2
-                    )}
-                    title="Order at Table"
-                    subtitle="Browse menu & place order"
-                    accentColor={categoryAccent.main}
-                    onClick={() =>
-                      openModule(
-                        "table-ordering"
-                      )
-                    }
-                  />
-                )}
+
 
                 {feedbackEnabled && (
                   <ModuleActionCard

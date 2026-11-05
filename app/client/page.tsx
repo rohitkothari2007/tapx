@@ -1,5 +1,8 @@
 "use client";
 
+import LiveOrdersPanel from "./LiveOrdersPanel";
+import MenuManagerSection from "./MenuManagerSection";
+
 import {
   useCallback,
   useEffect,
@@ -100,6 +103,7 @@ type OrderItem = {
   unit_price: number;
   quantity: number;
   line_total: number;
+  special_request?: string | null;
 };
 
 type AppointmentStatus =
@@ -783,7 +787,8 @@ export default function ClientPortalPage() {
                 item_name,
                 unit_price,
                 quantity,
-                line_total
+                line_total,
+                special_request
               `
             )
             .in("order_id", orderIds);
@@ -1701,6 +1706,10 @@ export default function ClientPortalPage() {
               appointments={appointments}
               todayAppointments={todayAppointments}
               pendingAppointments={pendingAppointments}
+              orderItems={orderItems}
+              updateOrderStatus={updateOrderStatus}
+              updatingOrderId={updatingOrderId}
+              hasTableOrdering={hasOrders}
             />
           )}
 
@@ -1758,21 +1767,10 @@ export default function ClientPortalPage() {
             )}
 
           {activePage === "menu" && hasMenu && (
-            <ModulePage
-              title="Digital Menu"
-              eyebrow="CUSTOMER EXPERIENCE"
-              description="Manage the digital menu customers see through your TAPX touchpoint."
-              icon="☷"
-              items={[
-                "Categories",
-                "Menu items",
-                "Prices",
-                "Availability",
-                "Item descriptions",
-                "Menu preview",
-              ]}
-              status="Connected"
-              emptyText="Your Digital Menu workspace is connected. Menu management will use the same configuration that powers your customer experience."
+            <MenuManagerSection
+              businessId={business.id}
+              businessName={business.name}
+              deviceCode={clientDevices[0]?.device_code}
             />
           )}
 
@@ -1838,6 +1836,7 @@ export default function ClientPortalPage() {
               business={business}
               email={currentUserEmail}
               hasOnlineOrdering={hasOnlineOrdering}
+              hasDiningMenu={hasMenu || hasOrders}
               moduleConfigs={moduleConfigs}
               features={features}
               onUpdateBusiness={(updated) => setBusiness(updated)}
@@ -2544,6 +2543,10 @@ function Overview({
   pendingOrders,
   completedRevenue,
   orders,
+  orderItems,
+  updateOrderStatus,
+  updatingOrderId,
+  hasTableOrdering,
   enabledPaidFeatures,
   navigate,
   hasOrders,
@@ -2562,6 +2565,10 @@ function Overview({
   pendingOrders: Order[];
   completedRevenue: number;
   orders: Order[];
+  orderItems: OrderItem[];
+  updateOrderStatus: (id: string, status: string) => Promise<void>;
+  updatingOrderId: string | null;
+  hasTableOrdering: boolean;
   enabledPaidFeatures: Feature[];
   navigate: (page: PageKey) => void;
   hasOrders: boolean;
@@ -2662,6 +2669,18 @@ function Overview({
           </small>
         </div>
       </section>
+
+      {/* LIVE ORDERS PANEL: only when table ordering is on */}
+      {hasTableOrdering && (
+        <LiveOrdersPanel
+          key={business.id}
+          businessId={business.id}
+          orders={orders}
+          orderItems={orderItems}
+          updateOrderStatus={updateOrderStatus}
+          updatingOrderId={updatingOrderId}
+        />
+      )}
 
       <section className="stats">
         <StatCard
@@ -4549,6 +4568,11 @@ function OrdersPage({
                           item.unit_price
                         )}
                       </span>
+                      {item.special_request && (
+                        <div className="item-special-request-badge">
+                          <strong>Request:</strong> {item.special_request}
+                        </div>
+                      )}
                     </div>
 
                     <strong>
@@ -4870,6 +4894,25 @@ function OrdersPage({
           color: #98a1ad;
           font-size: 10px;
           margin-top: 4px;
+        }
+
+        .item-special-request-badge {
+          display: inline-block;
+          margin-top: 6px;
+          padding: 3px 8px;
+          background: #fef3c7;
+          border: 1px solid #fde68a;
+          border-radius: 6px;
+          color: #92400e;
+          font-size: 11px;
+          line-height: 1.4;
+        }
+
+        .item-special-request-badge strong {
+          display: inline !important;
+          font-weight: 700;
+          color: #78350f;
+          margin-right: 4px;
         }
 
         .no-items {
@@ -5239,6 +5282,7 @@ function SettingsPage({
   business,
   email,
   hasOnlineOrdering,
+  hasDiningMenu,
   moduleConfigs,
   features,
   onUpdateBusiness,
@@ -5246,6 +5290,7 @@ function SettingsPage({
   business: Business;
   email: string;
   hasOnlineOrdering?: boolean;
+  hasDiningMenu?: boolean;
   moduleConfigs?: ModuleConfig[];
   features?: Feature[];
   onUpdateBusiness?: (updated: Business) => void;
@@ -5316,6 +5361,8 @@ function SettingsPage({
     if (feat) {
       setOnlineOrderingFeatureId(feat.id);
     }
+
+    // menu_presentation retired
   }, [business, moduleConfigs, features]);
 
   function updateOrderLink(index: number, patch: Partial<OnlineOrderingLink>) {
@@ -5407,6 +5454,8 @@ function SettingsPage({
           if (cfgErr) throw cfgErr;
         }
       }
+
+      // menu_presentation retired
 
       const payload = {
         name: name.trim(),
@@ -5659,6 +5708,8 @@ function SettingsPage({
             <input type="text" disabled value={email || "Authenticated account"} />
           </div>
         </div>
+
+
 
         {/* PANEL 5: ORDER ONLINE */}
         {(hasOnlineOrdering || onlineOrderingLinks.length > 0) && (

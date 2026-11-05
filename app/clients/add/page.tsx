@@ -141,6 +141,8 @@ export default function AddClientPage() {
   >({});
 
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
+  const [standFriendlyLabel, setStandFriendlyLabel] = useState("");
+  const [standTableNumber, setStandTableNumber] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [activating, setActivating] = useState(false);
@@ -665,15 +667,29 @@ export default function AddClientPage() {
         );
       }
 
+      const isTableOrderingActive = selectedPaidFeatures.some((featId) => {
+        const feat = features.find((f) => f.id === featId);
+        return feat?.feature_key === "table_ordering";
+      });
+
+      const deviceUpdateData: Record<string, any> = {
+        business_id: business.id,
+        status: "active",
+      };
+      if (standFriendlyLabel.trim()) {
+        deviceUpdateData.label = standFriendlyLabel.trim();
+      }
+      if (isTableOrderingActive && standTableNumber && parseInt(standTableNumber, 10) > 0) {
+        const num = parseInt(standTableNumber, 10);
+        deviceUpdateData.location = `Table ${num}`;
+      }
+
       const {
         data: device,
         error: deviceError,
       } = await supabase
         .from("devices")
-        .update({
-          business_id: business.id,
-          status: "active",
-        })
+        .update(deviceUpdateData)
         .eq("id", selectedDeviceId)
         .is("business_id", null)
         .select()
@@ -1979,6 +1995,49 @@ Click the Owner Login link above to sign in once your password is set!`;
                 </strong>{" "}
                 will be assigned and activated
                 for this client.
+              </div>
+            )}
+
+            {selectedDeviceId && (
+              <div style={{ marginTop: "14px", display: "flex", flexDirection: "column", gap: "12px" }}>
+                <div>
+                  <label style={labelStyle}>
+                    Friendly label
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Patio Corner, Cash Counter, Bar"
+                    value={standFriendlyLabel}
+                    onChange={(e) => setStandFriendlyLabel(e.target.value)}
+                    style={inputStyle}
+                  />
+                  <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#64748b" }}>
+                    Friendly name for this stand (used in inventory and QR downloads).
+                  </p>
+                </div>
+
+                {selectedPaidFeatures.some((featId) => {
+                  const feat = features.find((f) => f.id === featId);
+                  return feat?.feature_key === "table_ordering";
+                }) && (
+                  <div>
+                    <label style={labelStyle}>
+                      Table number
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="999"
+                      placeholder="e.g. 1"
+                      value={standTableNumber}
+                      onChange={(e) => setStandTableNumber(e.target.value)}
+                      style={inputStyle}
+                    />
+                    <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#64748b" }}>
+                      This replaces the stand&apos;s location text.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
