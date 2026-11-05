@@ -323,6 +323,9 @@ export default function TapPage({
   const [digitalMenuItems, setDigitalMenuItems] =
     useState<DigitalMenuItem[]>([]);
 
+  const [quickRequests, setQuickRequests] =
+    useState<string[] | undefined>(undefined);
+
   const [enabledModuleKeys, setEnabledModuleKeys] =
     useState<string[]>([]);
 
@@ -334,7 +337,6 @@ export default function TapPage({
 
   const [tableOrderingConfig, setTableOrderingConfig] =
     useState<TableOrderingConfig>({});
-  const [menuPresentation, setMenuPresentation] = useState<"button" | "full">("button");
 
   const [appointmentConfig, setAppointmentConfig] =
     useState<AppointmentConfig>({});
@@ -644,6 +646,19 @@ export default function TapPage({
         validMenuItems
       );
 
+      const parsedQuickRequests = Array.isArray(menuConfig.quick_requests)
+        ? (menuConfig.quick_requests as unknown[])
+            .map((q) => (typeof q === "string" ? q.trim() : ""))
+            .filter((q) => q.length > 0 && q.length <= 30)
+            .slice(0, 12)
+        : undefined;
+
+      setQuickRequests(
+        parsedQuickRequests && parsedQuickRequests.length > 0
+          ? parsedQuickRequests
+          : undefined
+      );
+
       // ====================================================
       // PRODUCT CATALOGUE
       // ====================================================
@@ -897,12 +912,7 @@ export default function TapPage({
             : "",
       });
 
-      const rawMenuPresentation =
-        (menuConfig as Record<string, unknown>)?.menu_presentation ||
-        (rawTableOrderingConfig as Record<string, unknown>)?.menu_presentation;
-      setMenuPresentation(
-        rawMenuPresentation === "full" ? "full" : "button"
-      );
+      // menu_presentation retired - always uses card-and-layer
 
       // ====================================================
       // APPOINTMENT BOOKING
@@ -1361,41 +1371,10 @@ export default function TapPage({
     );
 
   const isRestaurantDining =
-    (business.category === "restaurant" ||
-      business.category === "cafe" ||
-      (business.category === "hotel" && tableOrderingEnabled) ||
-      tableOrderingEnabled) &&
+    (digitalMenuEnabled || tableOrderingEnabled) &&
     digitalMenuItems.length > 0;
 
-  if (
-    isRestaurantDining &&
-    menuPresentation === "full" &&
-    (activeModule === null ||
-      activeModule === "table-ordering" ||
-      activeModule === "digital-menu")
-  ) {
-    return (
-      <main style={styles.page}>
-        <RestaurantExperience
-          business={{ ...business, payment_enabled: showPaymentButton }}
-          device={device}
-          categories={digitalMenuCategories}
-          items={digitalMenuItems}
-          offers={offerItems}
-          initialTab={
-            activeModule === "table-ordering" || activeModule === "digital-menu"
-              ? "menu"
-              : "home"
-          }
-          loyaltyEnabled={loyaltyEnabled}
-          feedbackEnabled={feedbackEnabled}
-          onOpenFeedback={() => setActiveModule("feedback")}
-          onOpenLoyalty={() => setActiveModule("loyalty")}
-          onTrackAction={(type) => void trackActionClick(type)}
-        />
-      </main>
-    );
-  }
+  // Full page presentation retired: always renders as prominent option card
 
   return (
     <main style={styles.page}>
@@ -1521,7 +1500,7 @@ export default function TapPage({
                   styles.actionGrid
                 }
               >
-                {isRestaurantDining && menuPresentation === "button" && (
+                {isRestaurantDining && (
                   <DiningLayerWrapper
                     business={{ ...business, payment_enabled: showPaymentButton }}
                     device={device}
@@ -1529,7 +1508,13 @@ export default function TapPage({
                     items={digitalMenuItems}
                     offers={offerItems}
                     tableOrderingEnabled={tableOrderingEnabled}
-                    initialTab="home"
+                    quickRequests={quickRequests}
+                    tableCount={
+                      tableOrderingConfig?.table_count
+                        ? Number(tableOrderingConfig.table_count)
+                        : undefined
+                    }
+                    initialTab="menu"
                     loyaltyEnabled={loyaltyEnabled}
                     feedbackEnabled={feedbackEnabled}
                     onOpenFeedback={() => setActiveModule("feedback")}
@@ -1647,22 +1632,7 @@ export default function TapPage({
 
                 {/* PAID MODULES */}
 
-                {digitalMenuEnabled && !isRestaurantDining && (
-                  <ModuleActionCard
-                    icon={String.fromCodePoint(
-                      0x1f37d,
-                      0xfe0f
-                    )}
-                    title="Digital Menu"
-                    subtitle="View menu"
-                    accentColor={categoryAccent.main}
-                    onClick={() =>
-                      openModule(
-                        "digital-menu"
-                      )
-                    }
-                  />
-                )}
+
 
                 {offersEnabled && (
                   <ModuleActionCard
@@ -1748,21 +1718,7 @@ export default function TapPage({
                   />
                 )}
 
-                {tableOrderingEnabled && !isRestaurantDining && (
-                  <ModuleActionCard
-                    icon={String.fromCodePoint(
-                      0x1f6d2
-                    )}
-                    title="Order at Table"
-                    subtitle="Browse menu & place order"
-                    accentColor={categoryAccent.main}
-                    onClick={() =>
-                      openModule(
-                        "table-ordering"
-                      )
-                    }
-                  />
-                )}
+
 
                 {feedbackEnabled && (
                   <ModuleActionCard

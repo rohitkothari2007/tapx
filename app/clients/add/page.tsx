@@ -141,6 +141,7 @@ export default function AddClientPage() {
   >({});
 
   const [selectedDeviceId, setSelectedDeviceId] = useState("");
+  const [standTableNumber, setStandTableNumber] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [activating, setActivating] = useState(false);
@@ -665,15 +666,27 @@ export default function AddClientPage() {
         );
       }
 
+      const isTableOrderingActive = selectedPaidFeatures.some((featId) => {
+        const feat = features.find((f) => f.id === featId);
+        return feat?.feature_key === "table_ordering";
+      });
+
+      const deviceUpdateData: Record<string, any> = {
+        business_id: business.id,
+        status: "active",
+      };
+      if (isTableOrderingActive && standTableNumber && parseInt(standTableNumber, 10) > 0) {
+        const num = parseInt(standTableNumber, 10);
+        deviceUpdateData.label = `Table ${num}`;
+        deviceUpdateData.location = `Table ${num}`;
+      }
+
       const {
         data: device,
         error: deviceError,
       } = await supabase
         .from("devices")
-        .update({
-          business_id: business.id,
-          status: "active",
-        })
+        .update(deviceUpdateData)
         .eq("id", selectedDeviceId)
         .is("business_id", null)
         .select()
@@ -1979,6 +1992,29 @@ Click the Owner Login link above to sign in once your password is set!`;
                 </strong>{" "}
                 will be assigned and activated
                 for this client.
+              </div>
+            )}
+
+            {selectedPaidFeatures.some((featId) => {
+              const feat = features.find((f) => f.id === featId);
+              return feat?.feature_key === "table_ordering";
+            }) && selectedDeviceId && (
+              <div style={{ marginTop: "14px" }}>
+                <label style={labelStyle}>
+                  Table Number (Stand Assignment)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="999"
+                  placeholder="e.g. 1"
+                  value={standTableNumber}
+                  onChange={(e) => setStandTableNumber(e.target.value)}
+                  style={inputStyle}
+                />
+                <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#64748b" }}>
+                  Assigns this stand to a specific table (e.g. Table {standTableNumber || "1"}).
+                </p>
               </div>
             )}
 

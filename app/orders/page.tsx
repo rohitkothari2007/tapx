@@ -26,6 +26,7 @@ type OrderItem = {
   unit_price: number;
   quantity: number;
   line_total: number;
+  special_request?: string | null;
 };
 
 const statuses = [
@@ -1063,6 +1064,27 @@ export default function OrdersPage() {
                               item.quantity
                             }
                           </span>
+
+                          {item.special_request && (
+                            <div
+                              style={{
+                                display: "inline-block",
+                                marginTop: "4px",
+                                padding: "2px 8px",
+                                background: "#fef3c7",
+                                border: "1px solid #fde68a",
+                                borderRadius: "6px",
+                                color: "#92400e",
+                                fontSize: "11px",
+                                fontWeight: 600,
+                              }}
+                            >
+                              <strong style={{ fontWeight: 800, color: "#78350f", marginRight: "4px" }}>
+                                Request:
+                              </strong>
+                              {item.special_request}
+                            </div>
+                          )}
                         </div>
 
                         <strong

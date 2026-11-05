@@ -1,31 +1,33 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { supabase } from "../lib/supabase";
-import { InstagramIcon, WhatsAppIcon } from "./BrandIcons";
+import { parseStandTableNumber } from "../lib/tableNumber";
+import { WhatsAppIcon } from "./BrandIcons";
 import UpiPaymentModal from "./UpiPaymentModal";
 
 export type RestaurantExperienceProps = {
   business: {
     id: string;
     name: string;
-    category: string | null;
-    phone: string | null;
-    whatsapp_number: string | null;
-    address: string | null;
-    city: string | null;
-    logo_url: string | null;
-    google_review_url: string | null;
-    instagram_url: string | null;
-    payment_url: string | null;
-    upi_id: string | null;
-    upi_qr_url: string | null;
-    payment_enabled: boolean | null;
+    category?: string | null;
+    phone?: string | null;
+    whatsapp_number?: string | null;
+    address?: string | null;
+    city?: string | null;
+    logo_url?: string | null;
+    google_review_url?: string | null;
+    instagram_url?: string | null;
+    payment_url?: string | null;
+    upi_id?: string | null;
+    upi_qr_url?: string | null;
+    payment_enabled?: boolean | null;
   };
   device: {
     id: string;
     device_code: string;
     location: string | null;
+    label?: string | null;
   };
   categories: Array<{
     id: string;
@@ -34,14 +36,17 @@ export type RestaurantExperienceProps = {
   }>;
   items: Array<{
     id: string;
-    categoryId: string;
+    categoryId?: string;
+    category_id?: string;
     name: string;
-    price?: string;
+    price?: string | number;
     description?: string;
     imageUrl?: string;
-    dietary?: "veg" | "non_veg" | "egg" | "none";
+    image_url?: string;
+    dietary?: "veg" | "non_veg" | "egg" | "none" | "vegan";
     popular?: boolean;
     available?: boolean;
+    badge?: string;
   }>;
   offers?: Array<{
     id: string;
@@ -50,12 +55,26 @@ export type RestaurantExperienceProps = {
     description?: string;
     discount?: string;
   }>;
-  initialTab?: "home" | "menu" | "search" | "orders";
+  initialTab?: "menu" | "orders";
+  tableOrderingEnabled?: boolean;
+  tableCount?: number;
+  quickRequests?: string[];
   loyaltyEnabled?: boolean;
   feedbackEnabled?: boolean;
   onOpenFeedback?: () => void;
   onOpenLoyalty?: () => void;
   onTrackAction?: (actionType: string) => void;
+};
+
+export type CartLine = {
+  lineId: string;
+  itemId: string;
+  name: string;
+  unitPrice: number;
+  quantity: number;
+  special_request: string;
+  dietary?: "veg" | "non_veg" | "egg" | "none" | "vegan";
+  imageUrl?: string;
 };
 
 type ActiveOrder = {
@@ -76,9 +95,137 @@ type ActiveOrderItem = {
   unit_price: number;
   quantity: number;
   line_total: number;
+  special_request?: string | null;
 };
 
-type TabKey = "home" | "menu" | "search" | "orders";
+const DEFAULT_QUICK_REQUESTS = [
+  "Less spicy",
+  "Extra spicy",
+  "No onion",
+  "No garlic",
+  "Less sugar",
+  "Jain",
+];
+
+// Helper: parse price
+function parsePrice(raw?: string | number): number {
+  if (typeof raw === "number") return isNaN(raw) ? 0 : raw;
+  if (!raw) return 0;
+  const cleaned = String(raw).replace(/[^0-9.]/g, "");
+  const val = parseFloat(cleaned);
+  return isNaN(val) ? 0 : val;
+}
+
+// Dietary indicator icon
+function DietaryBadge({
+  dietary,
+  size = 14,
+}: {
+  dietary?: "veg" | "non_veg" | "egg" | "none" | "vegan";
+  size?: number;
+}) {
+  if (!dietary || dietary === "none") return null;
+
+  const isVeg = dietary === "veg" || dietary === "vegan";
+  const isEgg = dietary === "egg";
+  const borderColor = isVeg ? "#16a34a" : isEgg ? "#d97706" : "#dc2626";
+  const dotColor = borderColor;
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: `${size}px`,
+        height: `${size}px`,
+        border: `1.5px solid ${borderColor}`,
+        borderRadius: "3px",
+        flexShrink: 0,
+        backgroundColor: "#ffffff",
+      }}
+      aria-label={isVeg ? "Vegetarian" : isEgg ? "Egg" : "Non-Vegetarian"}
+      title={isVeg ? "Vegetarian" : isEgg ? "Egg" : "Non-Vegetarian"}
+    >
+      <span
+        style={{
+          width: `${Math.max(5, Math.floor(size * 0.45))}px`,
+          height: `${Math.max(5, Math.floor(size * 0.45))}px`,
+          borderRadius: isVeg || isEgg ? "50%" : "2px",
+          backgroundColor: dotColor,
+        }}
+      />
+    </span>
+  );
+}
+
+// Fixed aspect-ratio image with fallback letter placeholder
+function DishImage({
+  src,
+  name,
+  size = 96,
+}: {
+  src?: string;
+  name: string;
+  size?: number;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  const initial = (name || "D").trim().charAt(0).toUpperCase();
+
+  if (!src || failed) {
+    return (
+      <div
+        style={{
+          width: `${size}px`,
+          height: `${size}px`,
+          borderRadius: "12px",
+          backgroundColor: "#f1f5f9",
+          border: "1px solid #e2e8f0",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#475569",
+          fontSize: `${Math.floor(size * 0.4)}px`,
+          fontWeight: 700,
+          flexShrink: 0,
+          userSelect: "none",
+        }}
+      >
+        {initial}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: "12px",
+        overflow: "hidden",
+        backgroundColor: "#f8fafc",
+        border: "1px solid #e2e8f0",
+        flexShrink: 0,
+        position: "relative",
+      }}
+    >
+      <img
+        src={src}
+        alt={name}
+        loading="lazy"
+        decoding="async"
+        onError={() => setFailed(true)}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          display: "block",
+        }}
+      />
+    </div>
+  );
+}
 
 export default function RestaurantExperience({
   business,
@@ -86,27 +233,44 @@ export default function RestaurantExperience({
   categories,
   items,
   offers = [],
-  initialTab = "home",
+  initialTab = "menu",
+  tableOrderingEnabled = false,
+  tableCount,
+  quickRequests,
   loyaltyEnabled,
   feedbackEnabled,
   onOpenFeedback,
   onOpenLoyalty,
   onTrackAction,
 }: RestaurantExperienceProps) {
-  const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  // Navigation tabs
+  const [activeTab, setActiveTab] = useState<"menu" | "orders">(initialTab);
 
-  // Cart state
-  const [cart, setCart] = useState<Record<string, number>>({});
+  // Search & dietary filter
+  const [searchQuery, setSearchQuery] = useState("");
+  const [dietaryFilter, setDietaryFilter] = useState<"all" | "veg" | "non_veg" | "egg">("all");
+  const [activeCategoryChip, setActiveCategoryChip] = useState<string>("all");
+
+  // Stand table number detection
+  const standTableNum = useMemo(
+    () => parseStandTableNumber(device.label, device.location),
+    [device.label, device.location]
+  );
+
+  // Cart state: keyed by composite lineId: `${itemId}::${special_request.trim()}`
+  const [cart, setCart] = useState<Record<string, CartLine>>({});
   const [showCheckoutSheet, setShowCheckoutSheet] = useState(false);
+
+  // Item customization / detail sheet
+  type ItemType = (typeof items)[number];
+  const [detailItem, setDetailItem] = useState<ItemType | null>(null);
+  const [customRequest, setCustomRequest] = useState<string>("");
+  const [customQty, setCustomQty] = useState<number>(1);
+
+  // Checkout inputs
   const [tableNumber, setTableNumber] = useState<string>(() => {
-    if (device.location) {
-      const match = device.location.replace(/\D/g, "");
-      if (match) return match;
-    }
-    return "1";
+    if (standTableNum !== null && standTableNum > 0) return String(standTableNum);
+    return "";
   });
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -118,54 +282,270 @@ export default function RestaurantExperience({
   const [currentOrder, setCurrentOrder] = useState<ActiveOrder | null>(null);
   const [currentOrderItems, setCurrentOrderItems] = useState<ActiveOrderItem[]>([]);
   const [cancellingOrder, setCancellingOrder] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
 
-  // Available items
-  const availableItems = useMemo(
-    () => items.filter((item) => item.available !== false),
-    [items]
+  // Active quick request options
+  const activeQuickRequests = useMemo(() => {
+    if (Array.isArray(quickRequests) && quickRequests.length > 0) {
+      return quickRequests;
+    }
+    return DEFAULT_QUICK_REQUESTS;
+  }, [quickRequests]);
+
+  // Derived cart totals
+  const cartLinesList = useMemo(() => Object.values(cart), [cart]);
+
+  const totalCartCount = useMemo(
+    () => cartLinesList.reduce((acc, line) => acc + line.quantity, 0),
+    [cartLinesList]
   );
-
-  // Cart items calculated
-  const cartItems = useMemo(() => {
-    return availableItems
-      .filter((item) => (cart[item.id] || 0) > 0)
-      .map((item) => {
-        const numPrice = Number(String(item.price || "").replace(/[^0-9.]/g, "")) || 0;
-        return {
-          ...item,
-          quantity: cart[item.id],
-          numericPrice: numPrice,
-          lineTotal: numPrice * cart[item.id],
-        };
-      });
-  }, [availableItems, cart]);
 
   const cartTotal = useMemo(
-    () => cartItems.reduce((acc, item) => acc + item.lineTotal, 0),
-    [cartItems]
+    () => cartLinesList.reduce((acc, line) => acc + line.unitPrice * line.quantity, 0),
+    [cartLinesList]
   );
 
-  const cartCount = useMemo(
-    () => cartItems.reduce((acc, item) => acc + item.quantity, 0),
-    [cartItems]
-  );
-
-  // Add / remove cart helper
-  const addToCart = (id: string) => {
-    setCart((prev) => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
+  // Quick helper to get standard line count (no special request)
+  const getStandardItemQty = (itemId: string) => {
+    const key = `${itemId}::`;
+    return cart[key]?.quantity || 0;
   };
 
-  const removeFromCart = (id: string) => {
+  // Add standard item (+1) with no special request
+  const addStandardItem = (item: ItemType) => {
+    if (item.available === false) return;
+    const price = parsePrice(item.price);
+    const lineId = `${item.id}::`;
     setCart((prev) => {
-      const current = prev[id] || 0;
-      if (current <= 1) {
-        const copy = { ...prev };
-        delete copy[id];
-        return copy;
+      const existing = prev[lineId];
+      if (existing) {
+        return {
+          ...prev,
+          [lineId]: { ...existing, quantity: existing.quantity + 1 },
+        };
       }
-      return { ...prev, [id]: current - 1 };
+      return {
+        ...prev,
+        [lineId]: {
+          lineId,
+          itemId: item.id,
+          name: item.name,
+          unitPrice: price,
+          quantity: 1,
+          special_request: "",
+          dietary: item.dietary,
+          imageUrl: item.imageUrl || item.image_url,
+        },
+      };
     });
   };
+
+  // Decrement standard item (-1)
+  const removeStandardItem = (itemId: string) => {
+    const lineId = `${itemId}::`;
+    setCart((prev) => {
+      const existing = prev[lineId];
+      if (!existing) return prev;
+      if (existing.quantity <= 1) {
+        const copy = { ...prev };
+        delete copy[lineId];
+        return copy;
+      }
+      return {
+        ...prev,
+        [lineId]: { ...existing, quantity: existing.quantity - 1 },
+      };
+    });
+  };
+
+  // Update line quantity in checkout sheet
+  const updateLineQty = (lineId: string, delta: number) => {
+    setCart((prev) => {
+      const existing = prev[lineId];
+      if (!existing) return prev;
+      const nextQty = existing.quantity + delta;
+      if (nextQty <= 0) {
+        const copy = { ...prev };
+        delete copy[lineId];
+        return copy;
+      }
+      return {
+        ...prev,
+        [lineId]: { ...existing, quantity: nextQty },
+      };
+    });
+  };
+
+  // Open item detail / customization sheet
+  const openItemDetail = (item: ItemType) => {
+    setDetailItem(item);
+    setCustomRequest("");
+    setCustomQty(1);
+  };
+
+  // Add customized item from detail sheet
+  const handleAddCustomizedItem = () => {
+    if (!detailItem || detailItem.available === false) return;
+    const price = parsePrice(detailItem.price);
+    const trimmedReq = customRequest.trim().slice(0, 200);
+    const lineId = `${detailItem.id}::${trimmedReq}`;
+
+    setCart((prev) => {
+      const existing = prev[lineId];
+      if (existing) {
+        return {
+          ...prev,
+          [lineId]: {
+            ...existing,
+            quantity: existing.quantity + customQty,
+          },
+        };
+      }
+      return {
+        ...prev,
+        [lineId]: {
+          lineId,
+          itemId: detailItem.id,
+          name: detailItem.name,
+          unitPrice: price,
+          quantity: customQty,
+          special_request: trimmedReq,
+          dietary: detailItem.dietary,
+          imageUrl: detailItem.imageUrl || detailItem.image_url,
+        },
+      };
+    });
+
+    setDetailItem(null);
+  };
+
+  // Toggle quick-request chip in textarea
+  const toggleQuickChip = (chip: string) => {
+    const current = customRequest.trim();
+    if (!current) {
+      setCustomRequest(chip);
+      return;
+    }
+    // Check if chip already present
+    const regex = new RegExp(`(^|,\\s*)${chip.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(,?\\s*|$)`, "i");
+    if (regex.test(current)) {
+      // Remove it
+      const updated = current
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.toLowerCase() !== chip.toLowerCase())
+        .join(", ");
+      setCustomRequest(updated);
+    } else {
+      // Append if length <= 200
+      const next = `${current}, ${chip}`;
+      if (next.length <= 200) {
+        setCustomRequest(next);
+      }
+    }
+  };
+
+  // Filtered menu items
+  const filteredItems = useMemo(() => {
+    return items.filter((item) => {
+      // Dietary filter
+      if (dietaryFilter === "veg") {
+        if (item.dietary !== "veg" && item.dietary !== "vegan") return false;
+      } else if (dietaryFilter === "non_veg") {
+        if (item.dietary !== "non_veg") return false;
+      } else if (dietaryFilter === "egg") {
+        if (item.dietary !== "egg") return false;
+      }
+
+      // Search query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchesName = item.name.toLowerCase().includes(q);
+        const matchesDesc = (item.description || "").toLowerCase().includes(q);
+        if (!matchesName && !matchesDesc) return false;
+      }
+
+      return true;
+    });
+  }, [items, dietaryFilter, searchQuery]);
+
+  // Group filtered items by category
+  const groupedCategories = useMemo(() => {
+    const categoryMap = new Map<string, { cat: (typeof categories)[number]; items: ItemType[] }>();
+
+    for (const cat of categories) {
+      categoryMap.set(cat.id, { cat, items: [] });
+    }
+
+    const uncategorizedItems: ItemType[] = [];
+
+    for (const item of filteredItems) {
+      const catId = item.categoryId || item.category_id;
+      if (catId && categoryMap.has(catId)) {
+        categoryMap.get(catId)!.items.push(item);
+      } else {
+        uncategorizedItems.push(item);
+      }
+    }
+
+    const result = Array.from(categoryMap.values()).filter((g) => g.items.length > 0);
+
+    if (uncategorizedItems.length > 0) {
+      result.push({
+        cat: { id: "other", name: "Other Items" },
+        items: uncategorizedItems,
+      });
+    }
+
+    return result;
+  }, [categories, filteredItems]);
+
+  // Scroll to category section smoothly
+  const scrollToCategory = (catId: string) => {
+    setActiveCategoryChip(catId);
+    if (catId === "all") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    const elem = document.getElementById(`cat-section-${catId}`);
+    if (elem) {
+      const yOffset = -120;
+      const y = elem.getBoundingClientRect().top + window.pageYOffset + yOffset;
+      window.scrollTo({ top: y, behavior: "smooth" });
+    }
+  };
+
+  // Throttled scroll spy to highlight active category chip
+  useEffect(() => {
+    let ticking = false;
+    const handleScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          if (window.scrollY < 80) {
+            setActiveCategoryChip("all");
+            ticking = false;
+            return;
+          }
+          for (let i = groupedCategories.length - 1; i >= 0; i--) {
+            const grp = groupedCategories[i];
+            const elem = document.getElementById(`cat-section-${grp.cat.id}`);
+            if (elem) {
+              const rect = elem.getBoundingClientRect();
+              if (rect.top <= 160) {
+                setActiveCategoryChip(grp.cat.id);
+                break;
+              }
+            }
+          }
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [groupedCategories]);
 
   // Load active order from storage
   const loadActiveOrder = async (orderIdOverride?: string) => {
@@ -209,7 +589,6 @@ export default function RestaurantExperience({
         setTableNumber(String(typedOrder.table_number));
       }
 
-      // Check if order is still active
       const activeStatuses = ["pending", "accepted", "preparing", "ready", "served"];
       if (!activeStatuses.includes(typedOrder.status) && typedOrder.status !== "completed") {
         setCurrentOrderItems([]);
@@ -218,11 +597,11 @@ export default function RestaurantExperience({
 
       setCurrentOrderItems((orderData.items || []) as ActiveOrderItem[]);
     } catch (err) {
-      console.warn("Error restoring active order:", err);
+      console.warn("TAPX active order polling warning:", err);
     }
   };
 
-  // Poll active order status every 7 seconds
+  // Poll active order
   useEffect(() => {
     void loadActiveOrder();
     const interval = setInterval(() => {
@@ -234,7 +613,7 @@ export default function RestaurantExperience({
   // Place Table Order
   const handlePlaceOrder = async () => {
     setOrderError("");
-    if (!tableNumber) {
+    if (!tableNumber || !tableNumber.trim()) {
       setOrderError("Please enter your table number.");
       return;
     }
@@ -242,8 +621,8 @@ export default function RestaurantExperience({
       setOrderError("Please enter your name.");
       return;
     }
-    if (!cartItems.length) {
-      setOrderError("Please add items to your order.");
+    if (cartLinesList.length === 0) {
+      setOrderError("Please add items to your cart.");
       return;
     }
 
@@ -257,9 +636,10 @@ export default function RestaurantExperience({
         p_customer_name: customerName.trim(),
         p_customer_phone: cleanPhone || null,
         p_source_device_code: device.device_code,
-        p_items: cartItems.map((item) => ({
-          item_id: item.id,
-          quantity: item.quantity,
+        p_items: cartLinesList.map((line) => ({
+          item_id: line.itemId,
+          quantity: line.quantity,
+          special_request: line.special_request ? line.special_request.trim().slice(0, 200) : null,
         })),
       });
 
@@ -275,7 +655,7 @@ export default function RestaurantExperience({
       await loadActiveOrder(newOrderId);
       setActiveTab("orders");
     } catch (err: any) {
-      console.error("Order placement error:", err);
+      console.error("Order error:", err);
       setOrderError(err.message || "Failed to place order. Please try again.");
     } finally {
       setPlacingOrder(false);
@@ -294,15 +674,12 @@ export default function RestaurantExperience({
         { p_order_id: currentOrder.id }
       );
 
-      if (rpcErr) {
-        throw new Error(rpcErr.message || "Failed to cancel order.");
-      }
+      if (rpcErr) throw new Error(rpcErr.message || "Failed to cancel order.");
 
       if (!wasCancelled) {
         alert(
           "This order cannot be cancelled online because it has already been accepted or is being prepared by the kitchen. Please speak to staff directly."
         );
-        // Refresh the active order to display latest kitchen status
         await loadActiveOrder(currentOrder.id);
         return;
       }
@@ -319,259 +696,99 @@ export default function RestaurantExperience({
     }
   };
 
-  // Formatted order time helper
-  const formatOrderTime = (isoString?: string) => {
-    if (!isoString) return "";
+  const hasActiveOrder = Boolean(currentOrder && currentOrder.status !== "cancelled");
+
+  // Format order created time
+  const formatOrderTime = (iso?: string) => {
+    if (!iso) return "";
     try {
-      const d = new Date(isoString);
+      const d = new Date(iso);
       return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     } catch {
       return "";
     }
   };
 
-  // Friendly status labels
-  const getStatusBadge = (status: string) => {
+  // Status mapping
+  const getStatusDisplay = (status: string) => {
     switch (status) {
       case "pending":
       case "accepted":
-        return { label: "Got Order", bg: "#ffedd5", color: "#c2410c", border: "#fed7aa" };
+        return { label: "Received", step: 1, bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" };
       case "preparing":
-        return { label: "Preparing", bg: "#fef3c7", color: "#b45309", border: "#fde68a" };
+        return { label: "Preparing", step: 2, bg: "#fef3c7", color: "#b45309", border: "#fde68a" };
       case "ready":
-        return { label: "Ready to Serve", bg: "#dbeafe", color: "#1d4ed8", border: "#bfdbfe" };
+        return { label: "Ready to Serve", step: 3, bg: "#ecfdf5", color: "#047857", border: "#a7f3d0" };
       case "served":
-        return { label: "Served", bg: "#dcfce7", color: "#15803d", border: "#bbf7d0" };
       case "completed":
-        return { label: "Completed", bg: "#f1f5f9", color: "#475569", border: "#e2e8f0" };
+        return { label: "Served", step: 4, bg: "#f0fdf4", color: "#15803d", border: "#bbf7d0" };
       case "cancelled":
-        return { label: "Cancelled", bg: "#fee2e2", color: "#b91c1c", border: "#fecaca" };
+        return { label: "Cancelled", step: 0, bg: "#fee2e2", color: "#b91c1c", border: "#fecaca" };
       default:
-        return { label: "Order Active", bg: "#ffedd5", color: "#c2410c", border: "#fed7aa" };
+        return { label: "Active", step: 1, bg: "#eff6ff", color: "#1d4ed8", border: "#bfdbfe" };
     }
   };
-
-  // Filtered menu items
-  const filteredMenuItems = useMemo(() => {
-    return availableItems.filter((item) => {
-      const matchesCategory =
-        selectedCategory === "all" || item.categoryId === selectedCategory;
-      const matchesSearch =
-        !searchQuery.trim() ||
-        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (item.description && item.description.toLowerCase().includes(searchQuery.toLowerCase()));
-      return matchesCategory && matchesSearch;
-    });
-  }, [availableItems, selectedCategory, searchQuery]);
-
-  const hasActiveOrder = Boolean(currentOrder && currentOrder.status !== "cancelled");
 
   return (
     <div style={styles.container}>
       {/* ---------------------------------------------------- */}
-      {/* 1. TOP BRAND HEADER */}
+      {/* 1. TOP BRAND & ACTION HEADER */}
       {/* ---------------------------------------------------- */}
       <header style={styles.topHeader}>
-        <div style={styles.topBrandInfo}>
-          <div style={styles.logoCircle}>
-            {business.logo_url ? (
-              <img src={business.logo_url} alt={business.name} style={styles.logoImg} />
-            ) : (
-              <span>🍽️</span>
-            )}
-          </div>
-          <div>
-            <h1 style={styles.businessNameHeading}>{business.name}</h1>
-            <div style={styles.tableBadgeSubtitle}>
-              Table {tableNumber || "1"} • Dine In
+        <div style={styles.brandRow}>
+          {business.logo_url ? (
+            <img src={business.logo_url} alt={business.name} style={styles.brandLogo} />
+          ) : (
+            <div style={styles.brandLogoPlaceholder}>
+              {(business.name || "M").charAt(0).toUpperCase()}
             </div>
+          )}
+
+          <div style={styles.brandTextWrap}>
+            <h1 style={styles.businessNameHeading}>{business.name}</h1>
+            {tableOrderingEnabled && (
+              <div style={styles.tableChip}>
+                {tableNumber ? `Table ${tableNumber}` : "Dine In"}
+              </div>
+            )}
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("search")}
-          style={{
-            ...styles.iconButton,
-            background: activeTab === "search" ? "#111827" : "#f1f5f9",
-            color: activeTab === "search" ? "#ffffff" : "#334155",
-          }}
-          title="Search menu"
-        >
-          🔍
-        </button>
+        <div style={styles.headerRightActions}>
+          {tableOrderingEnabled && (business.whatsapp_number || business.phone) && (
+            <a
+              href={
+                business.whatsapp_number
+                  ? `https://wa.me/${business.whatsapp_number.replace(/\D/g, "")}?text=${encodeURIComponent(
+                      tableNumber ? `Table ${tableNumber} needs assistance` : "A customer needs assistance"
+                    )}`
+                  : `tel:${business.phone}`
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => onTrackAction && onTrackAction("whatsapp_click")}
+              style={styles.callStaffBtn}
+              title="Call Staff"
+            >
+              <WhatsAppIcon size={16} />
+              <span>Call Staff</span>
+            </a>
+          )}
+        </div>
       </header>
 
       {/* ---------------------------------------------------- */}
-      {/* 2. MAIN CONTENT TABS */}
+      {/* 2. TAB: MENU */}
       {/* ---------------------------------------------------- */}
-      <main style={styles.contentBody}>
-        {/* --- TAB 1: HOME --- */}
-        {activeTab === "home" && (
-          <div style={styles.tabContent}>
-            {/* HERO RESTAURANT BANNER */}
-            <div style={styles.heroCard}>
-              <div style={styles.heroOverlay}>
-                <div style={styles.heroTopRow}>
-                  <div style={styles.glassTablePill}>
-                    Table {tableNumber || "1"} • Dine In
-                  </div>
-                  <div style={styles.glassCutleryCircle}>🍴</div>
-                </div>
-
-                <div style={styles.heroBottomContent}>
-                  <div style={styles.watermarkTagline}>Taste Tradition Together ♡</div>
-                  <h2 style={styles.heroMainTitle}>
-                    Authentic {business.category === "cafe" ? "Cafe Treats" : "Delicious Food"}
-                  </h2>
-                  <p style={styles.heroSubtitle}>
-                    Welcome to {business.name}! Experience authentic flavours, freshly prepared with love ❤️
-                  </p>
-
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("menu")}
-                    style={styles.startOrderingBtn}
-                  >
-                    🍴 Start Ordering
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* OFFERS SECTION */}
-            {offers.length > 0 && (
-              <div style={styles.offersContainer}>
-                <div style={styles.sectionHeaderTitle}>Offers</div>
-                <div style={styles.offersCard}>
-                  <div style={styles.offerIconBadge}>🎁</div>
-                  <div>
-                    <div style={styles.offerTitle}>
-                      {offers[0].title || offers[0].name || "Special Offer"}
-                    </div>
-                    <div style={styles.offerDesc}>
-                      {offers[0].description || "Special offer available on your dine-in order today!"}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* QUICK ACTIONS & CONNECT */}
-            <div style={styles.quickActionsGrid}>
-              {business.google_review_url && (
-                <a
-                  href={business.google_review_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => onTrackAction && onTrackAction("google_review_click")}
-                  style={styles.actionCard}
-                >
-                  <span style={styles.actionIcon}>⭐</span>
-                  <div>
-                    <div style={styles.actionTitle}>Review Us</div>
-                    <div style={styles.actionSub}>Rate on Google</div>
-                  </div>
-                </a>
-              )}
-
-              {business.instagram_url && (
-                <a
-                  href={business.instagram_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => onTrackAction && onTrackAction("instagram_click")}
-                  style={styles.actionCard}
-                >
-                  <span style={{ ...styles.actionIcon, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <InstagramIcon size={20} />
-                  </span>
-                  <div>
-                    <div style={styles.actionTitle}>Instagram</div>
-                    <div style={styles.actionSub}>Tag @{business.name}</div>
-                  </div>
-                </a>
-              )}
-
-              {(business.whatsapp_number || business.phone) && (
-                <a
-                  href={
-                    business.whatsapp_number
-                      ? `https://wa.me/${business.whatsapp_number.replace(/\D/g, "")}`
-                      : `tel:${business.phone}`
-                  }
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => onTrackAction && onTrackAction("whatsapp_click")}
-                  style={styles.actionCard}
-                >
-                  <span style={{ ...styles.actionIcon, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <WhatsAppIcon size={20} />
-                  </span>
-                  <div>
-                    <div style={styles.actionTitle}>Call Staff</div>
-                    <div style={styles.actionSub}>Need help at table?</div>
-                  </div>
-                </a>
-              )}
-
-              {business.payment_enabled && (business.payment_url || business.upi_id) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (onTrackAction) onTrackAction("payment_click");
-                    setIsPaymentModalOpen(true);
-                  }}
-                  style={{ ...styles.actionCard, cursor: "pointer", textAlign: "left" }}
-                >
-                  <span style={styles.actionIcon}>💳</span>
-                  <div>
-                    <div style={styles.actionTitle}>Pay Online</div>
-                    <div style={styles.actionSub}>Instant UPI &amp; QR</div>
-                  </div>
-                </button>
-              )}
-
-              {feedbackEnabled && onOpenFeedback && (
-                <button
-                  type="button"
-                  onClick={onOpenFeedback}
-                  style={{ ...styles.actionCard, cursor: "pointer", textAlign: "left" }}
-                >
-                  <span style={styles.actionIcon}>📝</span>
-                  <div>
-                    <div style={styles.actionTitle}>Feedback</div>
-                    <div style={styles.actionSub}>Share review</div>
-                  </div>
-                </button>
-              )}
-
-              {loyaltyEnabled && onOpenLoyalty && (
-                <button
-                  type="button"
-                  onClick={onOpenLoyalty}
-                  style={{ ...styles.actionCard, cursor: "pointer", textAlign: "left" }}
-                >
-                  <span style={styles.actionIcon}>🎁</span>
-                  <div>
-                    <div style={styles.actionTitle}>Rewards</div>
-                    <div style={styles.actionSub}>Loyalty points</div>
-                  </div>
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* --- TAB 2: MENU --- */}
-        {activeTab === "menu" && (
-          <div style={styles.tabContent}>
-            {/* SEARCH BAR */}
-            <div style={styles.searchBoxWrapper}>
-              <span style={{ fontSize: "15px", color: "#94a3b8" }}>🔍</span>
+      {activeTab === "menu" && (
+        <div style={styles.menuTabContainer}>
+          {/* SEARCH BAR */}
+          <div style={styles.searchBarWrapper}>
+            <div style={styles.searchInputBox}>
+              <span style={styles.searchIcon}>🔍</span>
               <input
                 type="text"
-                placeholder="Search menu items..."
+                placeholder="Search dishes or drinks..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={styles.searchInput}
@@ -581,519 +798,739 @@ export default function RestaurantExperience({
                   type="button"
                   onClick={() => setSearchQuery("")}
                   style={styles.clearSearchBtn}
+                  aria-label="Clear search"
                 >
                   ✕
                 </button>
               )}
             </div>
+          </div>
 
-            {/* CATEGORY FILTER PILLS */}
-            <div style={styles.categoryScroll}>
+          {/* STICKY FILTER ROW (Dietary Filters + Category Chips) */}
+          <div style={styles.stickyFilterContainer}>
+            {/* Dietary Filter Pills */}
+            <div style={styles.dietaryFilterRow}>
               <button
                 type="button"
-                onClick={() => setSelectedCategory("all")}
+                onClick={() => setDietaryFilter("all")}
                 style={{
-                  ...styles.categoryPill,
-                  background: selectedCategory === "all" ? "#111827" : "#ffffff",
-                  color: selectedCategory === "all" ? "#ffffff" : "#475569",
-                  borderColor: selectedCategory === "all" ? "#111827" : "#e2e8f0",
+                  ...styles.dietFilterPill,
+                  backgroundColor: dietaryFilter === "all" ? "#0f172a" : "#ffffff",
+                  color: dietaryFilter === "all" ? "#ffffff" : "#475569",
+                  borderColor: dietaryFilter === "all" ? "#0f172a" : "#e2e8f0",
                 }}
               >
-                All Dishes
+                All
               </button>
-              {categories.map((cat) => (
+              <button
+                type="button"
+                onClick={() => setDietaryFilter("veg")}
+                style={{
+                  ...styles.dietFilterPill,
+                  backgroundColor: dietaryFilter === "veg" ? "#15803d" : "#ffffff",
+                  color: dietaryFilter === "veg" ? "#ffffff" : "#15803d",
+                  borderColor: dietaryFilter === "veg" ? "#15803d" : "#bbf7d0",
+                }}
+              >
+                <DietaryBadge dietary="veg" size={12} />
+                <span>Veg</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDietaryFilter("non_veg")}
+                style={{
+                  ...styles.dietFilterPill,
+                  backgroundColor: dietaryFilter === "non_veg" ? "#b91c1c" : "#ffffff",
+                  color: dietaryFilter === "non_veg" ? "#ffffff" : "#b91c1c",
+                  borderColor: dietaryFilter === "non_veg" ? "#b91c1c" : "#fecaca",
+                }}
+              >
+                <DietaryBadge dietary="non_veg" size={12} />
+                <span>Non-Veg</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDietaryFilter("egg")}
+                style={{
+                  ...styles.dietFilterPill,
+                  backgroundColor: dietaryFilter === "egg" ? "#b45309" : "#ffffff",
+                  color: dietaryFilter === "egg" ? "#ffffff" : "#b45309",
+                  borderColor: dietaryFilter === "egg" ? "#b45309" : "#fed7aa",
+                }}
+              >
+                <DietaryBadge dietary="egg" size={12} />
+                <span>Egg</span>
+              </button>
+            </div>
+
+            {/* Category Navigation Chips */}
+            <div style={styles.categoryScrollContainer}>
+              <button
+                type="button"
+                onClick={() => scrollToCategory("all")}
+                style={{
+                  ...styles.categoryChip,
+                  backgroundColor: activeCategoryChip === "all" ? "#0f172a" : "#ffffff",
+                  color: activeCategoryChip === "all" ? "#ffffff" : "#475569",
+                  borderColor: activeCategoryChip === "all" ? "#0f172a" : "#e2e8f0",
+                }}
+              >
+                All ({filteredItems.length})
+              </button>
+              {groupedCategories.map((group) => (
                 <button
-                  key={cat.id}
+                  key={group.cat.id}
                   type="button"
-                  onClick={() => setSelectedCategory(cat.id)}
+                  onClick={() => scrollToCategory(group.cat.id)}
                   style={{
-                    ...styles.categoryPill,
-                    background: selectedCategory === cat.id ? "#111827" : "#ffffff",
-                    color: selectedCategory === cat.id ? "#ffffff" : "#475569",
-                    borderColor: selectedCategory === cat.id ? "#111827" : "#e2e8f0",
+                    ...styles.categoryChip,
+                    backgroundColor: activeCategoryChip === group.cat.id ? "#0f172a" : "#ffffff",
+                    color: activeCategoryChip === group.cat.id ? "#ffffff" : "#475569",
+                    borderColor: activeCategoryChip === group.cat.id ? "#0f172a" : "#e2e8f0",
                   }}
                 >
-                  {cat.name}
+                  {group.cat.name} ({group.items.length})
                 </button>
               ))}
             </div>
-
-            {/* DISH CARDS LIST */}
-            <div style={styles.menuItemsList}>
-              {filteredMenuItems.length === 0 ? (
-                <div style={styles.emptyResultsCard}>
-                  <div>🍽️</div>
-                  <div style={{ fontWeight: 700, marginTop: "8px", color: "#1e293b" }}>
-                    No dishes found
-                  </div>
-                  <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px" }}>
-                    Try selecting a different category or clearing your search.
-                  </div>
-                </div>
-              ) : (
-                filteredMenuItems.map((dish) => {
-                  const qty = cart[dish.id] || 0;
-                  const numPrice = Number(String(dish.price || "").replace(/[^0-9.]/g, "")) || 0;
-
-                  return (
-                    <div key={dish.id} style={styles.dishCard}>
-                      <div style={styles.dishInfoCol}>
-                        {/* Veg / Non-Veg Indicator */}
-                        <div style={styles.dietaryRow}>
-                          <span
-                            style={{
-                              ...styles.dietaryDotBorder,
-                              borderColor: dish.dietary === "non_veg" ? "#dc2626" : "#16a34a",
-                            }}
-                          >
-                            <span
-                              style={{
-                                ...styles.dietaryDotInner,
-                                background: dish.dietary === "non_veg" ? "#dc2626" : "#16a34a",
-                              }}
-                            />
-                          </span>
-                          {dish.popular && (
-                            <span style={styles.popularBadge}>★ Best Seller</span>
-                          )}
-                        </div>
-
-                        <div style={styles.dishName}>{dish.name}</div>
-                        <div style={styles.dishPrice}>₹{numPrice.toFixed(0)}</div>
-
-                        {dish.description && (
-                          <div style={styles.dishDesc}>{dish.description}</div>
-                        )}
-                      </div>
-
-                      {/* Right side Image & Add button */}
-                      <div style={styles.dishActionCol}>
-                        {dish.imageUrl ? (
-                          <div style={styles.dishImageWrap}>
-                            <img src={dish.imageUrl} alt={dish.name} style={styles.dishImg} loading="lazy" decoding="async" />
-                          </div>
-                        ) : (
-                          <div style={styles.dishImagePlaceholder}>
-                            <span>🍲</span>
-                          </div>
-                        )}
-
-                        <div style={styles.addBtnContainer}>
-                          {qty > 0 ? (
-                            <div style={styles.qtyStepper}>
-                              <button
-                                type="button"
-                                onClick={() => removeFromCart(dish.id)}
-                                style={styles.stepperBtn}
-                              >
-                                −
-                              </button>
-                              <span style={styles.stepperCount}>{qty}</span>
-                              <button
-                                type="button"
-                                onClick={() => addToCart(dish.id)}
-                                style={styles.stepperBtn}
-                              >
-                                +
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => addToCart(dish.id)}
-                              style={styles.addButton}
-                            >
-                              ADD +
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
           </div>
-        )}
 
-        {/* --- TAB 3: SEARCH --- */}
-        {activeTab === "search" && (
-          <div style={styles.tabContent}>
-            <div style={styles.searchBoxWrapper}>
-              <span style={{ fontSize: "16px", color: "#94a3b8" }}>🔍</span>
-              <input
-                type="text"
-                autoFocus
-                placeholder="Search food by name, ingredients..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={styles.searchInput}
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery("")}
-                  style={styles.clearSearchBtn}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-
-            <div style={{ marginTop: "16px" }}>
-              <div style={styles.sectionHeaderTitle}>
-                {searchQuery ? `Search Results (${filteredMenuItems.length})` : "All Dishes"}
-              </div>
-
-              <div style={styles.menuItemsList}>
-                {filteredMenuItems.map((dish) => {
-                  const qty = cart[dish.id] || 0;
-                  const numPrice = Number(String(dish.price || "").replace(/[^0-9.]/g, "")) || 0;
-
-                  return (
-                    <div key={dish.id} style={styles.dishCard}>
-                      <div style={styles.dishInfoCol}>
-                        <div style={styles.dishName}>{dish.name}</div>
-                        <div style={styles.dishPrice}>₹{numPrice.toFixed(0)}</div>
-                        {dish.description && (
-                          <div style={styles.dishDesc}>{dish.description}</div>
-                        )}
-                      </div>
-                      <div style={styles.dishActionCol}>
-                        {qty > 0 ? (
-                          <div style={styles.qtyStepper}>
-                            <button
-                              type="button"
-                              onClick={() => removeFromCart(dish.id)}
-                              style={styles.stepperBtn}
-                            >
-                              −
-                            </button>
-                            <span style={styles.stepperCount}>{qty}</span>
-                            <button
-                              type="button"
-                              onClick={() => addToCart(dish.id)}
-                              style={styles.stepperBtn}
-                            >
-                              +
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => addToCart(dish.id)}
-                            style={styles.addButton}
-                          >
-                            ADD +
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* --- TAB 4: MY ORDERS (SCREENSHOT 2 DESIGN) --- */}
-        {activeTab === "orders" && (
-          <div style={styles.tabContent}>
-            {/* Header info */}
-            <div style={styles.ordersHeaderRow}>
-              <div>
-                <div style={styles.tableSuperTag}>TABLE T{tableNumber || "1"}</div>
-                <h2 style={styles.ordersPageTitle}>My Orders</h2>
-              </div>
-              <div style={styles.ordersIconHeader}>📋</div>
-            </div>
-
-            {currentOrder ? (
-              <div style={styles.ordersBody}>
-                {/* CURRENT BILL CARD */}
-                <div style={styles.currentBillCard}>
-                  <div style={styles.billHeaderRow}>
-                    <div style={styles.billReceiptCircle}>🧾</div>
-                    <div style={styles.billTitleCol}>
-                      <div style={styles.currentBillLabel}>CURRENT BILL</div>
-                      <div style={styles.billAmountLarge}>
-                        ₹{Number(currentOrder.total || 0).toFixed(0)}
-                      </div>
-                    </div>
-                    {/* Status Chip */}
-                    <div
-                      style={{
-                        ...styles.statusChip,
-                        background: getStatusBadge(currentOrder.status).bg,
-                        color: getStatusBadge(currentOrder.status).color,
-                        border: `1px solid ${getStatusBadge(currentOrder.status).border}`,
-                      }}
-                    >
-                      {getStatusBadge(currentOrder.status).label}
-                    </div>
-                  </div>
-
-                  <div style={styles.billSummaryLine}>
-                    1 order • {currentOrderItems.length || 1} item{currentOrderItems.length !== 1 ? "s" : ""}
-                  </div>
-
-                  <div style={styles.billHelperNote}>
-                    Your bill will update here as order statuses change.
-                  </div>
-                </div>
-
-                {/* DETAILED ORDER CARD */}
-                <div style={styles.orderDetailCard}>
-                  <div style={styles.orderDetailHeader}>
-                    <div>
-                      <div style={styles.orderNumberText}>
-                        Order #{currentOrder.order_number || currentOrder.id.slice(0, 6).toUpperCase()}
-                      </div>
-                      <div style={styles.orderTimestampText}>
-                        Dine in • {formatOrderTime(currentOrder.created_at) || "Just now"}
-                      </div>
-                    </div>
-                    <div
-                      style={{
-                        ...styles.statusChip,
-                        background: getStatusBadge(currentOrder.status).bg,
-                        color: getStatusBadge(currentOrder.status).color,
-                        border: `1px solid ${getStatusBadge(currentOrder.status).border}`,
-                      }}
-                    >
-                      {getStatusBadge(currentOrder.status).label}
-                    </div>
-                  </div>
-
-                  {/* Order Items List */}
-                  <div style={styles.orderItemsBreakdown}>
-                    {currentOrderItems.map((item) => (
-                      <div key={item.id} style={styles.orderItemLine}>
-                        <span style={styles.orderItemNameText}>
-                          {item.item_name} <strong style={{ color: "#0f172a" }}>x{item.quantity}</strong>
-                        </span>
-                        <span style={styles.orderItemPriceText}>
-                          ₹{Number(item.line_total || 0).toFixed(0)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Order Total Line */}
-                  <div style={styles.orderTotalDivider} />
-                  <div style={styles.orderTotalRow}>
-                    <span style={styles.orderTotalLabel}>Order Total</span>
-                    <span style={styles.orderTotalValue}>
-                      ₹{Number(currentOrder.total || 0).toFixed(0)}
-                    </span>
-                  </div>
-
-                  {/* Support Contact Row */}
-                  <div style={styles.orderHelpBanner}>
-                    <span style={styles.helpText}>Check your order status here.</span>
-                    <div style={styles.helpButtonsRow}>
-                      {business.phone && (
-                        <a
-                          href={`tel:${business.phone}`}
-                          style={styles.helpIconBtn}
-                          title="Call staff"
-                        >
-                          📞
-                        </a>
-                      )}
-                      {business.whatsapp_number && (
-                        <a
-                          href={`https://wa.me/${business.whatsapp_number.replace(/\D/g, "")}?text=${encodeURIComponent(`Hi, I am at Table ${tableNumber} (Order #${currentOrder.order_number || currentOrder.id.slice(0, 6)}). Need assistance.`)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ ...styles.helpIconBtn, display: "flex", alignItems: "center", justifyContent: "center" }}
-                          title="WhatsApp staff"
-                        >
-                          <WhatsAppIcon size={18} />
-                        </a>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Cancel Button (only if order is still pending) */}
-                  {currentOrder.status === "pending" && (
-                    <button
-                      type="button"
-                      disabled={cancellingOrder}
-                      onClick={handleCancelOrder}
-                      style={styles.cancelOrderBtn}
-                    >
-                      {cancellingOrder ? "Cancelling..." : "✕ Cancel Order"}
-                    </button>
-                  )}
+          {/* DISH SECTIONS */}
+          <div style={styles.sectionsList}>
+            {groupedCategories.length === 0 ? (
+              <div style={styles.emptyStateCard}>
+                <div style={{ fontSize: "32px", marginBottom: "8px" }}>🍽️</div>
+                <div style={styles.emptyStateTitle}>No dishes found</div>
+                <div style={styles.emptyStateSubtitle}>
+                  Try clearing your search query or switching the dietary filter.
                 </div>
               </div>
             ) : (
-              <div style={styles.noOrdersCard}>
-                <div style={{ fontSize: "38px", marginBottom: "12px" }}>🧾</div>
-                <div style={styles.noOrdersTitle}>No active order yet</div>
-                <p style={styles.noOrdersSub}>
-                  Browse the menu, add items to your cart and place an order to track your live status here.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("menu")}
-                  style={styles.browseMenuCtaBtn}
+              groupedCategories.map((group) => (
+                <section
+                  key={group.cat.id}
+                  id={`cat-section-${group.cat.id}`}
+                  style={styles.categorySection}
                 >
-                  🍴 Browse Menu
-                </button>
-              </div>
+                  <div style={styles.sectionHeaderRow}>
+                    <h2 style={styles.sectionCategoryTitle}>{group.cat.name}</h2>
+                    <span style={styles.sectionItemCountBadge}>
+                      {group.items.length} {group.items.length === 1 ? "dish" : "dishes"}
+                    </span>
+                  </div>
+
+                  <div style={styles.cardsGrid}>
+                    {group.items.map((dish) => {
+                      const isSoldOut = dish.available === false;
+                      const numPrice = parsePrice(dish.price);
+                      const stdQty = getStandardItemQty(dish.id);
+
+                      return (
+                        <div
+                          key={dish.id}
+                          style={{
+                            ...styles.dishCard,
+                            opacity: isSoldOut ? 0.6 : 1,
+                            backgroundColor: isSoldOut ? "#f8fafc" : "#ffffff",
+                          }}
+                          onClick={() => {
+                            if (tableOrderingEnabled && !isSoldOut) {
+                              openItemDetail(dish);
+                            } else if (!tableOrderingEnabled) {
+                              openItemDetail(dish);
+                            }
+                          }}
+                        >
+                          {/* Left: Info */}
+                          <div style={styles.dishInfoCol}>
+                            <div style={styles.dishTagRow}>
+                              <DietaryBadge dietary={dish.dietary} size={15} />
+                              {dish.popular && (
+                                <span style={styles.popularTag}>★ Bestseller</span>
+                              )}
+                              {isSoldOut && (
+                                <span style={styles.soldOutBadge}>Sold out</span>
+                              )}
+                            </div>
+
+                            <h3 style={styles.dishName}>{dish.name}</h3>
+
+                            <div style={styles.dishPriceText}>
+                              ₹{numPrice.toFixed(0)}
+                            </div>
+
+                            {dish.description && (
+                              <p style={styles.dishDescription}>{dish.description}</p>
+                            )}
+                          </div>
+
+                          {/* Right: Image & Action */}
+                          <div
+                            style={styles.dishActionCol}
+                            onClick={(e) => {
+                              // Prevent double trigger when clicking action buttons
+                              if (tableOrderingEnabled) e.stopPropagation();
+                            }}
+                          >
+                            <DishImage
+                              src={dish.imageUrl || dish.image_url}
+                              name={dish.name}
+                              size={88}
+                            />
+
+                            {/* Ordering controls */}
+                            {tableOrderingEnabled && (
+                              <div style={styles.dishBtnWrap}>
+                                {isSoldOut ? (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    style={styles.soldOutBtn}
+                                  >
+                                    Sold out
+                                  </button>
+                                ) : stdQty > 0 ? (
+                                  <div style={styles.stepperBox}>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeStandardItem(dish.id)}
+                                      style={styles.stepperActionBtn}
+                                      aria-label={`Remove one ${dish.name}`}
+                                    >
+                                      −
+                                    </button>
+                                    <span style={styles.stepperValue}>{stdQty}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => addStandardItem(dish)}
+                                      style={styles.stepperActionBtn}
+                                      aria-label={`Add one ${dish.name}`}
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => addStandardItem(dish)}
+                                    style={styles.addBtn}
+                                  >
+                                    + ADD
+                                  </button>
+                                )}
+
+                                {!isSoldOut && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openItemDetail(dish)}
+                                    style={styles.customizeLinkBtn}
+                                  >
+                                    Customize ›
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))
             )}
           </div>
-        )}
-      </main>
-
-      {/* ---------------------------------------------------- */}
-      {/* 3. FLOATING ACTION BUBBLE (FAB) */}
-      {/* ---------------------------------------------------- */}
-      {hasActiveOrder && activeTab !== "orders" && (
-        <button
-          type="button"
-          onClick={() => setActiveTab("orders")}
-          style={styles.floatingOrderFab}
-          title="View Active Order"
-        >
-          <span>🧾</span>
-          <span style={styles.fabCountBadge}>1</span>
-        </button>
+        </div>
       )}
 
       {/* ---------------------------------------------------- */}
-      {/* 4. STICKY CART BAR (WHEN ITEMS IN CART) */}
+      {/* 3. TAB: MY ORDERS (Live Tracker) */}
       {/* ---------------------------------------------------- */}
-      {cartCount > 0 && (
-        <div style={styles.stickyCartBarWrapper}>
+      {tableOrderingEnabled && activeTab === "orders" && (
+        <div style={styles.ordersTabContainer}>
+          <div style={styles.ordersHeaderBox}>
+            <div style={styles.ordersTablePill}>TABLE {tableNumber || "1"}</div>
+            <h2 style={styles.ordersPageTitle}>My Orders</h2>
+            <p style={styles.ordersPageSub}>
+              Live status updates for your dine-in table order
+            </p>
+          </div>
+
+          {currentOrder ? (
+            <div style={styles.orderCard}>
+              {/* Status Header */}
+              <div style={styles.orderTopMetaRow}>
+                <div>
+                  <div style={styles.orderIdText}>
+                    Order #{currentOrder.order_number || currentOrder.id.slice(0, 6).toUpperCase()}
+                  </div>
+                  <div style={styles.orderTimeText}>
+                    Placed at {formatOrderTime(currentOrder.created_at) || "Just now"}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    ...styles.statusBadge,
+                    backgroundColor: getStatusDisplay(currentOrder.status).bg,
+                    color: getStatusDisplay(currentOrder.status).color,
+                    borderColor: getStatusDisplay(currentOrder.status).border,
+                  }}
+                >
+                  {getStatusDisplay(currentOrder.status).label}
+                </div>
+              </div>
+
+              {/* 4-Step Visual Progress Bar */}
+              {currentOrder.status !== "cancelled" && (
+                <div style={styles.stepperProgressContainer}>
+                  <div style={styles.progressTrack}>
+                    <div
+                      style={{
+                        ...styles.progressBarFill,
+                        width: `${Math.min(
+                          100,
+                          Math.max(
+                            0,
+                            ((getStatusDisplay(currentOrder.status).step - 1) / 3) * 100
+                          )
+                        )}%`,
+                      }}
+                    />
+                  </div>
+
+                  <div style={styles.stepsRow}>
+                    {[
+                      { step: 1, label: "Received" },
+                      { step: 2, label: "Preparing" },
+                      { step: 3, label: "Ready" },
+                      { step: 4, label: "Served" },
+                    ].map((s) => {
+                      const currentStep = getStatusDisplay(currentOrder.status).step;
+                      const isDone = currentStep >= s.step;
+                      const isCurrent = currentStep === s.step;
+
+                      return (
+                        <div key={s.step} style={styles.stepCol}>
+                          <div
+                            style={{
+                              ...styles.stepNode,
+                              backgroundColor: isDone ? "#16a34a" : "#f1f5f9",
+                              borderColor: isCurrent ? "#059669" : isDone ? "#16a34a" : "#cbd5e1",
+                              color: isDone ? "#ffffff" : "#64748b",
+                            }}
+                          >
+                            {isDone ? "✓" : s.step}
+                          </div>
+                          <span
+                            style={{
+                              ...styles.stepNodeLabel,
+                              color: isCurrent ? "#0f172a" : isDone ? "#16a34a" : "#94a3b8",
+                              fontWeight: isCurrent ? 700 : 500,
+                            }}
+                          >
+                            {s.label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Items Breakdown */}
+              <div style={styles.orderItemsSection}>
+                <div style={styles.sectionSubHeader}>Items in this order:</div>
+                <div style={styles.orderItemsList}>
+                  {currentOrderItems.map((item) => (
+                    <div key={item.id} style={styles.orderItemCardRow}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={styles.orderItemNameLine}>
+                          <span style={styles.orderItemName}>{item.item_name}</span>
+                          <span style={styles.orderItemQtyTag}>x{item.quantity}</span>
+                        </div>
+
+                        {/* Special request display */}
+                        {item.special_request && (
+                          <div style={styles.itemRequestBadge}>
+                            <strong style={{ fontWeight: 700 }}>Request:</strong>{" "}
+                            {item.special_request}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={styles.orderItemPrice}>
+                        ₹{Number(item.line_total || 0).toFixed(0)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={styles.orderTotalDivider} />
+
+                <div style={styles.orderTotalRow}>
+                  <span style={styles.orderTotalLabel}>Total Amount:</span>
+                  <span style={styles.orderTotalAmount}>
+                    ₹{Number(currentOrder.total || 0).toFixed(0)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons: Add more items, WhatsApp, Cancel */}
+              <div style={styles.orderActionsRow}>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("menu")}
+                  style={styles.orderMoreBtn}
+                >
+                  🍴 Order More Items
+                </button>
+
+                {currentOrder.status === "pending" && (
+                  <button
+                    type="button"
+                    disabled={cancellingOrder}
+                    onClick={handleCancelOrder}
+                    style={styles.cancelBtn}
+                  >
+                    {cancellingOrder ? "Cancelling..." : "Cancel Order"}
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div style={styles.emptyOrdersCard}>
+              <div style={{ fontSize: "40px", marginBottom: "12px" }}>🧾</div>
+              <h3 style={styles.emptyOrdersTitle}>No active order</h3>
+              <p style={styles.emptyOrdersSub}>
+                You haven&apos;t placed any table orders yet. Browse our menu to add items and place an order.
+              </p>
+              <button
+                type="button"
+                onClick={() => setActiveTab("menu")}
+                style={styles.browseMenuBtn}
+              >
+                Browse Menu
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* 4. STICKY BOTTOM CART BAR */}
+      {/* ---------------------------------------------------- */}
+      {tableOrderingEnabled && totalCartCount > 0 && activeTab === "menu" && (
+        <div style={styles.stickyCartBarWrap}>
           <div style={styles.stickyCartBar}>
             <div>
-              <div style={styles.cartCountLabel}>{cartCount} item{cartCount > 1 ? "s" : ""} added</div>
-              <div style={styles.cartPriceLabel}>₹{cartTotal.toFixed(0)}</div>
+              <div style={styles.cartCountLabel}>
+                {totalCartCount} {totalCartCount === 1 ? "item" : "items"}
+              </div>
+              <div style={styles.cartTotalLabel}>₹{cartTotal.toFixed(0)}</div>
             </div>
 
             <button
               type="button"
               onClick={() => setShowCheckoutSheet(true)}
-              style={styles.viewCartButton}
+              style={styles.viewCartBtn}
             >
-              View Cart / Order →
+              <span>View Order</span>
+              <span>→</span>
             </button>
           </div>
         </div>
       )}
 
       {/* ---------------------------------------------------- */}
-      {/* 5. CHECKOUT / PLACE ORDER SHEET MODAL */}
+      {/* 5. ITEM DETAIL & CUSTOMIZATION SHEET (MODAL) */}
       {/* ---------------------------------------------------- */}
-      {showCheckoutSheet && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.checkoutSheet}>
-            <div style={styles.sheetHeader}>
-              <div>
-                <h3 style={styles.sheetTitle}>Table Order</h3>
-                <div style={styles.sheetSubtitle}>Review items & confirm your order</div>
+      {detailItem && (
+        <div style={styles.modalOverlay} onClick={() => setDetailItem(null)}>
+          <div
+            style={styles.modalSheet}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            {/* Header */}
+            <div style={styles.modalHeader}>
+              <div style={styles.modalTitleRow}>
+                <DietaryBadge dietary={detailItem.dietary} size={16} />
+                <h3 style={styles.modalTitle}>{detailItem.name}</h3>
               </div>
               <button
                 type="button"
-                onClick={() => setShowCheckoutSheet(false)}
-                style={styles.closeSheetBtn}
+                onClick={() => setDetailItem(null)}
+                style={styles.modalCloseBtn}
+                aria-label="Close"
               >
                 ✕
               </button>
             </div>
 
-            <div style={styles.sheetBody}>
-              {/* Order Items Summary */}
-              <div style={styles.sheetItemsList}>
-                {cartItems.map((item) => (
-                  <div key={item.id} style={styles.sheetItemRow}>
-                    <div>
-                      <div style={styles.sheetItemName}>{item.name}</div>
-                      <div style={styles.sheetItemPrice}>₹{item.numericPrice.toFixed(0)} each</div>
-                    </div>
+            <div style={styles.modalBody}>
+              {/* Big Dish Photo / Fallback */}
+              {(detailItem.imageUrl || detailItem.image_url) && (
+                <div style={styles.modalImageWrap}>
+                  <img
+                    src={detailItem.imageUrl || detailItem.image_url}
+                    alt={detailItem.name}
+                    loading="lazy"
+                    decoding="async"
+                    style={styles.modalImg}
+                  />
+                </div>
+              )}
 
-                    <div style={styles.qtyStepperSmall}>
+              <div style={styles.modalPriceText}>
+                ₹{parsePrice(detailItem.price).toFixed(0)}
+              </div>
+
+              {detailItem.description && (
+                <p style={styles.modalDescription}>{detailItem.description}</p>
+              )}
+
+              {/* Quick customization & special instructions (ordering mode only) */}
+              {tableOrderingEnabled && detailItem.available !== false && (
+                <div style={styles.customizationSection}>
+                  <label style={styles.customLabel}>
+                    Quick customizations (tap to add):
+                  </label>
+                  <div style={styles.quickChipsWrap}>
+                    {activeQuickRequests.map((chip) => {
+                      const isSelected = customRequest
+                        .toLowerCase()
+                        .includes(chip.toLowerCase());
+                      return (
+                        <button
+                          key={chip}
+                          type="button"
+                          onClick={() => toggleQuickChip(chip)}
+                          style={{
+                            ...styles.quickChipBtn,
+                            backgroundColor: isSelected ? "#0f172a" : "#f1f5f9",
+                            color: isSelected ? "#ffffff" : "#334155",
+                            borderColor: isSelected ? "#0f172a" : "#cbd5e1",
+                          }}
+                        >
+                          {isSelected ? "✓ " : "+ "}
+                          {chip}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <label style={{ ...styles.customLabel, marginTop: "12px" }}>
+                    Special instructions for kitchen:
+                  </label>
+                  <textarea
+                    rows={2}
+                    maxLength={200}
+                    placeholder="e.g. Less oil, extra crispy, sauce on the side..."
+                    value={customRequest}
+                    onChange={(e) => setCustomRequest(e.target.value)}
+                    style={styles.customTextarea}
+                  />
+                  <div style={styles.charCountText}>
+                    {customRequest.length}/200 characters
+                  </div>
+
+                  {/* Quantity selector */}
+                  <div style={styles.modalQtyRow}>
+                    <span style={styles.modalQtyLabel}>Quantity:</span>
+                    <div style={styles.stepperBox}>
                       <button
                         type="button"
-                        onClick={() => removeFromCart(item.id)}
-                        style={styles.stepperBtn}
+                        onClick={() => setCustomQty((q) => Math.max(1, q - 1))}
+                        style={styles.stepperActionBtn}
+                        aria-label="Decrease quantity"
                       >
                         −
                       </button>
-                      <span style={styles.stepperCount}>{item.quantity}</span>
+                      <span style={styles.stepperValue}>{customQty}</span>
                       <button
                         type="button"
-                        onClick={() => addToCart(item.id)}
-                        style={styles.stepperBtn}
+                        onClick={() => setCustomQty((q) => q + 1)}
+                        style={styles.stepperActionBtn}
+                        aria-label="Increase quantity"
                       >
                         +
                       </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {detailItem.available === false && (
+                <div style={styles.soldOutNoticeBanner}>
+                  ⚠️ This dish is currently sold out and cannot be ordered.
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            {tableOrderingEnabled && detailItem.available !== false && (
+              <div style={styles.modalFooter}>
+                <button
+                  type="button"
+                  onClick={handleAddCustomizedItem}
+                  style={styles.confirmAddBtn}
+                >
+                  Add to order • ₹{(parsePrice(detailItem.price) * customQty).toFixed(0)}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* 6. CART CHECKOUT SHEET (MODAL) */}
+      {/* ---------------------------------------------------- */}
+      {tableOrderingEnabled && showCheckoutSheet && (
+        <div style={styles.modalOverlay} onClick={() => setShowCheckoutSheet(false)}>
+          <div
+            style={styles.checkoutSheet}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div style={styles.modalHeader}>
+              <div>
+                <h3 style={styles.modalTitle}>Your Order</h3>
+                <div style={styles.checkoutTableLabel}>
+                  {standTableNum ? `Table ${standTableNum} • Dine In` : "Dine In Order"}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCheckoutSheet(false)}
+                style={styles.modalCloseBtn}
+                aria-label="Close order sheet"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.checkoutBody}>
+              {/* Cart items list */}
+              <div style={styles.checkoutItemsList}>
+                {cartLinesList.map((line) => (
+                  <div key={line.lineId} style={styles.checkoutItemRow}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={styles.checkoutItemNameRow}>
+                        <DietaryBadge dietary={line.dietary} size={14} />
+                        <span style={styles.checkoutItemName}>{line.name}</span>
+                      </div>
+                      <div style={styles.checkoutItemUnit}>
+                        ₹{line.unitPrice.toFixed(0)} each
+                      </div>
+
+                      {/* Request chip */}
+                      {line.special_request && (
+                        <div style={styles.checkoutRequestPill}>
+                          <strong>Request:</strong> {line.special_request}
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={styles.checkoutItemRight}>
+                      <div style={styles.stepperBox}>
+                        <button
+                          type="button"
+                          onClick={() => updateLineQty(line.lineId, -1)}
+                          style={styles.stepperActionBtn}
+                          aria-label={`Decrease ${line.name}`}
+                        >
+                          −
+                        </button>
+                        <span style={styles.stepperValue}>{line.quantity}</span>
+                        <button
+                          type="button"
+                          onClick={() => updateLineQty(line.lineId, 1)}
+                          style={styles.stepperActionBtn}
+                          aria-label={`Increase ${line.name}`}
+                        >
+                          +
+                        </button>
+                      </div>
+
+                      <div style={styles.checkoutLineTotal}>
+                        ₹{(line.unitPrice * line.quantity).toFixed(0)}
+                      </div>
                     </div>
                   </div>
                 ))}
               </div>
 
               {/* Bill Summary */}
-              <div style={styles.billTotalRow}>
-                <span>Subtotal:</span>
-                <span>₹{cartTotal.toFixed(0)}</span>
-              </div>
-              <div style={{ ...styles.billTotalRow, fontWeight: 800, fontSize: "16px", color: "#0f172a" }}>
-                <span>Total Payable:</span>
-                <span>₹{cartTotal.toFixed(0)}</span>
+              <div style={styles.billBox}>
+                <div style={styles.billRow}>
+                  <span>Subtotal:</span>
+                  <span>₹{cartTotal.toFixed(0)}</span>
+                </div>
+                <div style={styles.billTotalRow}>
+                  <span>Total Payable:</span>
+                  <span>₹{cartTotal.toFixed(0)}</span>
+                </div>
               </div>
 
               {/* Customer Inputs */}
-              <div style={styles.formInputsBox}>
-                <label style={styles.inputLabel}>
-                  Table Number <span style={{ color: "#ef4444" }}>*</span>
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  placeholder="Enter table number"
-                  value={tableNumber}
-                  onChange={(e) => setTableNumber(e.target.value)}
-                  style={styles.sheetInput}
-                />
+              <div style={styles.customerInputsBox}>
+                {!standTableNum && (
+                  <div style={{ marginBottom: "12px" }}>
+                    <label style={styles.inputLabel}>
+                      Table Number <span style={{ color: "#ef4444" }}>*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={tableCount || 999}
+                      placeholder="Enter your table number (e.g. 5)"
+                      value={tableNumber}
+                      onChange={(e) => setTableNumber(e.target.value)}
+                      style={styles.inputField}
+                    />
+                  </div>
+                )}
 
-                <label style={styles.inputLabel}>
-                  Your Name <span style={{ color: "#ef4444" }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="Enter your name"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  style={styles.sheetInput}
-                />
+                <div style={{ marginBottom: "12px" }}>
+                  <label style={styles.inputLabel}>
+                    Your Name <span style={{ color: "#ef4444" }}>*</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter your name"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    style={styles.inputField}
+                  />
+                </div>
 
-                <label style={styles.inputLabel}>Phone Number (Optional)</label>
-                <input
-                  type="tel"
-                  placeholder="10-digit mobile number"
-                  value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
-                  style={styles.sheetInput}
-                />
+                <div style={{ marginBottom: "12px" }}>
+                  <label style={styles.inputLabel}>Mobile Number (Optional)</label>
+                  <input
+                    type="tel"
+                    placeholder="10-digit mobile number"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    style={styles.inputField}
+                  />
+                </div>
 
                 {orderError && (
-                  <div style={styles.orderErrorMessage}>
+                  <div style={styles.orderErrorAlert}>
                     ⚠️ {orderError}
                   </div>
                 )}
               </div>
             </div>
 
-            <div style={styles.sheetFooter}>
+            <div style={styles.checkoutFooter}>
               <button
                 type="button"
                 disabled={placingOrder}
                 onClick={handlePlaceOrder}
-                style={styles.confirmOrderBtn}
+                style={styles.placeOrderBtn}
               >
                 {placingOrder ? "Placing Order..." : `Place Order (₹${cartTotal.toFixed(0)})`}
               </button>
@@ -1103,69 +1540,39 @@ export default function RestaurantExperience({
       )}
 
       {/* ---------------------------------------------------- */}
-      {/* 6. FIXED BOTTOM NAVIGATION DOCK (4 TABS) */}
+      {/* 7. BOTTOM NAVIGATION DOCK (MENU / ORDERS) */}
       {/* ---------------------------------------------------- */}
-      <nav style={styles.bottomNavDock}>
-        {/* Tab 1: Home */}
-        <button
-          type="button"
-          onClick={() => setActiveTab("home")}
-          style={{
-            ...styles.navTabBtn,
-            background: activeTab === "home" ? "#111827" : "transparent",
-            color: activeTab === "home" ? "#ffffff" : "#64748b",
-          }}
-        >
-          <span style={styles.navIcon}>🏠</span>
-          <span style={styles.navLabel}>Home</span>
-        </button>
+      {tableOrderingEnabled && (
+        <nav style={styles.bottomNav}>
+          <button
+            type="button"
+            onClick={() => setActiveTab("menu")}
+            style={{
+              ...styles.navBtn,
+              backgroundColor: activeTab === "menu" ? "#0f172a" : "transparent",
+              color: activeTab === "menu" ? "#ffffff" : "#64748b",
+            }}
+          >
+            <span style={{ fontSize: "18px" }}>🍴</span>
+            <span style={styles.navLabel}>Menu</span>
+          </button>
 
-        {/* Tab 2: Menu */}
-        <button
-          type="button"
-          onClick={() => setActiveTab("menu")}
-          style={{
-            ...styles.navTabBtn,
-            background: activeTab === "menu" ? "#111827" : "transparent",
-            color: activeTab === "menu" ? "#ffffff" : "#64748b",
-          }}
-        >
-          <span style={styles.navIcon}>🍴</span>
-          <span style={styles.navLabel}>Menu</span>
-        </button>
-
-        {/* Tab 3: Search */}
-        <button
-          type="button"
-          onClick={() => setActiveTab("search")}
-          style={{
-            ...styles.navTabBtn,
-            background: activeTab === "search" ? "#111827" : "transparent",
-            color: activeTab === "search" ? "#ffffff" : "#64748b",
-          }}
-        >
-          <span style={styles.navIcon}>🔍</span>
-          <span style={styles.navLabel}>Search</span>
-        </button>
-
-        {/* Tab 4: My Orders */}
-        <button
-          type="button"
-          onClick={() => setActiveTab("orders")}
-          style={{
-            ...styles.navTabBtn,
-            background: activeTab === "orders" ? "#111827" : "transparent",
-            color: activeTab === "orders" ? "#ffffff" : "#64748b",
-            position: "relative",
-          }}
-        >
-          <span style={styles.navIcon}>📋</span>
-          <span style={styles.navLabel}>My Orders</span>
-          {hasActiveOrder && (
-            <span style={styles.navActiveDot} />
-          )}
-        </button>
-      </nav>
+          <button
+            type="button"
+            onClick={() => setActiveTab("orders")}
+            style={{
+              ...styles.navBtn,
+              backgroundColor: activeTab === "orders" ? "#0f172a" : "transparent",
+              color: activeTab === "orders" ? "#ffffff" : "#64748b",
+              position: "relative",
+            }}
+          >
+            <span style={{ fontSize: "18px" }}>📋</span>
+            <span style={styles.navLabel}>My Orders</span>
+            {hasActiveOrder && <span style={styles.orderActiveDot} />}
+          </button>
+        </nav>
+      )}
 
       <UpiPaymentModal
         isOpen={isPaymentModalOpen}
@@ -1179,7 +1586,7 @@ export default function RestaurantExperience({
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const styles: Record<string, CSSProperties> = {
   container: {
     maxWidth: "480px",
     margin: "0 auto",
@@ -1187,903 +1594,1029 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: "#f8fafc",
     display: "flex",
     flexDirection: "column",
-    paddingBottom: "85px",
+    paddingBottom: "90px",
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
     position: "relative",
     color: "#0f172a",
+    boxSizing: "border-box",
   },
   topHeader: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "14px 18px",
+    padding: "12px 16px",
     backgroundColor: "#ffffff",
-    borderBottom: "1px solid #f1f5f9",
+    borderBottom: "1px solid #e2e8f0",
     position: "sticky",
     top: 0,
-    zIndex: 20,
+    zIndex: 100,
+    boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
   },
-  topBrandInfo: {
+  brandRow: {
     display: "flex",
     alignItems: "center",
     gap: "10px",
+    minWidth: 0,
   },
-  logoCircle: {
+  brandLogo: {
     width: "38px",
     height: "38px",
-    borderRadius: "50%",
-    backgroundColor: "#fef3c7",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: "18px",
-    overflow: "hidden",
-    border: "1px solid #fde68a",
-  },
-  logoImg: {
-    width: "100%",
-    height: "100%",
-    objectFit: "cover",
-  },
-  businessNameHeading: {
-    margin: 0,
-    fontSize: "15px",
-    fontWeight: 800,
-    color: "#0f172a",
-    lineHeight: "1.2",
-  },
-  tableBadgeSubtitle: {
-    fontSize: "11px",
-    color: "#64748b",
-    fontWeight: 600,
-    marginTop: "2px",
-  },
-  iconButton: {
-    width: "36px",
-    height: "36px",
-    borderRadius: "50%",
-    border: "none",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: "14px",
-    cursor: "pointer",
-    transition: "all 0.15s ease",
-  },
-  contentBody: {
-    flex: 1,
-    padding: "14px 16px",
-  },
-  tabContent: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "14px",
-  },
-  heroCard: {
-    width: "100%",
-    minHeight: "310px",
-    borderRadius: "20px",
-    backgroundImage: `radial-gradient(circle at center, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0.95) 100%), url('https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80')`,
-    backgroundSize: "cover",
-    backgroundPosition: "center",
-    position: "relative",
-    overflow: "hidden",
-    boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.15)",
-  },
-  heroOverlay: {
-    position: "absolute",
-    inset: 0,
-    padding: "18px",
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "space-between",
-  },
-  heroTopRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  glassTablePill: {
-    background: "rgba(255, 255, 255, 0.2)",
-    backdropFilter: "blur(8px)",
-    color: "#ffffff",
-    padding: "5px 12px",
-    borderRadius: "20px",
-    fontSize: "11px",
-    fontWeight: 700,
-    border: "1px solid rgba(255, 255, 255, 0.3)",
-  },
-  glassCutleryCircle: {
-    width: "34px",
-    height: "34px",
-    borderRadius: "50%",
-    background: "rgba(255, 255, 255, 0.2)",
-    backdropFilter: "blur(8px)",
-    color: "#ffffff",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: "15px",
-    border: "1px solid rgba(255, 255, 255, 0.3)",
-  },
-  heroBottomContent: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-start",
-    gap: "6px",
-  },
-  watermarkTagline: {
-    alignSelf: "flex-end",
-    fontSize: "11px",
-    color: "rgba(255, 255, 255, 0.65)",
-    fontStyle: "italic",
-    marginBottom: "4px",
-  },
-  heroMainTitle: {
-    margin: 0,
-    fontSize: "26px",
-    fontWeight: 900,
-    color: "#ffffff",
-    lineHeight: "1.15",
-    letterSpacing: "-0.5px",
-  },
-  heroSubtitle: {
-    margin: "4px 0 14px",
-    fontSize: "12px",
-    color: "rgba(255, 255, 255, 0.85)",
-    lineHeight: "1.4",
-  },
-  startOrderingBtn: {
-    background: "#ffffff",
-    color: "#0f172a",
-    border: "none",
-    padding: "10px 18px",
-    borderRadius: "30px",
-    fontSize: "13px",
-    fontWeight: 800,
-    cursor: "pointer",
-    boxShadow: "0 4px 14px rgba(0,0,0,0.15)",
-  },
-  offersContainer: {
-    marginTop: "6px",
-  },
-  sectionHeaderTitle: {
-    fontSize: "14px",
-    fontWeight: 800,
-    color: "#0f172a",
-    marginBottom: "8px",
-  },
-  offersCard: {
-    background: "linear-gradient(135deg, #fefce8 0%, #fffbeb 100%)",
-    border: "1px solid #fef08a",
-    padding: "12px 14px",
-    borderRadius: "14px",
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-  },
-  offerIconBadge: {
-    width: "36px",
-    height: "36px",
     borderRadius: "10px",
-    backgroundColor: "#fde047",
+    objectFit: "cover",
+    border: "1px solid #e2e8f0",
+    flexShrink: 0,
+  },
+  brandLogoPlaceholder: {
+    width: "38px",
+    height: "38px",
+    borderRadius: "10px",
+    backgroundColor: "#0f172a",
+    color: "#ffffff",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    fontWeight: 800,
     fontSize: "18px",
     flexShrink: 0,
   },
-  offerTitle: {
-    fontSize: "13px",
-    fontWeight: 800,
-    color: "#854d0e",
+  brandTextWrap: {
+    minWidth: 0,
   },
-  offerDesc: {
+  businessNameHeading: {
+    fontSize: "16px",
+    fontWeight: 700,
+    margin: 0,
+    color: "#0f172a",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  tableChip: {
+    display: "inline-block",
     fontSize: "11px",
-    color: "#a16207",
+    fontWeight: 600,
+    color: "#475569",
+    backgroundColor: "#f1f5f9",
+    padding: "1px 6px",
+    borderRadius: "4px",
     marginTop: "2px",
   },
-  quickActionsGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "10px",
-    marginTop: "4px",
-  },
-  actionCard: {
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    padding: "12px",
-    borderRadius: "12px",
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    textDecoration: "none",
-    color: "inherit",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.02)",
-  },
-  actionIcon: {
-    fontSize: "20px",
-  },
-  actionTitle: {
-    fontSize: "12px",
-    fontWeight: 700,
-    color: "#0f172a",
-  },
-  actionSub: {
-    fontSize: "10px",
-    color: "#64748b",
-    marginTop: "1px",
-  },
-  searchBoxWrapper: {
+  headerRightActions: {
     display: "flex",
     alignItems: "center",
     gap: "8px",
-    background: "#ffffff",
-    border: "1px solid #cbd5e1",
+    flexShrink: 0,
+  },
+  callStaffBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    minHeight: "44px",
+    padding: "0 12px",
+    backgroundColor: "#ecfdf5",
+    color: "#047857",
+    border: "1px solid #a7f3d0",
+    borderRadius: "10px",
+    fontSize: "12px",
+    fontWeight: 700,
+    textDecoration: "none",
+    boxSizing: "border-box",
+    cursor: "pointer",
+  },
+  menuTabContainer: {
+    flex: 1,
+  },
+  searchBarWrapper: {
+    padding: "12px 16px 8px 16px",
+    backgroundColor: "#ffffff",
+  },
+  searchInputBox: {
+    display: "flex",
+    alignItems: "center",
+    backgroundColor: "#f1f5f9",
     borderRadius: "12px",
-    padding: "10px 14px",
-    boxShadow: "0 2px 6px rgba(0,0,0,0.03)",
+    padding: "0 12px",
+    border: "1px solid #e2e8f0",
+    minHeight: "44px",
+    boxSizing: "border-box",
+  },
+  searchIcon: {
+    fontSize: "14px",
+    color: "#64748b",
+    marginRight: "8px",
   },
   searchInput: {
     flex: 1,
     border: "none",
-    outline: "none",
-    fontSize: "13px",
+    backgroundColor: "transparent",
+    fontSize: "14px",
     color: "#0f172a",
-    background: "transparent",
+    outline: "none",
+    padding: "8px 0",
   },
   clearSearchBtn: {
-    background: "transparent",
+    background: "none",
     border: "none",
-    color: "#94a3b8",
-    fontSize: "12px",
+    color: "#64748b",
+    fontSize: "14px",
     cursor: "pointer",
+    padding: "4px 8px",
+    minHeight: "36px",
+    display: "flex",
+    alignItems: "center",
   },
-  categoryScroll: {
+  stickyFilterContainer: {
+    position: "sticky",
+    top: "63px",
+    zIndex: 90,
+    backgroundColor: "#ffffff",
+    borderBottom: "1px solid #e2e8f0",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.02)",
+  },
+  dietaryFilterRow: {
     display: "flex",
     gap: "8px",
+    padding: "8px 16px 6px 16px",
     overflowX: "auto",
-    paddingBottom: "4px",
     scrollbarWidth: "none",
   },
-  categoryPill: {
-    padding: "7px 14px",
+  dietFilterPill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    minHeight: "36px",
+    padding: "0 12px",
     borderRadius: "20px",
     border: "1px solid",
     fontSize: "12px",
-    fontWeight: 700,
+    fontWeight: 600,
     cursor: "pointer",
     whiteSpace: "nowrap",
-    transition: "all 0.15s ease",
+    boxSizing: "border-box",
   },
-  menuItemsList: {
+  categoryScrollContainer: {
+    display: "flex",
+    gap: "8px",
+    padding: "4px 16px 10px 16px",
+    overflowX: "auto",
+    scrollbarWidth: "none",
+  },
+  categoryChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    minHeight: "34px",
+    padding: "0 12px",
+    borderRadius: "8px",
+    border: "1px solid",
+    fontSize: "13px",
+    fontWeight: 600,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    boxSizing: "border-box",
+  },
+  sectionsList: {
+    padding: "12px 16px",
+  },
+  emptyStateCard: {
+    padding: "40px 20px",
+    textAlign: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: "16px",
+    border: "1px solid #e2e8f0",
+    marginTop: "20px",
+  },
+  emptyStateTitle: {
+    fontSize: "16px",
+    fontWeight: 700,
+    color: "#0f172a",
+  },
+  emptyStateSubtitle: {
+    fontSize: "13px",
+    color: "#64748b",
+    marginTop: "6px",
+  },
+  categorySection: {
+    marginBottom: "24px",
+  },
+  sectionHeaderRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: "12px",
+    paddingBottom: "6px",
+    borderBottom: "1px solid #e2e8f0",
+  },
+  sectionCategoryTitle: {
+    fontSize: "16px",
+    fontWeight: 800,
+    margin: 0,
+    color: "#0f172a",
+    letterSpacing: "-0.01em",
+  },
+  sectionItemCountBadge: {
+    fontSize: "12px",
+    fontWeight: 600,
+    color: "#64748b",
+  },
+  cardsGrid: {
     display: "flex",
     flexDirection: "column",
-    gap: "10px",
-  },
-  emptyResultsCard: {
-    background: "#ffffff",
-    padding: "24px",
-    borderRadius: "14px",
-    textAlign: "center",
-    border: "1px solid #e2e8f0",
+    gap: "12px",
   },
   dishCard: {
-    background: "#ffffff",
-    border: "1px solid #f1f5f9",
-    borderRadius: "16px",
-    padding: "14px",
     display: "flex",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    alignItems: "center",
     gap: "12px",
-    boxShadow: "0 2px 10px rgba(0,0,0,0.03)",
+    padding: "14px",
+    borderRadius: "16px",
+    border: "1px solid #e2e8f0",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
+    cursor: "pointer",
+    boxSizing: "border-box",
+    transition: "background-color 0.15s ease",
   },
   dishInfoCol: {
     flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    gap: "3px",
+    minWidth: 0,
   },
-  dietaryRow: {
+  dishTagRow: {
     display: "flex",
     alignItems: "center",
     gap: "6px",
-    marginBottom: "2px",
+    marginBottom: "4px",
   },
-  dietaryDotBorder: {
-    width: "12px",
-    height: "12px",
-    border: "1.5px solid",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: "3px",
-  },
-  dietaryDotInner: {
-    width: "6px",
-    height: "6px",
-    borderRadius: "50%",
-  },
-  popularBadge: {
+  popularTag: {
     fontSize: "10px",
     fontWeight: 700,
-    color: "#d97706",
-    background: "#fef3c7",
+    color: "#b45309",
+    backgroundColor: "#fef3c7",
+    padding: "1px 6px",
+    borderRadius: "4px",
+  },
+  soldOutBadge: {
+    fontSize: "10px",
+    fontWeight: 700,
+    color: "#991b1b",
+    backgroundColor: "#fee2e2",
     padding: "1px 6px",
     borderRadius: "4px",
   },
   dishName: {
-    fontSize: "14px",
-    fontWeight: 750,
+    fontSize: "15px",
+    fontWeight: 700,
+    margin: "0 0 4px 0",
     color: "#0f172a",
+    lineHeight: 1.3,
   },
-  dishPrice: {
-    fontSize: "13px",
+  dishPriceText: {
+    fontSize: "14px",
     fontWeight: 800,
-    color: "#059669",
+    color: "#0f172a",
+    marginBottom: "6px",
   },
-  dishDesc: {
-    fontSize: "11px",
+  dishDescription: {
+    fontSize: "12px",
     color: "#64748b",
-    lineHeight: "1.35",
-    marginTop: "2px",
+    margin: 0,
+    lineHeight: 1.4,
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
   },
   dishActionCol: {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    gap: "8px",
+    flexShrink: 0,
   },
-  dishImageWrap: {
-    width: "68px",
-    height: "68px",
-    borderRadius: "12px",
+  dishBtnWrap: {
+    marginTop: "8px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "4px",
+    width: "100%",
+  },
+  addBtn: {
+    minHeight: "44px",
+    width: "100%",
+    padding: "0 16px",
+    backgroundColor: "#ffffff",
+    color: "#16a34a",
+    border: "1.5px solid #16a34a",
+    borderRadius: "10px",
+    fontSize: "13px",
+    fontWeight: 800,
+    cursor: "pointer",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    boxSizing: "border-box",
+  },
+  soldOutBtn: {
+    minHeight: "44px",
+    width: "100%",
+    padding: "0 10px",
+    backgroundColor: "#f1f5f9",
+    color: "#94a3b8",
+    border: "1px solid #e2e8f0",
+    borderRadius: "10px",
+    fontSize: "12px",
+    fontWeight: 600,
+    cursor: "not-allowed",
+    boxSizing: "border-box",
+  },
+  customizeLinkBtn: {
+    background: "none",
+    border: "none",
+    color: "#64748b",
+    fontSize: "11px",
+    fontWeight: 600,
+    padding: "2px 4px",
+    cursor: "pointer",
+  },
+  stepperBox: {
+    display: "inline-flex",
+    alignItems: "center",
+    minHeight: "44px",
+    backgroundColor: "#0f172a",
+    borderRadius: "10px",
     overflow: "hidden",
+    boxSizing: "border-box",
+  },
+  stepperActionBtn: {
+    minWidth: "44px",
+    minHeight: "44px",
+    backgroundColor: "transparent",
+    border: "none",
+    color: "#ffffff",
+    fontSize: "16px",
+    fontWeight: 700,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepperValue: {
+    color: "#ffffff",
+    fontSize: "14px",
+    fontWeight: 800,
+    minWidth: "22px",
+    textAlign: "center",
+  },
+  stickyCartBarWrap: {
+    position: "fixed",
+    bottom: "65px",
+    left: 0,
+    right: 0,
+    display: "flex",
+    justifyContent: "center",
+    zIndex: 95,
+    pointerEvents: "none",
+    padding: "0 16px",
+  },
+  stickyCartBar: {
+    maxWidth: "480px",
+    width: "100%",
+    backgroundColor: "#0f172a",
+    color: "#ffffff",
+    borderRadius: "16px",
+    padding: "10px 16px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+    pointerEvents: "auto",
+    boxSizing: "border-box",
+  },
+  cartCountLabel: {
+    fontSize: "12px",
+    color: "#94a3b8",
+    fontWeight: 500,
+  },
+  cartTotalLabel: {
+    fontSize: "17px",
+    fontWeight: 800,
+    color: "#ffffff",
+  },
+  viewCartBtn: {
+    minHeight: "44px",
+    padding: "0 18px",
+    backgroundColor: "#16a34a",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "10px",
+    fontSize: "14px",
+    fontWeight: 700,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    boxSizing: "border-box",
+  },
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    backdropFilter: "blur(4px)",
+    zIndex: 999,
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "center",
+  },
+  modalSheet: {
+    width: "100%",
+    maxWidth: "480px",
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: "24px",
+    borderTopRightRadius: "24px",
+    maxHeight: "88vh",
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    display: "flex",
+    flexDirection: "column",
+    boxShadow: "0 -4px 20px rgba(0,0,0,0.15)",
+  },
+  modalHeader: {
+    padding: "16px 20px",
+    borderBottom: "1px solid #e2e8f0",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    position: "sticky",
+    top: 0,
+    backgroundColor: "#ffffff",
+    zIndex: 10,
+  },
+  modalTitleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    minWidth: 0,
+  },
+  modalTitle: {
+    fontSize: "17px",
+    fontWeight: 800,
+    margin: 0,
+    color: "#0f172a",
+  },
+  modalCloseBtn: {
+    minWidth: "44px",
+    minHeight: "44px",
+    backgroundColor: "#f1f5f9",
+    border: "none",
+    borderRadius: "50%",
+    color: "#475569",
+    fontSize: "15px",
+    fontWeight: 700,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalBody: {
+    padding: "16px 20px",
+    flex: 1,
+  },
+  modalImageWrap: {
+    width: "100%",
+    height: "190px",
+    borderRadius: "14px",
+    overflow: "hidden",
+    marginBottom: "14px",
     backgroundColor: "#f1f5f9",
   },
-  dishImg: {
+  modalImg: {
     width: "100%",
     height: "100%",
     objectFit: "cover",
   },
-  dishImagePlaceholder: {
-    width: "68px",
-    height: "68px",
-    borderRadius: "12px",
-    backgroundColor: "#f8fafc",
-    border: "1px dashed #cbd5e1",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: "24px",
-  },
-  addBtnContainer: {
-    width: "74px",
-  },
-  addButton: {
-    width: "100%",
-    background: "#ffffff",
-    color: "#15803d",
-    border: "1px solid #86efac",
-    padding: "5px 0",
-    borderRadius: "8px",
-    fontSize: "12px",
-    fontWeight: 800,
-    cursor: "pointer",
-    boxShadow: "0 2px 6px rgba(0,0,0,0.04)",
-  },
-  qtyStepper: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    background: "#15803d",
-    borderRadius: "8px",
-    color: "#ffffff",
-    padding: "3px 4px",
-  },
-  qtyStepperSmall: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    background: "#15803d",
-    borderRadius: "6px",
-    color: "#ffffff",
-    padding: "2px 6px",
-  },
-  stepperBtn: {
-    background: "transparent",
-    border: "none",
-    color: "#ffffff",
-    fontSize: "14px",
-    fontWeight: 800,
-    cursor: "pointer",
-    padding: "0 4px",
-  },
-  stepperCount: {
-    fontSize: "12px",
-    fontWeight: 800,
-  },
-  ordersHeaderRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  tableSuperTag: {
-    fontSize: "11px",
-    fontWeight: 800,
-    color: "#ea580c",
-    letterSpacing: "0.5px",
-  },
-  ordersPageTitle: {
-    margin: "2px 0 0",
-    fontSize: "22px",
-    fontWeight: 900,
-    color: "#0f172a",
-  },
-  ordersIconHeader: {
-    fontSize: "24px",
-    background: "#f1f5f9",
-    width: "40px",
-    height: "40px",
-    borderRadius: "50%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  ordersBody: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "14px",
-    marginTop: "6px",
-  },
-  currentBillCard: {
-    background: "#ffffff",
-    borderRadius: "18px",
-    padding: "16px",
-    border: "1px solid #f1f5f9",
-    boxShadow: "0 4px 16px rgba(0,0,0,0.04)",
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-  },
-  billHeaderRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "12px",
-  },
-  billReceiptCircle: {
-    width: "38px",
-    height: "38px",
-    borderRadius: "12px",
-    backgroundColor: "#ffedd5",
-    color: "#c2410c",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+  modalPriceText: {
     fontSize: "18px",
-    flexShrink: 0,
-  },
-  billTitleCol: {
-    flex: 1,
-  },
-  currentBillLabel: {
-    fontSize: "10px",
     fontWeight: 800,
-    color: "#ea580c",
-    letterSpacing: "0.5px",
-  },
-  billAmountLarge: {
-    fontSize: "24px",
-    fontWeight: 900,
     color: "#0f172a",
-    lineHeight: "1.2",
+    marginBottom: "6px",
   },
-  statusChip: {
-    fontSize: "11px",
-    fontWeight: 800,
-    padding: "4px 10px",
-    borderRadius: "20px",
-    whiteSpace: "nowrap",
-  },
-  billSummaryLine: {
-    fontSize: "12px",
-    fontWeight: 700,
+  modalDescription: {
+    fontSize: "13px",
     color: "#475569",
-    marginTop: "4px",
+    lineHeight: 1.5,
+    margin: "0 0 16px 0",
   },
-  billHelperNote: {
+  customizationSection: {
+    marginTop: "16px",
+    borderTop: "1px solid #f1f5f9",
+    paddingTop: "14px",
+  },
+  customLabel: {
+    display: "block",
+    fontSize: "13px",
+    fontWeight: 700,
+    color: "#0f172a",
+    marginBottom: "8px",
+  },
+  quickChipsWrap: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    marginBottom: "10px",
+  },
+  quickChipBtn: {
+    minHeight: "36px",
+    padding: "0 10px",
+    borderRadius: "18px",
+    border: "1px solid",
+    fontSize: "12px",
+    fontWeight: 600,
+    cursor: "pointer",
+    boxSizing: "border-box",
+  },
+  customTextarea: {
+    width: "100%",
+    borderRadius: "10px",
+    border: "1px solid #cbd5e1",
+    padding: "10px",
+    fontSize: "13px",
+    fontFamily: "inherit",
+    boxSizing: "border-box",
+    outline: "none",
+    resize: "none",
+  },
+  charCountText: {
     fontSize: "11px",
     color: "#94a3b8",
-    lineHeight: "1.4",
+    textAlign: "right",
+    marginTop: "2px",
   },
-  orderDetailCard: {
-    background: "#ffffff",
-    borderRadius: "18px",
-    padding: "16px",
-    border: "1px solid #f1f5f9",
-    boxShadow: "0 4px 16px rgba(0,0,0,0.04)",
-  },
-  orderDetailHeader: {
+  modalQtyRow: {
     display: "flex",
+    alignItems: "center",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: "12px",
+    marginTop: "16px",
+    paddingTop: "12px",
+    borderTop: "1px solid #f1f5f9",
   },
-  orderNumberText: {
-    fontSize: "15px",
-    fontWeight: 800,
+  modalQtyLabel: {
+    fontSize: "14px",
+    fontWeight: 700,
     color: "#0f172a",
   },
-  orderTimestampText: {
-    fontSize: "11px",
+  soldOutNoticeBanner: {
+    marginTop: "14px",
+    padding: "10px 14px",
+    backgroundColor: "#fee2e2",
+    color: "#991b1b",
+    fontSize: "12px",
+    fontWeight: 600,
+    borderRadius: "8px",
+  },
+  modalFooter: {
+    padding: "14px 20px",
+    borderTop: "1px solid #e2e8f0",
+    backgroundColor: "#ffffff",
+  },
+  confirmAddBtn: {
+    width: "100%",
+    minHeight: "48px",
+    backgroundColor: "#16a34a",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "12px",
+    fontSize: "15px",
+    fontWeight: 800,
+    cursor: "pointer",
+    boxSizing: "border-box",
+  },
+  checkoutSheet: {
+    width: "100%",
+    maxWidth: "480px",
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: "24px",
+    borderTopRightRadius: "24px",
+    maxHeight: "90vh",
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    display: "flex",
+    flexDirection: "column",
+    boxShadow: "0 -4px 20px rgba(0,0,0,0.15)",
+  },
+  checkoutTableLabel: {
+    fontSize: "12px",
+    color: "#047857",
+    fontWeight: 600,
+    marginTop: "2px",
+  },
+  checkoutBody: {
+    padding: "16px 20px",
+    flex: 1,
+  },
+  checkoutItemsList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+    marginBottom: "16px",
+  },
+  checkoutItemRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: "12px",
+    paddingBottom: "12px",
+    borderBottom: "1px solid #f1f5f9",
+  },
+  checkoutItemNameRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+  },
+  checkoutItemName: {
+    fontSize: "14px",
+    fontWeight: 700,
+    color: "#0f172a",
+  },
+  checkoutItemUnit: {
+    fontSize: "12px",
     color: "#64748b",
     marginTop: "2px",
   },
-  orderItemsBreakdown: {
+  checkoutRequestPill: {
+    marginTop: "6px",
+    padding: "3px 8px",
+    backgroundColor: "#fef3c7",
+    color: "#92400e",
+    border: "1px solid #fde68a",
+    borderRadius: "6px",
+    fontSize: "11px",
+    lineHeight: 1.3,
+    display: "inline-block",
+  },
+  checkoutItemRight: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
+    alignItems: "flex-end",
+    gap: "4px",
   },
-  orderItemLine: {
+  checkoutLineTotal: {
+    fontSize: "14px",
+    fontWeight: 800,
+    color: "#0f172a",
+  },
+  billBox: {
+    backgroundColor: "#f8fafc",
+    borderRadius: "12px",
+    padding: "12px 14px",
+    marginBottom: "16px",
+    border: "1px solid #e2e8f0",
+  },
+  billRow: {
     display: "flex",
     justifyContent: "space-between",
     fontSize: "13px",
+    color: "#64748b",
+    marginBottom: "6px",
   },
-  orderItemNameText: {
-    color: "#475569",
+  billTotalRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    fontSize: "15px",
+    fontWeight: 800,
+    color: "#0f172a",
+    paddingTop: "6px",
+    borderTop: "1px dashed #cbd5e1",
   },
-  orderItemPriceText: {
+  customerInputsBox: {
+    marginBottom: "12px",
+  },
+  inputLabel: {
+    display: "block",
+    fontSize: "12px",
     fontWeight: 700,
     color: "#0f172a",
+    marginBottom: "4px",
+  },
+  inputField: {
+    width: "100%",
+    minHeight: "44px",
+    padding: "0 12px",
+    borderRadius: "10px",
+    border: "1px solid #cbd5e1",
+    fontSize: "14px",
+    fontFamily: "inherit",
+    boxSizing: "border-box",
+    outline: "none",
+  },
+  orderErrorAlert: {
+    padding: "10px 12px",
+    backgroundColor: "#fee2e2",
+    color: "#991b1b",
+    fontSize: "12px",
+    fontWeight: 600,
+    borderRadius: "8px",
+    marginTop: "8px",
+  },
+  checkoutFooter: {
+    padding: "14px 20px",
+    borderTop: "1px solid #e2e8f0",
+    backgroundColor: "#ffffff",
+  },
+  placeOrderBtn: {
+    width: "100%",
+    minHeight: "48px",
+    backgroundColor: "#16a34a",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "12px",
+    fontSize: "15px",
+    fontWeight: 800,
+    cursor: "pointer",
+    boxSizing: "border-box",
+  },
+  ordersTabContainer: {
+    padding: "16px",
+    flex: 1,
+  },
+  ordersHeaderBox: {
+    marginBottom: "16px",
+  },
+  ordersTablePill: {
+    display: "inline-block",
+    padding: "2px 8px",
+    backgroundColor: "#ecfdf5",
+    color: "#047857",
+    border: "1px solid #a7f3d0",
+    borderRadius: "6px",
+    fontSize: "11px",
+    fontWeight: 800,
+    marginBottom: "6px",
+  },
+  ordersPageTitle: {
+    fontSize: "20px",
+    fontWeight: 800,
+    margin: 0,
+    color: "#0f172a",
+  },
+  ordersPageSub: {
+    fontSize: "13px",
+    color: "#64748b",
+    margin: "4px 0 0 0",
+  },
+  orderCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: "18px",
+    border: "1px solid #e2e8f0",
+    padding: "18px",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+  },
+  orderTopMetaRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: "16px",
+  },
+  orderIdText: {
+    fontSize: "16px",
+    fontWeight: 800,
+    color: "#0f172a",
+  },
+  orderTimeText: {
+    fontSize: "12px",
+    color: "#64748b",
+    marginTop: "2px",
+  },
+  statusBadge: {
+    padding: "4px 10px",
+    borderRadius: "20px",
+    border: "1px solid",
+    fontSize: "12px",
+    fontWeight: 800,
+  },
+  stepperProgressContainer: {
+    margin: "18px 0 20px 0",
+    position: "relative",
+  },
+  progressTrack: {
+    position: "absolute",
+    top: "14px",
+    left: "24px",
+    right: "24px",
+    height: "4px",
+    backgroundColor: "#e2e8f0",
+    borderRadius: "2px",
+    zIndex: 1,
+  },
+  progressBarFill: {
+    height: "100%",
+    backgroundColor: "#16a34a",
+    borderRadius: "2px",
+    transition: "width 0.3s ease",
+  },
+  stepsRow: {
+    position: "relative",
+    display: "flex",
+    justifyContent: "space-between",
+    zIndex: 2,
+  },
+  stepCol: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    width: "60px",
+  },
+  stepNode: {
+    width: "28px",
+    height: "28px",
+    borderRadius: "50%",
+    border: "2px solid",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "11px",
+    fontWeight: 800,
+    backgroundColor: "#ffffff",
+    boxSizing: "border-box",
+  },
+  stepNodeLabel: {
+    fontSize: "11px",
+    marginTop: "6px",
+    textAlign: "center",
+  },
+  orderItemsSection: {
+    marginTop: "16px",
+    paddingTop: "14px",
+    borderTop: "1px solid #f1f5f9",
+  },
+  sectionSubHeader: {
+    fontSize: "13px",
+    fontWeight: 700,
+    color: "#475569",
+    marginBottom: "10px",
+  },
+  orderItemsList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+  },
+  orderItemCardRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    fontSize: "13px",
+  },
+  orderItemNameLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+  },
+  orderItemName: {
+    fontWeight: 600,
+    color: "#0f172a",
+  },
+  orderItemQtyTag: {
+    fontWeight: 800,
+    color: "#16a34a",
+    fontSize: "12px",
+  },
+  itemRequestBadge: {
+    marginTop: "4px",
+    padding: "2px 6px",
+    backgroundColor: "#fef3c7",
+    color: "#92400e",
+    border: "1px solid #fde68a",
+    borderRadius: "4px",
+    fontSize: "11px",
+    display: "inline-block",
+  },
+  orderItemPrice: {
+    fontWeight: 700,
+    color: "#0f172a",
+    marginLeft: "10px",
   },
   orderTotalDivider: {
     height: "1px",
-    background: "#f1f5f9",
+    backgroundColor: "#e2e8f0",
     margin: "12px 0",
   },
   orderTotalRow: {
     display: "flex",
     justifyContent: "space-between",
-    fontSize: "14px",
-    fontWeight: 800,
-    color: "#0f172a",
+    alignItems: "center",
   },
   orderTotalLabel: {
-    color: "#0f172a",
-  },
-  orderTotalValue: {
-    color: "#0f172a",
-    fontSize: "16px",
-  },
-  orderHelpBanner: {
-    marginTop: "16px",
-    background: "#fff7ed",
-    border: "1px solid #ffedd5",
-    borderRadius: "12px",
-    padding: "10px 14px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  helpText: {
-    fontSize: "11px",
+    fontSize: "14px",
     fontWeight: 700,
-    color: "#9a3412",
+    color: "#475569",
   },
-  helpButtonsRow: {
-    display: "flex",
-    gap: "8px",
-  },
-  helpIconBtn: {
-    width: "30px",
-    height: "30px",
-    borderRadius: "50%",
-    background: "#ffffff",
-    border: "1px solid #fed7aa",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    textDecoration: "none",
-    fontSize: "13px",
-  },
-  cancelOrderBtn: {
-    width: "100%",
-    marginTop: "12px",
-    padding: "9px 0",
-    borderRadius: "10px",
-    background: "#ffffff",
-    color: "#dc2626",
-    border: "1px solid #fecaca",
-    fontSize: "12px",
-    fontWeight: 750,
-    cursor: "pointer",
-  },
-  noOrdersCard: {
-    background: "#ffffff",
-    padding: "36px 20px",
-    borderRadius: "18px",
-    textAlign: "center",
-    border: "1px solid #e2e8f0",
-    marginTop: "10px",
-  },
-  noOrdersTitle: {
-    fontSize: "16px",
-    fontWeight: 800,
-    color: "#0f172a",
-  },
-  noOrdersSub: {
-    fontSize: "12px",
-    color: "#64748b",
-    lineHeight: "1.5",
-    maxWidth: "280px",
-    margin: "6px auto 18px",
-  },
-  browseMenuCtaBtn: {
-    background: "#111827",
-    color: "#ffffff",
-    border: "none",
-    padding: "10px 22px",
-    borderRadius: "24px",
-    fontSize: "13px",
-    fontWeight: 800,
-    cursor: "pointer",
-  },
-  floatingOrderFab: {
-    position: "fixed",
-    bottom: "80px",
-    right: "18px",
-    width: "50px",
-    height: "50px",
-    borderRadius: "50%",
-    backgroundColor: "#16a34a",
-    color: "#ffffff",
-    border: "none",
-    fontSize: "22px",
-    boxShadow: "0 6px 18px rgba(22, 163, 74, 0.35)",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 40,
-  },
-  fabCountBadge: {
-    position: "absolute",
-    top: "-3px",
-    right: "-3px",
-    backgroundColor: "#0f172a",
-    color: "#ffffff",
-    fontSize: "10px",
-    fontWeight: 800,
-    width: "18px",
-    height: "18px",
-    borderRadius: "50%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    border: "2px solid #ffffff",
-  },
-  stickyCartBarWrapper: {
-    position: "fixed",
-    bottom: "74px",
-    left: "50%",
-    transform: "translateX(-50%)",
-    width: "calc(100% - 24px)",
-    maxWidth: "450px",
-    zIndex: 45,
-  },
-  stickyCartBar: {
-    background: "#0f172a",
-    borderRadius: "14px",
-    padding: "10px 16px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    color: "#ffffff",
-    boxShadow: "0 10px 25px rgba(0,0,0,0.25)",
-  },
-  cartCountLabel: {
-    fontSize: "11px",
-    color: "#94a3b8",
-  },
-  cartPriceLabel: {
-    fontSize: "16px",
-    fontWeight: 900,
-  },
-  viewCartButton: {
-    background: "#10b981",
-    color: "#ffffff",
-    border: "none",
-    padding: "8px 14px",
-    borderRadius: "8px",
-    fontSize: "12px",
-    fontWeight: 800,
-    cursor: "pointer",
-  },
-  modalOverlay: {
-    position: "fixed",
-    inset: 0,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    backdropFilter: "blur(4px)",
-    zIndex: 60,
-    display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "center",
-  },
-  checkoutSheet: {
-    background: "#ffffff",
-    width: "100%",
-    maxWidth: "480px",
-    borderTopLeftRadius: "24px",
-    borderTopRightRadius: "24px",
-    maxHeight: "85vh",
-    display: "flex",
-    flexDirection: "column",
-    boxShadow: "0 -10px 30px rgba(0,0,0,0.2)",
-    animation: "slideUp 0.25s ease-out",
-  },
-  sheetHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "16px 20px",
-    borderBottom: "1px solid #f1f5f9",
-  },
-  sheetTitle: {
-    margin: 0,
+  orderTotalAmount: {
     fontSize: "17px",
     fontWeight: 800,
     color: "#0f172a",
   },
-  sheetSubtitle: {
-    fontSize: "11px",
-    color: "#64748b",
-    marginTop: "2px",
-  },
-  closeSheetBtn: {
-    background: "#f1f5f9",
-    border: "none",
-    width: "30px",
-    height: "30px",
-    borderRadius: "50%",
-    fontSize: "13px",
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sheetBody: {
-    padding: "16px 20px",
-    overflowY: "auto",
+  orderActionsRow: {
+    marginTop: "20px",
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
+    gap: "8px",
   },
-  sheetItemsList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-  },
-  sheetItemRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingBottom: "8px",
-    borderBottom: "1px dashed #e2e8f0",
-  },
-  sheetItemName: {
-    fontSize: "13px",
-    fontWeight: 700,
-    color: "#0f172a",
-  },
-  sheetItemPrice: {
-    fontSize: "11px",
-    color: "#64748b",
-  },
-  billTotalRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    fontSize: "13px",
-    color: "#475569",
-    paddingTop: "4px",
-  },
-  formInputsBox: {
-    marginTop: "10px",
-    background: "#f8fafc",
-    padding: "14px",
-    borderRadius: "12px",
-    border: "1px solid #e2e8f0",
-  },
-  inputLabel: {
-    display: "block",
-    fontSize: "11px",
-    fontWeight: 750,
-    color: "#334155",
-    marginBottom: "4px",
-    marginTop: "8px",
-  },
-  sheetInput: {
+  orderMoreBtn: {
     width: "100%",
-    padding: "9px 12px",
-    borderRadius: "8px",
-    border: "1px solid #cbd5e1",
-    fontSize: "13px",
-    color: "#0f172a",
-    outline: "none",
-    backgroundColor: "#ffffff",
-    boxSizing: "border-box",
-  },
-  orderErrorMessage: {
-    marginTop: "8px",
-    background: "#fee2e2",
-    border: "1px solid #fecaca",
-    color: "#b91c1c",
-    padding: "8px 10px",
-    borderRadius: "8px",
-    fontSize: "11px",
-    fontWeight: 600,
-  },
-  sheetFooter: {
-    padding: "14px 20px",
-    borderTop: "1px solid #f1f5f9",
-  },
-  confirmOrderBtn: {
-    width: "100%",
-    background: "#0f172a",
+    minHeight: "44px",
+    backgroundColor: "#0f172a",
     color: "#ffffff",
     border: "none",
-    padding: "13px 0",
-    borderRadius: "12px",
+    borderRadius: "10px",
     fontSize: "14px",
-    fontWeight: 800,
+    fontWeight: 700,
     cursor: "pointer",
-    boxShadow: "0 4px 12px rgba(15,23,42,0.2)",
+    boxSizing: "border-box",
   },
-  bottomNavDock: {
+  cancelBtn: {
+    width: "100%",
+    minHeight: "44px",
+    backgroundColor: "#ffffff",
+    color: "#dc2626",
+    border: "1px solid #fecaca",
+    borderRadius: "10px",
+    fontSize: "13px",
+    fontWeight: 600,
+    cursor: "pointer",
+    boxSizing: "border-box",
+  },
+  emptyOrdersCard: {
+    padding: "48px 24px",
+    textAlign: "center",
+    backgroundColor: "#ffffff",
+    borderRadius: "18px",
+    border: "1px solid #e2e8f0",
+  },
+  emptyOrdersTitle: {
+    fontSize: "17px",
+    fontWeight: 800,
+    margin: "0 0 6px 0",
+    color: "#0f172a",
+  },
+  emptyOrdersSub: {
+    fontSize: "13px",
+    color: "#64748b",
+    lineHeight: 1.5,
+    margin: "0 0 20px 0",
+  },
+  browseMenuBtn: {
+    minHeight: "44px",
+    padding: "0 24px",
+    backgroundColor: "#0f172a",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "10px",
+    fontSize: "14px",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  bottomNav: {
     position: "fixed",
     bottom: 0,
-    left: "50%",
-    transform: "translateX(-50%)",
-    width: "100%",
+    left: 0,
+    right: 0,
     maxWidth: "480px",
+    margin: "0 auto",
+    height: "64px",
     backgroundColor: "rgba(255, 255, 255, 0.96)",
     backdropFilter: "blur(12px)",
     borderTop: "1px solid #e2e8f0",
-    padding: "8px 12px 14px",
-    display: "grid",
-    gridTemplateColumns: "repeat(4, 1fr)",
-    gap: "6px",
-    zIndex: 50,
-    boxSizing: "border-box",
-  },
-  navTabBtn: {
     display: "flex",
-    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "space-around",
+    zIndex: 100,
+    boxShadow: "0 -2px 10px rgba(0,0,0,0.03)",
+  },
+  navBtn: {
+    flex: 1,
+    height: "48px",
+    margin: "0 8px",
+    borderRadius: "12px",
+    border: "none",
+    display: "flex",
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    padding: "6px 4px",
-    borderRadius: "14px",
-    border: "none",
+    gap: "8px",
     cursor: "pointer",
     transition: "all 0.15s ease",
   },
-  navIcon: {
-    fontSize: "17px",
-    lineHeight: "1",
-  },
   navLabel: {
-    fontSize: "10px",
-    fontWeight: 750,
-    marginTop: "3px",
+    fontSize: "13px",
+    fontWeight: 700,
   },
-  navActiveDot: {
+  orderActiveDot: {
     position: "absolute",
-    top: "6px",
-    right: "18px",
-    width: "6px",
-    height: "6px",
+    top: "10px",
+    right: "24px",
+    width: "8px",
+    height: "8px",
     borderRadius: "50%",
-    backgroundColor: "#10b981",
+    backgroundColor: "#16a34a",
+    boxShadow: "0 0 0 2px #ffffff",
   },
 };

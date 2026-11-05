@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import { parseStandTableNumber } from "../../lib/tableNumber";
 import { getPublicSiteUrl } from "../../lib/siteUrl";
 import QRCode from "qrcode";
 import JSZip from "jszip";
@@ -282,19 +283,31 @@ export default function ClientPage() {
       const updates = selectedInventoryIds.map((id, index) => {
         let label = "";
         const num = assignLabelStart + index;
-        if (assignLabelPattern === "table") label = `Table ${num}`;
-        else if (assignLabelPattern === "room") label = `Room ${num}`;
-        else if (assignLabelPattern === "desk") label = `Desk ${num}`;
-        else label = `${assignCustomPrefix}${num}`;
+        let location: string | null = null;
+        if (assignLabelPattern === "table") {
+          label = `Table ${num}`;
+          location = `Table ${num}`;
+        } else if (assignLabelPattern === "room") {
+          label = `Room ${num}`;
+        } else if (assignLabelPattern === "desk") {
+          label = `Desk ${num}`;
+        } else {
+          label = `${assignCustomPrefix}${num}`;
+        }
+
+        const updatePayload: Record<string, any> = {
+          business_id: businessId,
+          status: "active",
+          label: label,
+          assigned_at: now,
+        };
+        if (location) {
+          updatePayload.location = location;
+        }
 
         return supabase
           .from("devices")
-          .update({
-            business_id: businessId,
-            status: "active",
-            label: label,
-            assigned_at: now,
-          })
+          .update(updatePayload)
           .eq("id", id);
       });
 
@@ -339,15 +352,25 @@ export default function ClientPage() {
     if (!editingLabelDevice) return;
     try {
       const newLabel = editLabelInput.trim() || null;
+      const tableNum = parseStandTableNumber(newLabel, null);
+      const updatePayload: Record<string, any> = { label: newLabel };
+      if (tableNum) {
+        updatePayload.location = `Table ${tableNum}`;
+      }
+
       const { error: updateErr } = await supabase
         .from("devices")
-        .update({ label: newLabel })
+        .update(updatePayload)
         .eq("id", editingLabelDevice.id);
 
       if (updateErr) throw updateErr;
 
       setDevices((curr) =>
-        curr.map((d) => (d.id === editingLabelDevice.id ? { ...d, label: newLabel } : d))
+        curr.map((d) =>
+          d.id === editingLabelDevice.id
+            ? { ...d, label: newLabel, ...(tableNum ? { location: `Table ${tableNum}` } : {}) }
+            : d
+        )
       );
       setEditingLabelDevice(null);
     } catch (err) {
@@ -2817,12 +2840,33 @@ export default function ClientPage() {
                       <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "4px" }}>Start Number</label>
                       <input
                         type="number"
+                        min={1}
                         value={assignLabelStart}
                         onChange={(e) => setAssignLabelStart(Number(e.target.value))}
                         style={{ width: "100%", padding: "8px", borderRadius: "6px", border: "1px solid #cbd5e1" }}
                       />
                     </div>
                   </div>
+
+                  {assignLabelPattern === "table" && (() => {
+                    const existingAssignedTables = new Set(
+                      devices
+                        .map((d) => parseStandTableNumber(d.label, d.location))
+                        .filter((n): n is number => n !== null)
+                    );
+                    const duplicateAssignedTables = selectedInventoryIds
+                      .map((_, idx) => assignLabelStart + idx)
+                      .filter((num) => existingAssignedTables.has(num));
+
+                    if (duplicateAssignedTables.length > 0) {
+                      return (
+                        <div style={{ background: "#fef3c7", border: "1px solid #fde68a", padding: "10px", borderRadius: "8px", fontSize: "12px", color: "#92400e" }}>
+                          ⚠️ Warning: Table {duplicateAssignedTables.join(", ")} is already assigned to another stand for this business. (You may still assign it if multiple stands share a table).
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                 </>
               )}
             </div>
@@ -2860,6 +2904,22 @@ export default function ClientPage() {
                 placeholder="e.g. Table 4 or Room 204"
                 style={{ width: "100%", padding: "10px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
               />
+              {(() => {
+                const parsed = parseStandTableNumber(editLabelInput, null);
+                if (parsed) {
+                  const isDup = devices.some(
+                    (d) => d.id !== editingLabelDevice.id && parseStandTableNumber(d.label, d.location) === parsed
+                  );
+                  if (isDup) {
+                    return (
+                      <div style={{ marginTop: "8px", background: "#fef3c7", border: "1px solid #fde68a", padding: "8px", borderRadius: "6px", fontSize: "11px", color: "#92400e" }}>
+                        ⚠️ Warning: Table {parsed} is already assigned to another stand for this business.
+                      </div>
+                    );
+                  }
+                }
+                return null;
+              })()}
             </div>
             <div style={modalFooterStyle}>
               <button type="button" onClick={() => setEditingLabelDevice(null)} style={secondaryButton}>Cancel</button>
