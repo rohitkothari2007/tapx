@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState, type CSSProperties } from "react";
+import { MENU_TOKENS, formatDisplayName } from "../lib/menuTheme";
+import { menuFontClassNames } from "../lib/menuFonts";
 
 export type MenuCategory = {
   id: string;
@@ -152,39 +154,36 @@ export default function DigitalMenuEditor({
     }
   }, [config]);
 
-  const payloadSizeKb = (payloadSize / 1024).toFixed(1);
-  const isNearPayloadLimit = payloadSize > MAX_PAYLOAD_BYTES * 0.9;
+  const payloadSizeKb = Math.round(payloadSize / 1024);
   const isOverPayloadLimit = payloadSize > MAX_PAYLOAD_BYTES;
+  const isNearPayloadLimit = payloadSize > MAX_PAYLOAD_BYTES * 0.85;
 
-  // Filtered items
+  // Filtered Items for manager list
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
-      const matchesCategory =
-        activeCategoryTab === "all" || item.categoryId === activeCategoryTab;
-      if (!matchesCategory) return false;
-      if (!searchQuery.trim()) return true;
-      const q = searchQuery.toLowerCase().trim();
-      return (
-        item.name.toLowerCase().includes(q) ||
-        (item.description && item.description.toLowerCase().includes(q))
-      );
+      // Category filter
+      if (activeCategoryTab !== "all" && item.categoryId !== activeCategoryTab) {
+        return false;
+      }
+      // Search query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchesName = item.name.toLowerCase().includes(q);
+        const matchesDesc = (item.description || "").toLowerCase().includes(q);
+        if (!matchesName && !matchesDesc) return false;
+      }
+      return true;
     });
   }, [items, activeCategoryTab, searchQuery]);
 
-  // Preview item resolution
+  // Current preview item
   const previewItem = useMemo(() => {
     if (previewItemId) {
       const found = items.find((i) => i.id === previewItemId);
       if (found) return found;
     }
-    if (editingItemId) {
-      const found = items.find((i) => i.id === editingItemId);
-      if (found) return found;
-    }
-    if (filteredItems.length > 0) return filteredItems[0];
-    if (items.length > 0) return items[0];
-    return null;
-  }, [previewItemId, editingItemId, items, filteredItems]);
+    return filteredItems[0] || items[0] || null;
+  }, [previewItemId, items, filteredItems]);
 
   /* =========================================================
      CATEGORY ACTIONS
@@ -194,7 +193,7 @@ export default function DigitalMenuEditor({
     setCategoryError("");
     const trimmed = newCategoryName.trim();
     if (!trimmed) {
-      setCategoryError("Please enter a category name.");
+      setCategoryError("Category name is required.");
       return;
     }
     if (trimmed.length > 80) {
@@ -206,13 +205,13 @@ export default function DigitalMenuEditor({
       return;
     }
 
-    const newCategory: MenuCategory = {
+    const newCat: MenuCategory = {
       id: makeId(),
       name: trimmed,
       description: newCategoryDesc.trim() || undefined,
     };
 
-    const nextCategories = [...categories, newCategory];
+    const nextCategories = [...categories, newCat];
     onChange({
       ...config,
       categories: nextCategories,
@@ -234,7 +233,6 @@ export default function DigitalMenuEditor({
     if (!editingCategoryId) return;
     const trimmed = editCategoryName.trim();
     if (!trimmed) return;
-    if (trimmed.length > 80) return;
 
     const nextCategories = categories.map((c) =>
       c.id === editingCategoryId
@@ -253,16 +251,22 @@ export default function DigitalMenuEditor({
   };
 
   const handleDeleteCategory = (cat: MenuCategory) => {
-    const attachedItems = items.filter((i) => i.categoryId === cat.id);
-    const msg =
-      attachedItems.length > 0
-        ? `Delete category "${cat.name}"? This will also remove ${attachedItems.length} menu item(s) in this category.`
-        : `Delete category "${cat.name}"?`;
-
-    if (!confirm(msg)) return;
+    const itemsInCat = items.filter((i) => i.categoryId === cat.id);
+    if (itemsInCat.length > 0) {
+      const confirmed = confirm(
+        `Category "${cat.name}" has ${itemsInCat.length} items. Deleting it will reassign these items to your first category. Proceed?`
+      );
+      if (!confirmed) return;
+    } else {
+      if (!confirm(`Delete category "${cat.name}"?`)) return;
+    }
 
     const nextCategories = categories.filter((c) => c.id !== cat.id);
-    const nextItems = items.filter((i) => i.categoryId !== cat.id);
+    const fallbackCatId = nextCategories[0]?.id || "default-menu";
+
+    const nextItems = items.map((i) =>
+      i.categoryId === cat.id ? { ...i, categoryId: fallbackCatId } : i
+    );
 
     onChange({
       ...config,
@@ -270,20 +274,24 @@ export default function DigitalMenuEditor({
       items: nextItems,
       quick_requests: quickRequests,
     });
+
+    if (activeCategoryTab === cat.id) {
+      setActiveCategoryTab("all");
+    }
   };
 
   const handleMoveCategory = (index: number, direction: "up" | "down") => {
     const targetIndex = direction === "up" ? index - 1 : index + 1;
     if (targetIndex < 0 || targetIndex >= categories.length) return;
 
-    const next = [...categories];
-    const temp = next[index];
-    next[index] = next[targetIndex];
-    next[targetIndex] = temp;
+    const nextCategories = [...categories];
+    const temp = nextCategories[index];
+    nextCategories[index] = nextCategories[targetIndex];
+    nextCategories[targetIndex] = temp;
 
     onChange({
       ...config,
-      categories: next,
+      categories: nextCategories,
       items,
       quick_requests: quickRequests,
     });
@@ -510,7 +518,7 @@ export default function DigitalMenuEditor({
   ========================================================= */
 
   return (
-    <div style={styles.container}>
+    <div className={menuFontClassNames} style={styles.container}>
       {/* HEADER BAR */}
       <div style={styles.topBar}>
         <div>
@@ -552,15 +560,15 @@ export default function DigitalMenuEditor({
           style={{
             ...styles.limitPill,
             borderColor: isOverPayloadLimit
-              ? "#f87171"
+              ? "#F87171"
               : isNearPayloadLimit
-              ? "#fbbf24"
-              : "#e2e8f0",
+              ? "#FBBF24"
+              : MENU_TOKENS.colors.light.hairline,
             background: isOverPayloadLimit
-              ? "#fef2f2"
+              ? "#FEF2F2"
               : isNearPayloadLimit
-              ? "#fffbeb"
-              : "#ffffff",
+              ? "#FFFBEB"
+              : "#FFFFFF",
           }}
         >
           <span style={styles.limitLabel}>Saved size:</span>
@@ -1127,9 +1135,9 @@ export default function DigitalMenuEditor({
                           }}
                           style={{
                             ...styles.soldOutToggle,
-                            background: isAvailable ? "#ecfdf5" : "#fef2f2",
-                            borderColor: isAvailable ? "#a7f3d0" : "#fecaca",
-                            color: isAvailable ? "#065f46" : "#991b1b",
+                            background: isAvailable ? MENU_TOKENS.colors.light.vegBg : MENU_TOKENS.colors.light.soldOutBg,
+                            borderColor: isAvailable ? "#A7F3D0" : MENU_TOKENS.colors.light.soldOutBorder,
+                            color: isAvailable ? MENU_TOKENS.colors.light.veg : MENU_TOKENS.colors.light.soldOutText,
                           }}
                           title={isAvailable ? "Click to mark Sold out" : "Click to mark Available"}
                         >
@@ -1138,7 +1146,7 @@ export default function DigitalMenuEditor({
                               width: "8px",
                               height: "8px",
                               borderRadius: "50%",
-                              background: isAvailable ? "#10b981" : "#ef4444",
+                              background: isAvailable ? MENU_TOKENS.colors.light.veg : MENU_TOKENS.colors.light.soldOutText,
                               display: "inline-block",
                             }}
                           />
@@ -1200,7 +1208,7 @@ export default function DigitalMenuEditor({
                     )}
 
                     {previewItem.popular && (
-                      <span style={styles.previewBadgeBestseller}>Bestseller</span>
+                      <span style={styles.previewBadgeBestseller}>★ Bestseller</span>
                     )}
 
                     {previewItem.available === false && (
@@ -1227,7 +1235,7 @@ export default function DigitalMenuEditor({
                           <span style={styles.eggDot} />
                         </span>
                       )}
-                      <h4 style={styles.previewItemName}>{previewItem.name}</h4>
+                      <h4 style={styles.previewItemName}>{formatDisplayName(previewItem.name)}</h4>
                     </div>
 
                     <div style={styles.previewItemPrice}>
@@ -1245,7 +1253,7 @@ export default function DigitalMenuEditor({
                         </button>
                       ) : (
                         <button type="button" disabled style={styles.previewAddBtn}>
-                          + Add
+                          + ADD
                         </button>
                       )}
                     </div>
@@ -1340,8 +1348,8 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: "24px",
-    fontFamily: "inherit",
-    color: "#0f172a",
+    fontFamily: MENU_TOKENS.fonts.sans,
+    color: MENU_TOKENS.colors.light.ink,
   },
   topBar: {
     display: "flex",
@@ -1349,35 +1357,36 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-start",
     gap: "16px",
     flexWrap: "wrap",
-    paddingBottom: "12px",
-    borderBottom: "1px solid #e2e8f0",
+    paddingBottom: "14px",
+    borderBottom: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
   },
   mainTitle: {
     margin: 0,
-    fontSize: "22px",
-    fontWeight: 800,
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "24px",
+    fontWeight: 700,
     letterSpacing: "-0.02em",
-    color: "#0f172a",
+    color: MENU_TOKENS.colors.light.ink,
   },
   mainSubtitle: {
     margin: "4px 0 0",
-    fontSize: "13px",
-    color: "#64748b",
+    fontSize: "13.5px",
+    color: MENU_TOKENS.colors.light.muted,
     lineHeight: 1.5,
   },
   previewMenuButton: {
     display: "inline-flex",
     alignItems: "center",
     gap: "6px",
-    padding: "8px 14px",
-    borderRadius: "10px",
-    background: "#eff6ff",
-    color: "#1d4ed8",
-    border: "1px solid #bfdbfe",
+    padding: "8px 16px",
+    borderRadius: MENU_TOKENS.radii.input,
+    background: MENU_TOKENS.colors.light.accentLight,
+    color: MENU_TOKENS.colors.light.accentInk,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     fontSize: "12px",
     fontWeight: 700,
     cursor: "pointer",
-    minHeight: "44px",
+    minHeight: MENU_TOKENS.layout.minTouchTarget,
   },
   limitsBar: {
     display: "flex",
@@ -1388,31 +1397,32 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: "6px",
-    padding: "6px 12px",
-    borderRadius: "8px",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
+    padding: "6px 14px",
+    borderRadius: "10px",
+    background: "#FFFFFF",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     fontSize: "12px",
-    color: "#334155",
+    color: MENU_TOKENS.colors.light.ink,
+    boxShadow: "0 1px 2px rgba(28, 25, 23, 0.02)",
   },
   limitLabel: {
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
   },
   alertError: {
     padding: "10px 14px",
-    borderRadius: "8px",
-    background: "#fef2f2",
-    border: "1px solid #fecaca",
-    color: "#b91c1c",
+    borderRadius: "10px",
+    background: "#FEF2F2",
+    border: "1px solid #FECACA",
+    color: "#B91C1C",
     fontSize: "12px",
     fontWeight: 600,
   },
   sectionCard: {
-    padding: "20px",
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "16px",
-    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.04)",
+    padding: "22px",
+    background: "#FFFFFF",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: MENU_TOKENS.radii.card,
+    boxShadow: MENU_TOKENS.shadows.card,
   },
   sectionHeader: {
     display: "flex",
@@ -1424,8 +1434,8 @@ const styles: Record<string, CSSProperties> = {
     width: "28px",
     height: "28px",
     borderRadius: "8px",
-    background: "#0f172a",
-    color: "#ffffff",
+    background: MENU_TOKENS.colors.light.ink,
+    color: "#FFFFFF",
     display: "grid",
     placeItems: "center",
     fontSize: "13px",
@@ -1434,14 +1444,15 @@ const styles: Record<string, CSSProperties> = {
   },
   sectionTitle: {
     margin: 0,
-    fontSize: "16px",
-    fontWeight: 800,
-    color: "#0f172a",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "18px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.ink,
   },
   sectionSubtitle: {
     margin: "3px 0 0",
-    fontSize: "12px",
-    color: "#64748b",
+    fontSize: "12.5px",
+    color: MENU_TOKENS.colors.light.muted,
   },
   formRow: {
     display: "flex",
@@ -1452,113 +1463,111 @@ const styles: Record<string, CSSProperties> = {
   },
   inputLabel: {
     display: "block",
-    fontSize: "11px",
-    fontWeight: 700,
-    color: "#475569",
+    fontSize: "12px",
+    fontWeight: 600,
+    color: MENU_TOKENS.colors.light.muted,
     marginBottom: "5px",
-    textTransform: "uppercase",
-    letterSpacing: "0.03em",
   },
   input: {
     width: "100%",
     height: "44px",
     padding: "0 12px",
-    border: "1px solid #cbd5e1",
-    borderRadius: "10px",
-    background: "#ffffff",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: MENU_TOKENS.radii.input,
+    background: "#FFFFFF",
     fontSize: "13px",
-    color: "#0f172a",
-    fontFamily: "inherit",
+    color: MENU_TOKENS.colors.light.ink,
+    fontFamily: MENU_TOKENS.fonts.sans,
     boxSizing: "border-box",
   },
   select: {
     width: "100%",
     height: "44px",
     padding: "0 12px",
-    border: "1px solid #cbd5e1",
-    borderRadius: "10px",
-    background: "#ffffff",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: MENU_TOKENS.radii.input,
+    background: "#FFFFFF",
     fontSize: "13px",
-    color: "#0f172a",
-    fontFamily: "inherit",
+    color: MENU_TOKENS.colors.light.ink,
+    fontFamily: MENU_TOKENS.fonts.sans,
     boxSizing: "border-box",
   },
   textarea: {
     width: "100%",
     padding: "10px 12px",
-    border: "1px solid #cbd5e1",
-    borderRadius: "10px",
-    background: "#ffffff",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: MENU_TOKENS.radii.input,
+    background: "#FFFFFF",
     fontSize: "13px",
-    color: "#0f172a",
-    fontFamily: "inherit",
+    color: MENU_TOKENS.colors.light.ink,
+    fontFamily: MENU_TOKENS.fonts.sans,
     boxSizing: "border-box",
     resize: "vertical",
   },
   primaryButton: {
     height: "44px",
     padding: "0 18px",
-    background: "#0f172a",
-    color: "#ffffff",
+    background: MENU_TOKENS.colors.light.ink,
+    color: "#FFFFFF",
     border: "none",
     borderRadius: "10px",
     fontSize: "13px",
     fontWeight: 700,
     cursor: "pointer",
-    fontFamily: "inherit",
+    fontFamily: MENU_TOKENS.fonts.sans,
     whiteSpace: "nowrap",
   },
   smallPrimaryButton: {
     height: "36px",
     padding: "0 12px",
-    background: "#0f172a",
-    color: "#ffffff",
+    background: MENU_TOKENS.colors.light.ink,
+    color: "#FFFFFF",
     border: "none",
     borderRadius: "8px",
     fontSize: "12px",
     fontWeight: 700,
     cursor: "pointer",
-    fontFamily: "inherit",
+    fontFamily: MENU_TOKENS.fonts.sans,
   },
   smallSecondaryButton: {
     height: "36px",
     padding: "0 12px",
-    background: "#ffffff",
-    color: "#334155",
-    border: "1px solid #cbd5e1",
+    background: "#FFFFFF",
+    color: MENU_TOKENS.colors.light.ink,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     borderRadius: "8px",
     fontSize: "12px",
     fontWeight: 600,
     cursor: "pointer",
-    fontFamily: "inherit",
+    fontFamily: MENU_TOKENS.fonts.sans,
   },
   deleteButton: {
     height: "36px",
     padding: "0 12px",
-    background: "#fff1f2",
-    color: "#be123c",
-    border: "1px solid #fecdd3",
+    background: "#FFF1F2",
+    color: "#BE123C",
+    border: "1px solid #FECDD3",
     borderRadius: "8px",
     fontSize: "12px",
     fontWeight: 700,
     cursor: "pointer",
-    fontFamily: "inherit",
+    fontFamily: MENU_TOKENS.fonts.sans,
   },
   iconButton: {
     width: "36px",
     height: "36px",
-    background: "#ffffff",
-    border: "1px solid #cbd5e1",
+    background: "#FFFFFF",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     borderRadius: "8px",
     display: "grid",
     placeItems: "center",
     fontSize: "14px",
     fontWeight: 700,
-    color: "#334155",
+    color: MENU_TOKENS.colors.light.ink,
     cursor: "pointer",
   },
   fieldError: {
-    color: "#dc2626",
+    color: "#DC2626",
     fontSize: "12px",
     marginTop: "6px",
     fontWeight: 600,
@@ -1575,26 +1584,28 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     gap: "12px",
     padding: "12px 14px",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-    borderRadius: "10px",
+    background: MENU_TOKENS.colors.light.bg,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: "12px",
   },
   categoryNameText: {
     fontSize: "14px",
     fontWeight: 700,
-    color: "#0f172a",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    color: MENU_TOKENS.colors.light.ink,
   },
   itemCountChip: {
     padding: "2px 8px",
     borderRadius: "999px",
-    background: "#e2e8f0",
-    color: "#475569",
+    background: "#FFFFFF",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    color: MENU_TOKENS.colors.light.muted,
     fontSize: "11px",
     fontWeight: 700,
   },
   categoryDescText: {
     fontSize: "12px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     marginTop: "2px",
   },
   itemActionGroup: {
@@ -1605,24 +1616,25 @@ const styles: Record<string, CSSProperties> = {
   emptyNotice: {
     padding: "20px",
     textAlign: "center",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     fontSize: "13px",
-    background: "#f8fafc",
-    borderRadius: "10px",
-    border: "1px dashed #cbd5e1",
+    background: MENU_TOKENS.colors.light.bg,
+    borderRadius: "12px",
+    border: `1px dashed ${MENU_TOKENS.colors.light.hairline}`,
   },
   itemFormContainer: {
-    padding: "16px",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-    borderRadius: "12px",
+    padding: "18px",
+    background: MENU_TOKENS.colors.light.bg,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: "14px",
     marginBottom: "20px",
   },
   subsectionTitle: {
     margin: "0 0 12px",
-    fontSize: "14px",
-    fontWeight: 800,
-    color: "#0f172a",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "15px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.ink,
   },
   formGrid: {
     display: "grid",
@@ -1643,13 +1655,13 @@ const styles: Record<string, CSSProperties> = {
     gap: "8px",
     fontSize: "13px",
     fontWeight: 600,
-    color: "#334155",
+    color: MENU_TOKENS.colors.light.ink,
     cursor: "pointer",
   },
   checkbox: {
     width: "18px",
     height: "18px",
-    accentColor: "#0f172a",
+    accentColor: MENU_TOKENS.colors.light.ink,
     cursor: "pointer",
   },
   filterBar: {
@@ -1668,16 +1680,16 @@ const styles: Record<string, CSSProperties> = {
     left: "14px",
     fontSize: "14px",
     pointerEvents: "none",
-    color: "#94a3b8",
+    color: MENU_TOKENS.colors.light.muted,
   },
   searchInput: {
     width: "100%",
     height: "44px",
     padding: "0 38px 0 38px",
-    border: "1px solid #cbd5e1",
-    borderRadius: "10px",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: MENU_TOKENS.radii.input,
     fontSize: "13px",
-    fontFamily: "inherit",
+    fontFamily: MENU_TOKENS.fonts.sans,
     boxSizing: "border-box",
   },
   clearSearchBtn: {
@@ -1685,7 +1697,7 @@ const styles: Record<string, CSSProperties> = {
     right: "12px",
     background: "transparent",
     border: "none",
-    color: "#94a3b8",
+    color: MENU_TOKENS.colors.light.muted,
     fontSize: "14px",
     cursor: "pointer",
   },
@@ -1698,18 +1710,18 @@ const styles: Record<string, CSSProperties> = {
   categoryFilterChip: {
     padding: "6px 14px",
     borderRadius: "999px",
-    border: "1px solid #cbd5e1",
-    background: "#ffffff",
-    color: "#475569",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    background: "#FFFFFF",
+    color: MENU_TOKENS.colors.light.muted,
     fontSize: "12px",
     fontWeight: 700,
     cursor: "pointer",
     whiteSpace: "nowrap",
   },
   categoryFilterChipActive: {
-    background: "#0f172a",
-    borderColor: "#0f172a",
-    color: "#ffffff",
+    background: MENU_TOKENS.colors.light.ink,
+    borderColor: MENU_TOKENS.colors.light.ink,
+    color: "#FFFFFF",
   },
   itemsAndPreviewWrap: {
     display: "flex",
@@ -1726,24 +1738,25 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: "14px",
-    padding: "12px 14px",
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "12px",
-    boxShadow: "0 1px 2px rgba(0, 0, 0, 0.03)",
+    padding: "14px 16px",
+    background: "#FFFFFF",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: "14px",
+    boxShadow: "0 1px 2px rgba(28, 25, 23, 0.02)",
     cursor: "pointer",
     transition: "border-color 0.15s, box-shadow 0.15s",
   },
   itemRowCardSelected: {
-    borderColor: "#0f172a",
-    boxShadow: "0 0 0 1px #0f172a",
+    borderColor: MENU_TOKENS.colors.light.ink,
+    boxShadow: `0 0 0 1px ${MENU_TOKENS.colors.light.ink}`,
   },
   thumbnailBox: {
     width: "56px",
     height: "56px",
     borderRadius: "10px",
     overflow: "hidden",
-    background: "#f1f5f9",
+    background: "#F5EFE6",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     flexShrink: 0,
     display: "grid",
     placeItems: "center",
@@ -1754,9 +1767,10 @@ const styles: Record<string, CSSProperties> = {
     objectFit: "cover",
   },
   thumbnailPlaceholder: {
-    fontSize: "18px",
-    fontWeight: 800,
-    color: "#64748b",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "20px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.muted,
   },
   vegIndicator: {
     display: "inline-flex",
@@ -1764,16 +1778,16 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
     width: "14px",
     height: "14px",
-    border: "1px solid #16a34a",
+    border: `1px solid ${MENU_TOKENS.colors.light.veg}`,
     borderRadius: "3px",
-    background: "#ffffff",
+    background: "#FFFFFF",
     flexShrink: 0,
   },
   vegDot: {
     width: "6px",
     height: "6px",
     borderRadius: "50%",
-    background: "#16a34a",
+    background: MENU_TOKENS.colors.light.veg,
   },
   nonVegIndicator: {
     display: "inline-flex",
@@ -1781,16 +1795,17 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
     width: "14px",
     height: "14px",
-    border: "1px solid #dc2626",
+    border: `1px solid ${MENU_TOKENS.colors.light.nonVeg}`,
     borderRadius: "3px",
-    background: "#ffffff",
+    background: "#FFFFFF",
     flexShrink: 0,
   },
   nonVegDot: {
-    width: "6px",
-    height: "6px",
-    borderRadius: "50%",
-    background: "#dc2626",
+    width: 0,
+    height: 0,
+    borderLeft: "3px solid transparent",
+    borderRight: "3px solid transparent",
+    borderBottom: `6px solid ${MENU_TOKENS.colors.light.nonVeg}`,
   },
   eggIndicator: {
     display: "inline-flex",
@@ -1798,30 +1813,31 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "center",
     width: "14px",
     height: "14px",
-    border: "1px solid #d97706",
+    border: `1px solid ${MENU_TOKENS.colors.light.egg}`,
     borderRadius: "3px",
-    background: "#ffffff",
+    background: "#FFFFFF",
     flexShrink: 0,
   },
   eggDot: {
     width: "6px",
-    height: "6px",
-    borderRadius: "50%",
-    background: "#d97706",
+    height: "7px",
+    borderRadius: "50% 50% 50% 50% / 60% 60% 40% 40%",
+    background: MENU_TOKENS.colors.light.egg,
   },
   itemNameText: {
-    fontSize: "14px",
+    fontSize: "14.5px",
     fontWeight: 700,
-    color: "#0f172a",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    color: MENU_TOKENS.colors.light.ink,
   },
   bestsellerBadge: {
-    padding: "2px 6px",
+    padding: "1px 6px",
     borderRadius: "4px",
-    background: "#fef3c7",
-    color: "#92400e",
+    background: MENU_TOKENS.colors.light.accentLight,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
+    color: MENU_TOKENS.colors.light.accentInk,
     fontSize: "10px",
-    fontWeight: 800,
-    textTransform: "uppercase",
+    fontWeight: 700,
   },
   itemMetaLine: {
     display: "flex",
@@ -1830,18 +1846,19 @@ const styles: Record<string, CSSProperties> = {
     marginTop: "2px",
   },
   itemPriceText: {
-    fontSize: "13px",
-    fontWeight: 800,
-    color: "#0f172a",
+    fontSize: "13.5px",
+    fontWeight: 700,
+    fontVariantNumeric: "tabular-nums",
+    color: MENU_TOKENS.colors.light.ink,
   },
   itemCatLabel: {
     fontSize: "12px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
   },
   itemDescClamped: {
     margin: "4px 0 0",
     fontSize: "12px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     lineHeight: 1.4,
     display: "-webkit-box",
     WebkitLineClamp: 2,
@@ -1858,64 +1875,68 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     gap: "6px",
-    padding: "6px 10px",
+    padding: "6px 12px",
     borderRadius: "8px",
     border: "1px solid",
     fontSize: "11px",
     fontWeight: 700,
     cursor: "pointer",
     minHeight: "36px",
-    fontFamily: "inherit",
+    fontFamily: MENU_TOKENS.fonts.sans,
+    transition: "all 0.15s ease",
   },
   editItemCard: {
-    padding: "16px",
-    background: "#f8fafc",
-    border: "1px solid #94a3b8",
-    borderRadius: "12px",
+    padding: "18px",
+    background: "#FFFFFF",
+    border: `1.5px solid ${MENU_TOKENS.colors.light.ink}`,
+    borderRadius: "14px",
+    boxShadow: MENU_TOKENS.shadows.card,
   },
   editItemHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: "12px",
+    fontFamily: MENU_TOKENS.fonts.serif,
   },
   livePreviewColumn: {
-    width: "280px",
+    width: "290px",
     flexShrink: 0,
   },
   previewStickyBox: {
     position: "sticky",
     top: "16px",
     padding: "16px",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-    borderRadius: "14px",
+    background: MENU_TOKENS.colors.light.bg,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: MENU_TOKENS.radii.card,
   },
   previewHeader: {
     marginBottom: "12px",
   },
   previewTitle: {
     display: "block",
-    fontSize: "13px",
-    fontWeight: 800,
-    color: "#0f172a",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "14px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.ink,
   },
   previewSubtitle: {
     fontSize: "11px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
   },
   customerCardPreview: {
-    background: "#ffffff",
-    borderRadius: "14px",
+    background: "#FFFFFF",
+    borderRadius: MENU_TOKENS.radii.card,
     overflow: "hidden",
-    border: "1px solid #e2e8f0",
-    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.05)",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    boxShadow: MENU_TOKENS.shadows.card,
   },
   previewImageContainer: {
     position: "relative",
     width: "100%",
-    aspectRatio: "16 / 9",
-    background: "#f1f5f9",
+    aspectRatio: "4 / 3",
+    background: "#F5EFE6",
     overflow: "hidden",
   },
   previewImg: {
@@ -1928,55 +1949,57 @@ const styles: Record<string, CSSProperties> = {
     height: "100%",
     display: "grid",
     placeItems: "center",
-    fontSize: "36px",
-    fontWeight: 900,
-    color: "#94a3b8",
-    background: "linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%)",
+    fontSize: "40px",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.muted,
+    background: "linear-gradient(135deg, #F5EFE6 0%, #E8DCCB 100%)",
   },
   previewBadgeBestseller: {
     position: "absolute",
     top: "8px",
     left: "8px",
-    padding: "3px 8px",
-    borderRadius: "6px",
-    background: "#0f172a",
-    color: "#ffffff",
+    padding: "2px 8px",
+    borderRadius: "4px",
+    background: MENU_TOKENS.colors.light.accentLight,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
+    color: MENU_TOKENS.colors.light.accentInk,
     fontSize: "10px",
-    fontWeight: 800,
-    textTransform: "uppercase",
+    fontWeight: 700,
   },
   previewSoldOutOverlay: {
     position: "absolute",
     inset: 0,
-    background: "rgba(15, 23, 42, 0.65)",
+    background: "rgba(28, 25, 23, 0.6)",
     backdropFilter: "blur(2px)",
     display: "grid",
     placeItems: "center",
-    color: "#ffffff",
+    color: "#FFFFFF",
     fontSize: "13px",
-    fontWeight: 800,
-    letterSpacing: "0.05em",
-    textTransform: "uppercase",
+    fontWeight: 700,
+    letterSpacing: "0.02em",
   },
   previewContentBox: {
-    padding: "12px",
+    padding: "14px",
   },
   previewItemName: {
     margin: 0,
-    fontSize: "14px",
-    fontWeight: 800,
-    color: "#0f172a",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "15px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.ink,
   },
   previewItemPrice: {
     marginTop: "4px",
     fontSize: "14px",
-    fontWeight: 800,
-    color: "#0f172a",
+    fontWeight: 700,
+    fontVariantNumeric: "tabular-nums",
+    color: MENU_TOKENS.colors.light.ink,
   },
   previewItemDesc: {
     margin: "6px 0 10px",
-    fontSize: "11px",
-    color: "#64748b",
+    fontSize: "11.5px",
+    color: MENU_TOKENS.colors.light.muted,
     lineHeight: 1.4,
     display: "-webkit-box",
     WebkitLineClamp: 2,
@@ -1988,11 +2011,11 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "flex-end",
   },
   previewAddBtn: {
-    padding: "6px 14px",
+    padding: "6px 16px",
     borderRadius: "8px",
-    background: "#0f172a",
-    color: "#ffffff",
-    border: "none",
+    background: "#FFFFFF",
+    color: MENU_TOKENS.colors.light.veg,
+    border: `1.5px solid ${MENU_TOKENS.colors.light.veg}`,
     fontSize: "12px",
     fontWeight: 700,
     cursor: "default",
@@ -2000,17 +2023,17 @@ const styles: Record<string, CSSProperties> = {
   previewDisabledAddBtn: {
     padding: "6px 14px",
     borderRadius: "8px",
-    background: "#e2e8f0",
-    color: "#94a3b8",
-    border: "none",
+    background: MENU_TOKENS.colors.light.soldOutBg,
+    color: MENU_TOKENS.colors.light.soldOutText,
+    border: `1px solid ${MENU_TOKENS.colors.light.soldOutBorder}`,
     fontSize: "12px",
-    fontWeight: 700,
+    fontWeight: 600,
     cursor: "not-allowed",
   },
   previewEmptyNotice: {
     padding: "30px 10px",
     textAlign: "center",
-    color: "#94a3b8",
+    color: MENU_TOKENS.colors.light.muted,
     fontSize: "12px",
   },
   quickRequestControls: {
@@ -2028,12 +2051,12 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     gap: "6px",
-    padding: "6px 10px",
+    padding: "6px 12px",
     borderRadius: "999px",
-    background: "#f1f5f9",
-    border: "1px solid #cbd5e1",
+    background: MENU_TOKENS.colors.light.accentLight,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
     fontSize: "12px",
-    color: "#1e293b",
+    color: MENU_TOKENS.colors.light.ink,
     fontWeight: 600,
   },
   chipText: {
@@ -2044,7 +2067,7 @@ const styles: Record<string, CSSProperties> = {
     border: "none",
     padding: "0 2px",
     fontSize: "14px",
-    color: "#64748b",
+    color: MENU_TOKENS.colors.light.muted,
     cursor: "pointer",
   },
   chipRemoveBtn: {
@@ -2052,7 +2075,7 @@ const styles: Record<string, CSSProperties> = {
     border: "none",
     padding: "0 4px",
     fontSize: "12px",
-    color: "#94a3b8",
+    color: MENU_TOKENS.colors.light.muted,
     cursor: "pointer",
     fontWeight: 700,
   },
