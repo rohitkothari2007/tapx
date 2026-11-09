@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 import { parseStandTableNumber } from "../lib/tableNumber";
 import { WhatsAppIcon } from "./BrandIcons";
@@ -411,6 +412,11 @@ export default function RestaurantExperience({
   const [customerPhone, setCustomerPhone] = useState("");
   const [placingOrder, setPlacingOrder] = useState(false);
   const [orderError, setOrderError] = useState("");
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Live order state
   const storageKey = `tapx_active_order_${business.id}_${device.device_code}`;
@@ -658,6 +664,28 @@ export default function RestaurantExperience({
     }
     return window;
   }, []);
+
+  // Lock background scroll when any modal sheet is open
+  const isAnySheetOpen = Boolean(detailItem || showCheckoutSheet || showTablePicker);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || !isAnySheetOpen) return;
+    const container = getScrollContainer();
+    const origBodyOverflow = document.body.style.overflow;
+    let origContainerOverflow = "";
+    if (container instanceof HTMLElement) {
+      origContainerOverflow = container.style.overflow;
+      container.style.overflow = "hidden";
+    }
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = origBodyOverflow;
+      if (container instanceof HTMLElement) {
+        container.style.overflow = origContainerOverflow;
+      }
+    };
+  }, [isAnySheetOpen, getScrollContainer]);
 
   // Dynamically measure sticky header heights based on actual DOM elements
   const measureStickyMetrics = useCallback(() => {
@@ -1758,8 +1786,12 @@ export default function RestaurantExperience({
       {/* ---------------------------------------------------- */}
       {/* 5. ITEM DETAIL & CUSTOMIZATION SHEET (MODAL) */}
       {/* ---------------------------------------------------- */}
-      {detailItem && (
-        <div style={styles.modalOverlay} onClick={() => setDetailItem(null)}>
+      {mounted && typeof document !== "undefined" && detailItem && createPortal(
+        <div
+          style={styles.modalOverlay}
+          className={menuFontClassNames}
+          onClick={() => setDetailItem(null)}
+        >
           <div
             style={styles.modalSheet}
             onClick={(e) => e.stopPropagation()}
@@ -1899,14 +1931,19 @@ export default function RestaurantExperience({
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ---------------------------------------------------- */}
       {/* 6. CART CHECKOUT SHEET (MODAL) */}
       {/* ---------------------------------------------------- */}
-      {tableOrderingEnabled && showCheckoutSheet && (
-        <div style={styles.modalOverlay} onClick={() => setShowCheckoutSheet(false)}>
+      {mounted && typeof document !== "undefined" && tableOrderingEnabled && showCheckoutSheet && createPortal(
+        <div
+          style={styles.modalOverlay}
+          className={menuFontClassNames}
+          onClick={() => setShowCheckoutSheet(false)}
+        >
           <div
             style={styles.checkoutSheet}
             onClick={(e) => e.stopPropagation()}
@@ -2069,14 +2106,19 @@ export default function RestaurantExperience({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ---------------------------------------------------- */}
       {/* 6.5 WHICH TABLE ARE YOU AT? MODAL */}
       {/* ---------------------------------------------------- */}
-      {tableOrderingEnabled && showTablePicker && (
-        <div style={styles.modalOverlay} onClick={() => setShowTablePicker(false)}>
+      {mounted && typeof document !== "undefined" && tableOrderingEnabled && showTablePicker && createPortal(
+        <div
+          style={styles.modalOverlay}
+          className={menuFontClassNames}
+          onClick={() => setShowTablePicker(false)}
+        >
           <div
             style={styles.tablePickerModal}
             onClick={(e) => e.stopPropagation()}
@@ -2159,7 +2201,8 @@ export default function RestaurantExperience({
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ---------------------------------------------------- */}
@@ -2953,10 +2996,11 @@ const styles: Record<string, CSSProperties> = {
     backgroundColor: "rgba(28, 25, 23, 0.6)",
     backdropFilter: "blur(6px)",
     WebkitBackdropFilter: "blur(6px)",
-    zIndex: 999,
+    zIndex: 100000,
     display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "center",
+    flexDirection: "column",
+    justifyContent: "flex-end",
+    alignItems: "center",
     animation: "menuBackdropFadeIn 200ms ease",
   },
   modalSheet: {
@@ -2964,11 +3008,10 @@ const styles: Record<string, CSSProperties> = {
     maxWidth: MENU_TOKENS.layout.maxContentWidth,
     backgroundColor: "#FFFFFF",
     borderRadius: MENU_TOKENS.radii.sheetTop,
-    maxHeight: "88vh",
-    overflowY: "auto",
-    WebkitOverflowScrolling: "touch",
+    maxHeight: "90dvh",
     display: "flex",
     flexDirection: "column",
+    overflow: "hidden",
     boxShadow: MENU_TOKENS.shadows.modal,
     animation: "menuSheetSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1)",
   },
@@ -2978,10 +3021,9 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    position: "sticky",
-    top: 0,
     backgroundColor: "#FFFFFF",
     zIndex: 10,
+    flexShrink: 0,
   },
   modalTitleRow: {
     display: "flex",
@@ -3013,6 +3055,10 @@ const styles: Record<string, CSSProperties> = {
   modalBody: {
     padding: "16px 20px",
     flex: 1,
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    minHeight: 0,
+    overscrollBehavior: "contain",
   },
   modalImageWrap: {
     width: "100%",
@@ -3116,6 +3162,7 @@ const styles: Record<string, CSSProperties> = {
     borderTop: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     backgroundColor: "#FFFFFF",
     paddingBottom: "max(16px, env(safe-area-inset-bottom, 16px))",
+    flexShrink: 0,
   },
   confirmAddBtn: {
     width: "100%",
@@ -3135,11 +3182,10 @@ const styles: Record<string, CSSProperties> = {
     maxWidth: MENU_TOKENS.layout.maxContentWidth,
     backgroundColor: "#FFFFFF",
     borderRadius: MENU_TOKENS.radii.sheetTop,
-    maxHeight: "90vh",
-    overflowY: "auto",
-    WebkitOverflowScrolling: "touch",
+    maxHeight: "90dvh",
     display: "flex",
     flexDirection: "column",
+    overflow: "hidden",
     boxShadow: MENU_TOKENS.shadows.modal,
     animation: "menuSheetSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1)",
   },
@@ -3152,6 +3198,10 @@ const styles: Record<string, CSSProperties> = {
   checkoutBody: {
     padding: "16px 20px",
     flex: 1,
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    minHeight: 0,
+    overscrollBehavior: "contain",
   },
   checkoutItemsList: {
     display: "flex",
@@ -3269,6 +3319,7 @@ const styles: Record<string, CSSProperties> = {
     borderTop: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     backgroundColor: "#FFFFFF",
     paddingBottom: "max(16px, env(safe-area-inset-bottom, 16px))",
+    flexShrink: 0,
   },
   placeOrderBtn: {
     width: "100%",
@@ -3596,9 +3647,10 @@ const styles: Record<string, CSSProperties> = {
     maxWidth: MENU_TOKENS.layout.maxContentWidth,
     backgroundColor: "#FFFFFF",
     borderRadius: MENU_TOKENS.radii.sheetTop,
-    maxHeight: "85vh",
-    overflowY: "auto",
-    WebkitOverflowScrolling: "touch",
+    maxHeight: "85dvh",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
     boxShadow: MENU_TOKENS.shadows.modal,
     animation: "menuSheetSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1)",
   },
@@ -3609,6 +3661,11 @@ const styles: Record<string, CSSProperties> = {
   },
   tablePickerBody: {
     padding: "16px 20px 24px 20px",
+    flex: 1,
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    minHeight: 0,
+    overscrollBehavior: "contain",
   },
   tablePillGrid: {
     display: "grid",
