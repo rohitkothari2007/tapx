@@ -1,12 +1,16 @@
 "use client";
 
-import LiveOrdersPanel from "./LiveOrdersPanel";
+import LiveOrdersPanel, {
+  LATE_ORDER_WARN_MINUTES,
+  LATE_ORDER_ALERT_MINUTES,
+} from "./LiveOrdersPanel";
 import MenuManagerSection from "./MenuManagerSection";
 
 import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
@@ -30,6 +34,34 @@ import {
   validateOnlineOrderingConfig,
   sanitizeOnlineOrderingLinks,
 } from "../lib/onlineOrdering";
+
+function playDashboardChime() {
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === "suspended") {
+      void ctx.resume();
+    }
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, now);
+    osc.frequency.setValueAtTime(880, now + 0.09);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.2, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.36);
+  } catch {
+    // AudioContext blocked or unsupported
+  }
+}
 
 type Business = {
   id: string;
@@ -351,6 +383,85 @@ export default function ClientPortalPage() {
   const [requestDeviceType, setRequestDeviceType] = useState("NFC + QR");
   const [requestSending, setRequestSending] = useState(false);
   const [requestSuccess, setRequestSuccess] = useState("");
+
+  const [soundAlertsEnabled, setSoundAlertsEnabled] = useState(false);
+  const soundAlertsEnabledRef = useRef(false);
+  const [newOrderToast, setNewOrderToast] = useState<{
+    id: string;
+    table_number: number | null;
+    total: number | null;
+  } | null>(null);
+
+  // Initialize sound alerts preference from localStorage
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const stored = window.localStorage.getItem("tapx_owner_audio_alerts_enabled");
+        if (stored === "true") {
+          setSoundAlertsEnabled(true);
+          soundAlertsEnabledRef.current = true;
+        }
+      }
+    } catch {
+      // localStorage restricted
+    }
+  }, []);
+
+  const toggleSoundAlerts = () => {
+    setSoundAlertsEnabled((prev) => {
+      const next = !prev;
+      soundAlertsEnabledRef.current = next;
+      try {
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem("tapx_owner_audio_alerts_enabled", String(next));
+          if (next) playDashboardChime();
+        }
+      } catch {
+        // localStorage restricted
+      }
+      return next;
+    });
+  };
+
+  const enableSoundAlerts = () => {
+    setSoundAlertsEnabled(true);
+    soundAlertsEnabledRef.current = true;
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("tapx_owner_audio_alerts_enabled", "true");
+        playDashboardChime();
+      }
+    } catch {
+      // localStorage restricted
+    }
+  };
+
+  // Auto-dismiss new order toast after 8 seconds
+  useEffect(() => {
+    if (!newOrderToast) return;
+    const timer = setTimeout(() => setNewOrderToast(null), 8000);
+    return () => clearTimeout(timer);
+  }, [newOrderToast]);
+
+  // Repeat chime every 20s while an unhandled placed order remains
+  useEffect(() => {
+    if (!soundAlertsEnabled) return;
+    const hasUnhandled = orders.some(
+      (o) => o.status === "pending" || o.status === "placed"
+    );
+    if (!hasUnhandled) return;
+
+    const timer = setInterval(() => {
+      const stillUnhandled = orders.some(
+        (o) => o.status === "pending" || o.status === "placed"
+      );
+      if (stillUnhandled && soundAlertsEnabledRef.current) {
+        playDashboardChime();
+      }
+    }, 20000);
+
+    return () => clearInterval(timer);
+  }, [orders, soundAlertsEnabled]);
 
   async function handleSendHardwareRequest() {
     if (!business) return;
@@ -854,8 +965,21 @@ export default function ClientPortalPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "tapx_orders", filter: `business_id=eq.${bId}` },
-        () => {
+        (payload: any) => {
           triggerHighlight("orders");
+          if (payload?.eventType === "INSERT") {
+            const newOrder = payload.new as any;
+            if (soundAlertsEnabledRef.current) {
+              playDashboardChime();
+            }
+            if (newOrder) {
+              setNewOrderToast({
+                id: newOrder.id,
+                table_number: newOrder.table_number,
+                total: newOrder.total,
+              });
+            }
+          }
           loadPortal();
         }
       )
@@ -997,10 +1121,99 @@ export default function ClientPortalPage() {
     "order online"
   );
 
+  const tableOrderingConfigRow = useMemo(() => {
+    return (moduleConfigs || []).find(
+      (m: any) => normalizeKey(m.module_key) === "table_ordering"
+    );
+  }, [moduleConfigs]);
+
+  const orderFlow: "simple" | "steps" =
+    tableOrderingConfigRow?.config?.order_flow === "steps" ? "steps" : "simple";
+
+  const handleSaveOrderFlow = async (newFlow: "simple" | "steps") => {
+    if (!business?.id) return;
+    try {
+      const { data: existingRow } = await supabase
+        .from("business_module_configs")
+        .select("id, config, feature_id")
+        .eq("business_id", business.id)
+        .eq("module_key", "table_ordering")
+        .maybeSingle();
+
+      const mergedConfig = {
+        ...(existingRow?.config || {}),
+        order_flow: newFlow,
+      };
+
+      if (existingRow?.id) {
+        const { error: updErr } = await supabase
+          .from("business_module_configs")
+          .update({
+            config: mergedConfig,
+            status: "active",
+          })
+          .eq("id", existingRow.id);
+        if (updErr) throw updErr;
+      } else {
+        let featId = businessFeatures.find(
+          (f) => normalizeKey(f.feature_id) === "table_ordering"
+        )?.feature_id;
+        if (!featId) {
+          const { data: fc } = await supabase
+            .from("feature_catalog")
+            .select("id")
+            .eq("feature_key", "table_ordering")
+            .maybeSingle();
+          if (fc?.id) featId = fc.id;
+        }
+        if (featId) {
+          const { error: insErr } = await supabase
+            .from("business_module_configs")
+            .insert({
+              business_id: business.id,
+              feature_id: featId,
+              module_key: "table_ordering",
+              config: mergedConfig,
+              status: "active",
+            });
+          if (insErr) throw insErr;
+        }
+      }
+
+      setModuleConfigs((current) => {
+        const found = current.some((m) => normalizeKey(m.module_key) === "table_ordering");
+        if (found) {
+          return current.map((m) =>
+            normalizeKey(m.module_key) === "table_ordering"
+              ? { ...m, config: { ...(m.config || {}), order_flow: newFlow } }
+              : m
+          );
+        }
+        return [
+          ...current,
+          {
+            id: existingRow?.id || "temp-table-ordering",
+            module_key: "table_ordering",
+            config: mergedConfig,
+            business_id: business.id,
+            feature_id: "",
+          } as any,
+        ];
+      });
+    } catch (err: any) {
+      console.error("Failed to save table ordering flow config:", err);
+    }
+  };
+
+  const nonCancelledOrders = useMemo(() => {
+    return orders.filter((order) => order.status !== "cancelled");
+  }, [orders]);
+
   const today = new Date();
 
   const todayOrders = useMemo(() => {
     return orders.filter((order) => {
+      if (order.status === "cancelled") return false;
       const date = new Date(order.created_at);
 
       return (
@@ -1657,6 +1870,17 @@ export default function ClientPortalPage() {
           </div>
 
           <div className="topbar-right">
+            {hasOrders && (
+              <button
+                type="button"
+                className={`sound-toggle-btn ${soundAlertsEnabled ? "active" : ""}`}
+                onClick={toggleSoundAlerts}
+                title={soundAlertsEnabled ? "Audio alerts enabled (tap to mute)" : "Enable audio alerts"}
+              >
+                <span>{soundAlertsEnabled ? "🔔 Alerts ON" : "🔕 Alerts OFF"}</span>
+              </button>
+            )}
+
             <button
               className="icon-button"
               onClick={refresh}
@@ -1678,6 +1902,57 @@ export default function ClientPortalPage() {
             </div>
           </div>
         </header>
+
+        {!soundAlertsEnabled && hasOrders && (
+          <div className="alerts-banner" role="region" aria-label="Order sound alerts">
+            <div className="alerts-banner-content">
+              <span className="alerts-banner-icon">🔔</span>
+              <span>Turn on audio alerts to hear a chime whenever a customer places an order from their table.</span>
+            </div>
+            <button
+              type="button"
+              className="alerts-banner-btn"
+              onClick={enableSoundAlerts}
+            >
+              Turn on alerts
+            </button>
+          </div>
+        )}
+
+        {newOrderToast && (
+          <aside
+            className="new-order-toast"
+            role="status"
+            aria-live="polite"
+            onClick={() => {
+              setActivePage("orders");
+              setNewOrderToast(null);
+            }}
+          >
+            <div className="new-order-toast-header">
+              <div className="new-order-toast-title">
+                <span className="toast-dot" />
+                <strong>NEW TABLE ORDER!</strong>
+              </div>
+              <button
+                type="button"
+                className="toast-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setNewOrderToast(null);
+                }}
+                aria-label="Dismiss alert"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="new-order-toast-body">
+              <div className="toast-table">Table {newOrderToast.table_number || "—"}</div>
+              <div className="toast-total">₹{Number(newOrderToast.total || 0).toFixed(0)}</div>
+            </div>
+            <div className="toast-hint">Tap to view orders ›</div>
+          </aside>
+        )}
 
         <div className="content">
           {activePage === "overview" && (
@@ -1710,6 +1985,8 @@ export default function ClientPortalPage() {
               updateOrderStatus={updateOrderStatus}
               updatingOrderId={updatingOrderId}
               hasTableOrdering={hasOrders}
+              orderFlow={orderFlow}
+              onToggleOrderFlow={handleSaveOrderFlow}
             />
           )}
 
@@ -1746,6 +2023,8 @@ export default function ClientPortalPage() {
               updatingOrderId={
                 updatingOrderId
               }
+              orderFlow={orderFlow}
+              onToggleOrderFlow={handleSaveOrderFlow}
             />
           )}
 
@@ -1840,6 +2119,8 @@ export default function ClientPortalPage() {
               moduleConfigs={moduleConfigs}
               features={features}
               onUpdateBusiness={(updated) => setBusiness(updated)}
+              orderFlow={orderFlow}
+              onSaveOrderFlow={handleSaveOrderFlow}
             />
           )}
         </div>
@@ -2398,6 +2679,169 @@ export default function ClientPortalPage() {
           margin: 0 auto;
         }
 
+        .sound-toggle-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 14px;
+          border-radius: 10px;
+          font-size: 12px;
+          font-weight: 700;
+          border: 1px solid #cbd5e1;
+          background: #f8fafc;
+          color: #475569;
+          cursor: pointer;
+          font-family: inherit;
+          transition: all 0.15s ease;
+        }
+
+        .sound-toggle-btn.active {
+          background: #ecfdf5;
+          border-color: #6ee7b7;
+          color: #065f46;
+        }
+
+        .alerts-banner {
+          background: #eff6ff;
+          border-bottom: 1px solid #bfdbfe;
+          padding: 10px 32px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          font-size: 13px;
+          color: #1e40af;
+        }
+
+        .alerts-banner-content {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .alerts-banner-icon {
+          font-size: 16px;
+        }
+
+        .alerts-banner-btn {
+          padding: 6px 14px;
+          background: #2563eb;
+          color: white;
+          border: none;
+          border-radius: 8px;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          white-space: nowrap;
+          font-family: inherit;
+          transition: background 0.15s ease;
+        }
+
+        .alerts-banner-btn:hover {
+          background: #1d4ed8;
+        }
+
+        .new-order-toast {
+          position: fixed;
+          bottom: 24px;
+          right: 24px;
+          z-index: 99999;
+          background: #0f172a;
+          color: #ffffff;
+          padding: 16px 20px;
+          border-radius: 14px;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          min-width: 280px;
+          border: 1px solid #334155;
+          animation: slideInToast 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes slideInToast {
+          from {
+            transform: translateY(20px);
+            opacity: 0;
+          }
+          to {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
+
+        .new-order-toast-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 11px;
+          letter-spacing: 0.06em;
+          color: #94a3b8;
+        }
+
+        .new-order-toast-title {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          color: #38bdf8;
+        }
+
+        .toast-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background: #38bdf8;
+          box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.3);
+        }
+
+        .toast-close {
+          background: transparent;
+          border: none;
+          color: #94a3b8;
+          cursor: pointer;
+          font-size: 14px;
+          padding: 2px;
+        }
+
+        .toast-close:hover {
+          color: #ffffff;
+        }
+
+        .new-order-toast-body {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          padding: 4px 0;
+        }
+
+        .toast-table {
+          font-size: 20px;
+          font-weight: 800;
+          color: #f8fafc;
+        }
+
+        .toast-total {
+          font-size: 20px;
+          font-weight: 800;
+          color: #4ade80;
+          font-family: monospace;
+        }
+
+        .toast-hint {
+          font-size: 11px;
+          color: #94a3b8;
+          font-weight: 600;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .new-order-toast,
+          .sound-toggle-btn {
+            animation: none !important;
+            transition: none !important;
+          }
+        }
+
         .hamburger {
           display: none;
           width: 42px;
@@ -2558,6 +3002,8 @@ function Overview({
   appointments,
   todayAppointments,
   pendingAppointments,
+  orderFlow = "simple",
+  onToggleOrderFlow,
 }: {
   business: Business;
   todayRevenue: number;
@@ -2580,6 +3026,8 @@ function Overview({
   appointments: Appointment[];
   todayAppointments: Appointment[];
   pendingAppointments: Appointment[];
+  orderFlow?: "simple" | "steps";
+  onToggleOrderFlow?: (mode: "simple" | "steps") => Promise<void> | void;
 }) {
   const services = [
     hasOrders && {
@@ -2679,6 +3127,8 @@ function Overview({
           orderItems={orderItems}
           updateOrderStatus={updateOrderStatus}
           updatingOrderId={updatingOrderId}
+          orderFlow={orderFlow}
+          onToggleOrderFlow={onToggleOrderFlow}
         />
       )}
 
@@ -2686,7 +3136,7 @@ function Overview({
         <StatCard
           label="Today's revenue"
           value={formatCurrency(todayRevenue)}
-          note={`${todayOrders.length} orders today`}
+          note={`${todayOrders.length} orders today (excluding cancelled)`}
           icon="₹"
         />
 
@@ -2703,8 +3153,8 @@ function Overview({
 
         <StatCard
           label="All orders"
-          value={String(orders.length)}
-          note="Recent TAPX orders"
+          value={String(orders.filter((o) => o.status !== "cancelled").length)}
+          note="Active & completed orders"
           icon="◉"
         />
 
@@ -4305,6 +4755,8 @@ function OrdersPage({
   setSelectedOrder,
   updateOrderStatus,
   updatingOrderId,
+  orderFlow = "simple",
+  onToggleOrderFlow,
 }: {
   orders: Order[];
   orderItems: OrderItem[];
@@ -4317,7 +4769,69 @@ function OrdersPage({
     status: string
   ) => Promise<void>;
   updatingOrderId: string | null;
+  orderFlow?: "simple" | "steps";
+  onToggleOrderFlow?: (mode: "simple" | "steps") => Promise<void> | void;
 }) {
+  const [filter, setFilter] = useState<"active" | "all" | "completed" | "cancelled">("active");
+  const [, setTick] = useState(0);
+
+  // Re-render every 30s to update elapsed minutes and late order alerts
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const nonCancelledOrders = useMemo(
+    () => orders.filter((o) => o.status !== "cancelled"),
+    [orders]
+  );
+
+  const activeOrders = useMemo(() => {
+    return orders
+      .filter((o) => ["pending", "accepted", "preparing", "ready", "served"].includes(o.status))
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()); // FIFO: Oldest active first
+  }, [orders]);
+
+  const completedOrders = useMemo(() => {
+    return orders
+      .filter((o) => ["completed"].includes(o.status))
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [orders]);
+
+  const cancelledOrders = useMemo(() => {
+    return orders
+      .filter((o) => o.status === "cancelled")
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }, [orders]);
+
+  const displayedOrders = useMemo(() => {
+    switch (filter) {
+      case "active":
+        return activeOrders;
+      case "completed":
+        return completedOrders;
+      case "cancelled":
+        return cancelledOrders;
+      case "all":
+      default:
+        return [
+          ...activeOrders,
+          ...orders.filter((o) => !["pending", "accepted", "preparing", "ready", "served"].includes(o.status)),
+        ];
+    }
+  }, [filter, activeOrders, completedOrders, cancelledOrders, orders]);
+
+  const handleSimpleDone = async (orderId: string) => {
+    await updateOrderStatus(orderId, "completed");
+  };
+
+  const handleCancel = async (orderId: string) => {
+    if (typeof window !== "undefined" && !window.confirm("Are you sure you want to cancel this order?")) {
+      return;
+    }
+    await updateOrderStatus(orderId, "cancelled");
+  };
+
   return (
     <div className="orders-page">
       <div className="page-intro">
@@ -4329,156 +4843,271 @@ function OrdersPage({
           <h1>Orders</h1>
 
           <p>
-            Manage customer orders from your TAPX
-            experience.
+            Manage live table and kitchen orders with instant ticket actions. Oldest active orders appear first.
           </p>
         </div>
 
-        <div className="orders-count">
-          {orders.length} total orders
+        <div className="intro-actions">
+          {onToggleOrderFlow && (
+            <div className="flow-selector">
+              <span className="flow-label">Order flow:</span>
+              <div className="flow-buttons">
+                <button
+                  type="button"
+                  className={`flow-btn ${orderFlow === "simple" ? "active" : ""}`}
+                  onClick={() => onToggleOrderFlow("simple")}
+                  title="Simple flow: one-tap Done + Cancel"
+                >
+                  Simple (Done)
+                </button>
+                <button
+                  type="button"
+                  className={`flow-btn ${orderFlow === "steps" ? "active" : ""}`}
+                  onClick={() => onToggleOrderFlow("steps")}
+                  title="Steps flow: Accept → Prep → Ready → Served + Cancel"
+                >
+                  Steps
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="orders-count">
+            {nonCancelledOrders.length} orders (excluding cancelled)
+          </div>
         </div>
       </div>
 
       <div className="order-stats">
         <MiniStat
-          label="Pending"
-          value={
-            orders.filter(
-              (o) => o.status === "pending"
-            ).length
-          }
-        />
-
-        <MiniStat
-          label="Active"
-          value={
-            orders.filter((o) =>
-              [
-                "accepted",
-                "preparing",
-                "ready",
-              ].includes(o.status)
-            ).length
-          }
+          label="Active (Kitchen)"
+          value={activeOrders.length}
         />
 
         <MiniStat
           label="Completed"
-          value={
-            orders.filter((o) =>
-              [
-                "completed",
-                "served",
-              ].includes(o.status)
-            ).length
-          }
+          value={completedOrders.length}
+        />
+
+        <MiniStat
+          label="Cancelled"
+          value={cancelledOrders.length}
         />
       </div>
 
-      <div className="orders-table-wrap">
-        {orders.length === 0 ? (
-          <div className="orders-empty">
-            <div>▣</div>
-            <h3>No orders yet</h3>
-            <p>
-              Customer orders will appear here when
-              they order through your TAPX
-              experience.
-            </p>
-          </div>
-        ) : (
-          <div className="orders-table">
-            <div className="table-header">
-              <span>ORDER</span>
-              <span>CUSTOMER</span>
-              <span>TABLE</span>
-              <span>TIME</span>
-              <span>TOTAL</span>
-              <span>STATUS & ACTIONS</span>
-            </div>
+      <div className="order-filters-bar">
+        <button
+          type="button"
+          className={`filter-pill ${filter === "active" ? "active" : ""}`}
+          onClick={() => setFilter("active")}
+        >
+          Active ({activeOrders.length})
+        </button>
+        <button
+          type="button"
+          className={`filter-pill ${filter === "completed" ? "active" : ""}`}
+          onClick={() => setFilter("completed")}
+        >
+          Completed ({completedOrders.length})
+        </button>
+        <button
+          type="button"
+          className={`filter-pill ${filter === "cancelled" ? "active" : ""}`}
+          onClick={() => setFilter("cancelled")}
+        >
+          Cancelled ({cancelledOrders.length})
+        </button>
+        <button
+          type="button"
+          className={`filter-pill ${filter === "all" ? "active" : ""}`}
+          onClick={() => setFilter("all")}
+        >
+          All ({orders.length})
+        </button>
+      </div>
 
-            {orders.map((order) => {
-              const nextInfo = getNextOrderStatus(order.status);
-              return (
-                <div
-                  className="order-row"
-                  key={order.id}
-                  onClick={() =>
-                    setSelectedOrder(order)
-                  }
-                >
-                  <span>
-                    <strong>
-                      Order #{order.order_number || order.id.slice(0, 8)}
-                    </strong>
-                  </span>
+      {displayedOrders.length === 0 ? (
+        <div className="orders-empty">
+          <div>🍽️</div>
+          <h3>No {filter !== "all" ? filter : ""} orders</h3>
+          <p>
+            Customer orders from tables will appear here in real time.
+          </p>
+        </div>
+      ) : (
+        <div className="orders-grid">
+          {displayedOrders.map((order) => {
+            const items = orderItems.filter((i) => i.order_id === order.id);
+            const isUpdating = updatingOrderId === order.id;
 
-                  <span>
-                    {order.customer_name ||
-                      "Customer"}
-                  </span>
+            // Elapsed time and late alert threshold
+            const elapsedMs = Math.max(0, Date.now() - new Date(order.created_at).getTime());
+            const elapsedMinutes = Math.floor(elapsedMs / 60000);
+            const isLateAlert = elapsedMinutes >= LATE_ORDER_ALERT_MINUTES;
+            const isLateWarn = !isLateAlert && elapsedMinutes >= LATE_ORDER_WARN_MINUTES;
+            const isActive = ["pending", "accepted", "preparing", "ready", "served"].includes(order.status);
 
-                  <span>
-                    {order.table_number
-                      ? `Table ${order.table_number}`
-                      : "—"}
-                  </span>
+            const nextInfo = getNextOrderStatus(order.status);
+            const orderTimeStr = formatDateTime(order.created_at);
+            const cleanPhone = (order.customer_phone || "").replace(/\D/g, "");
+            const whatsappUrl = cleanPhone ? `https://wa.me/${cleanPhone}` : null;
 
-                  <span>
-                    {formatDateTime(
-                      order.created_at
+            let cardBorder = "#e2e8f0";
+            let cardBg = "#ffffff";
+            if (isActive) {
+              if (isLateAlert) {
+                cardBorder = "#ef4444";
+                cardBg = "#fef2f2";
+              } else if (isLateWarn) {
+                cardBorder = "#f59e0b";
+                cardBg = "#fffbeb";
+              } else if (order.status === "pending") {
+                cardBorder = "#fbbf24";
+              }
+            }
+
+            return (
+              <div
+                key={order.id}
+                className="owner-order-card"
+                style={{ borderColor: cardBorder, background: cardBg }}
+                onClick={() => setSelectedOrder(order)}
+              >
+                {/* CARD HEADER */}
+                <div className="card-top">
+                  <div>
+                    <div className="card-table-pill">
+                      {order.table_number ? `Table ${order.table_number}` : "No Table"}
+                    </div>
+                    <div className="card-order-num">
+                      #{order.order_number || order.id.slice(0, 8)}
+                    </div>
+                  </div>
+
+                  <div className="card-badges">
+                    <StatusBadge status={order.status} />
+                    {isActive && isLateAlert && (
+                      <span className="late-pill alert">🔴 {elapsedMinutes}m late</span>
                     )}
-                  </span>
+                    {isActive && isLateWarn && (
+                      <span className="late-pill warn">🟠 {elapsedMinutes}m late</span>
+                    )}
+                  </div>
+                </div>
 
-                  <span>
-                    {formatCurrency(order.total)}
-                  </span>
+                {/* TIMING & CUSTOMER */}
+                <div className="card-meta">
+                  <div className="card-timing">
+                    <span>🕒 {orderTimeStr}</span>
+                    <strong className="elapsed-text">({elapsedMinutes}m elapsed)</strong>
+                  </div>
 
-                  <span
-                    className="order-row-actions"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <StatusBadge
-                      status={order.status}
-                    />
+                  <div className="card-customer">
+                    <span>👤 {order.customer_name || "Customer"}</span>
+                    {whatsappUrl ? (
+                      <a
+                        href={whatsappUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="customer-whatsapp-link"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        💬 {order.customer_phone}
+                      </a>
+                    ) : order.customer_phone ? (
+                      <span className="customer-phone-text">📞 {order.customer_phone}</span>
+                    ) : null}
+                  </div>
+                </div>
 
-                    {nextInfo && (
+                {/* ITEMS LIST WITH QUANTITY & SPECIAL REQUEST */}
+                <div className="card-items-box">
+                  {items.length === 0 ? (
+                    <div className="card-no-items">Loading items...</div>
+                  ) : (
+                    items.map((item) => (
+                      <div key={item.id} className="card-item-row">
+                        <div className="item-name-col">
+                          <div>
+                            <span className="item-qty">{item.quantity}×</span>
+                            <span className="item-name">{item.item_name}</span>
+                          </div>
+                          {(item.special_request || (item as any).notes) && (
+                            <div className="item-request-callout">
+                              <strong>Request:</strong> {item.special_request || (item as any).notes}
+                            </div>
+                          )}
+                        </div>
+                        <span className="item-total">
+                          {formatCurrency(item.line_total || item.unit_price * item.quantity)}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* TOTAL */}
+                <div className="card-total-row">
+                  <span className="total-label">Total Amount</span>
+                  <span className="total-value">{formatCurrency(order.total)}</span>
+                </div>
+
+                {/* ACTION BUTTONS (TAP-FRIENDLY) */}
+                <div className="card-actions" onClick={(e) => e.stopPropagation()}>
+                  {isActive && (
+                    <>
+                      {orderFlow === "simple" ? (
+                        <button
+                          type="button"
+                          className="btn-action-primary done-btn"
+                          disabled={isUpdating}
+                          onClick={() => handleSimpleDone(order.id)}
+                        >
+                          {isUpdating ? "Updating..." : "✓ Done"}
+                        </button>
+                      ) : (
+                        nextInfo && (
+                          <button
+                            type="button"
+                            className="btn-action-primary step-btn"
+                            disabled={isUpdating}
+                            onClick={() => updateOrderStatus(order.id, nextInfo.nextStatus)}
+                          >
+                            {isUpdating ? "Updating..." : nextInfo.label}
+                          </button>
+                        )
+                      )}
+
                       <button
                         type="button"
-                        className="quick-status-btn"
-                        disabled={updatingOrderId === order.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          updateOrderStatus(order.id, nextInfo.nextStatus);
-                        }}
+                        className="btn-action-cancel"
+                        disabled={isUpdating}
+                        onClick={() => handleCancel(order.id)}
                       >
-                        {nextInfo.label}
+                        Cancel
                       </button>
-                    )}
+                    </>
+                  )}
 
-                    <select
-                      className="status-select-inline"
-                      value={order.status}
-                      disabled={updatingOrderId === order.id}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        updateOrderStatus(order.id, e.target.value);
-                      }}
-                    >
-                      {ORDER_STATUSES.map((status) => (
-                        <option value={status} key={status}>
-                          {prettyName(status)}
-                        </option>
-                      ))}
-                    </select>
-                  </span>
+                  <select
+                    className="status-select-inline"
+                    value={order.status}
+                    disabled={isUpdating}
+                    onChange={(e) => updateOrderStatus(order.id, e.target.value)}
+                    aria-label="Change status manually"
+                  >
+                    {ORDER_STATUSES.map((status) => (
+                      <option value={status} key={status}>
+                        {prettyName(status)}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {selectedOrder && (
         <div
@@ -4633,6 +5262,342 @@ function OrdersPage({
           align-items: flex-end;
           gap: 20px;
           margin-bottom: 22px;
+          flex-wrap: wrap;
+        }
+
+        .intro-actions {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+
+        .flow-selector {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          background: white;
+          border: 1px solid #e5e8ec;
+          padding: 6px 12px;
+          border-radius: 10px;
+        }
+
+        .flow-label {
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          color: #64748b;
+        }
+
+        .flow-buttons {
+          display: inline-flex;
+          background: #f1f5f9;
+          border-radius: 6px;
+          padding: 2px;
+        }
+
+        .flow-btn {
+          border: none;
+          background: transparent;
+          color: #64748b;
+          padding: 4px 10px;
+          border-radius: 5px;
+          font-size: 11px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: inherit;
+          transition: all 0.15s ease;
+        }
+
+        .flow-btn.active {
+          background: #ffffff;
+          color: #0f172a;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+        }
+
+        .order-filters-bar {
+          display: flex;
+          gap: 8px;
+          margin-bottom: 18px;
+          flex-wrap: wrap;
+        }
+
+        .filter-pill {
+          padding: 7px 14px;
+          border-radius: 20px;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
+          color: #475569;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: inherit;
+          transition: all 0.15s ease;
+        }
+
+        .filter-pill.active {
+          background: #0f172a;
+          color: #ffffff;
+          border-color: #0f172a;
+        }
+
+        .orders-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+          gap: 18px;
+          margin-top: 14px;
+        }
+
+        .owner-order-card {
+          border: 2px solid;
+          border-radius: 16px;
+          padding: 18px;
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .owner-order-card:hover {
+          box-shadow: 0 6px 20px rgba(0, 0, 0, 0.07);
+        }
+
+        .card-top {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 8px;
+          padding-bottom: 12px;
+          border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+        }
+
+        .card-table-pill {
+          font-size: 22px;
+          font-weight: 850;
+          color: #0f172a;
+          letter-spacing: -0.02em;
+        }
+
+        .card-order-num {
+          font-size: 12px;
+          font-weight: 700;
+          font-family: monospace;
+          color: #64748b;
+          margin-top: 2px;
+        }
+
+        .card-badges {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 4px;
+        }
+
+        .late-pill {
+          padding: 3px 8px;
+          border-radius: 12px;
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 0.02em;
+        }
+
+        .late-pill.alert {
+          background: #fee2e2;
+          color: #b91c1c;
+          border: 1px solid #fca5a5;
+        }
+
+        .late-pill.warn {
+          background: #fef3c7;
+          color: #b45309;
+          border: 1px solid #fcd34d;
+        }
+
+        .card-meta {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          font-size: 12px;
+        }
+
+        .card-timing {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          color: #64748b;
+        }
+
+        .elapsed-text {
+          color: #0f172a;
+          font-weight: 700;
+        }
+
+        .card-customer {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          color: #334155;
+          font-weight: 600;
+        }
+
+        .customer-whatsapp-link {
+          color: #059669;
+          background: #ecfdf5;
+          padding: 2px 7px;
+          border-radius: 6px;
+          font-size: 11px;
+          font-weight: 700;
+          text-decoration: none;
+        }
+
+        .customer-phone-text {
+          color: #64748b;
+          font-size: 11px;
+        }
+
+        .card-items-box {
+          background: #f8fafc;
+          border-radius: 12px;
+          padding: 12px 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .card-no-items {
+          color: #94a3b8;
+          font-style: italic;
+          font-size: 12px;
+        }
+
+        .card-item-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 10px;
+        }
+
+        .item-name-col {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          flex: 1;
+        }
+
+        .item-qty {
+          font-weight: 850;
+          color: #0f172a;
+          margin-right: 6px;
+          font-size: 13px;
+        }
+
+        .item-name {
+          font-weight: 600;
+          color: #334155;
+          font-size: 13px;
+        }
+
+        .item-request-callout {
+          display: inline-block;
+          margin-top: 4px;
+          padding: 3px 8px;
+          background: #fef3c7;
+          border: 1px solid #fde68a;
+          border-radius: 6px;
+          color: #92400e;
+          font-size: 11px;
+          font-weight: 600;
+          line-height: 1.4;
+        }
+
+        .item-total {
+          font-weight: 700;
+          font-family: monospace;
+          color: #475569;
+          font-size: 13px;
+        }
+
+        .card-total-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding-top: 8px;
+          border-top: 1px solid rgba(0, 0, 0, 0.06);
+        }
+
+        .total-label {
+          font-size: 12px;
+          font-weight: 700;
+          color: #64748b;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .total-value {
+          font-size: 18px;
+          font-weight: 850;
+          color: #0f172a;
+        }
+
+        .card-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-top: 4px;
+          flex-wrap: wrap;
+        }
+
+        .btn-action-primary {
+          flex: 1;
+          padding: 11px 16px;
+          color: #ffffff;
+          border: none;
+          border-radius: 10px;
+          font-size: 14px;
+          font-weight: 750;
+          cursor: pointer;
+          font-family: inherit;
+          transition: opacity 0.15s ease;
+        }
+
+        .btn-action-primary.done-btn {
+          background: #16a34a;
+        }
+
+        .btn-action-primary.step-btn {
+          background: #2563eb;
+        }
+
+        .btn-action-primary:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .btn-action-cancel {
+          padding: 11px 16px;
+          background: #fff1f2;
+          color: #e11d48;
+          border: 1px solid #fecdd3;
+          border-radius: 10px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: inherit;
+          transition: all 0.15s ease;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .owner-order-card,
+          .btn-action-primary,
+          .btn-action-cancel,
+          .filter-pill,
+          .flow-btn {
+            animation: none !important;
+            transition: none !important;
+          }
         }
 
         .eyebrow {
@@ -5286,6 +6251,8 @@ function SettingsPage({
   moduleConfigs,
   features,
   onUpdateBusiness,
+  orderFlow = "simple",
+  onSaveOrderFlow,
 }: {
   business: Business;
   email: string;
@@ -5294,6 +6261,8 @@ function SettingsPage({
   moduleConfigs?: ModuleConfig[];
   features?: Feature[];
   onUpdateBusiness?: (updated: Business) => void;
+  orderFlow?: "simple" | "steps";
+  onSaveOrderFlow?: (mode: "simple" | "steps") => Promise<void> | void;
 }) {
   const [name, setName] = useState(business.name || "");
   const [category, setCategory] = useState(business.category || "custom");
@@ -6032,6 +7001,67 @@ function SettingsPage({
                     </span>
                   </button>
                 )}
+            </div>
+          </div>
+        )}
+
+        {/* PANEL 6: TABLE ORDERING FLOW */}
+        {hasDiningMenu && (
+          <div className="settings-panel" style={{ gridColumn: "1 / -1" }}>
+            <div className="settings-heading">
+              <div>
+                <h3>Table ordering flow</h3>
+                <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#64748b" }}>
+                  Choose how staff fulfill table orders from kitchen to customer.
+                </p>
+              </div>
+              <span>DINING OPERATIONS</span>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "14px", marginTop: "12px" }}>
+              <div
+                onClick={() => onSaveOrderFlow?.("simple")}
+                style={{
+                  padding: "16px",
+                  borderRadius: "12px",
+                  border: `2px solid ${orderFlow === "simple" ? "#16a34a" : "#e2e8f0"}`,
+                  background: orderFlow === "simple" ? "#f0fdf4" : "#ffffff",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <strong style={{ fontSize: "14px", color: orderFlow === "simple" ? "#15803d" : "#0f172a" }}>
+                    Simple Flow (Done + Cancel)
+                  </strong>
+                  {orderFlow === "simple" && <span style={{ color: "#16a34a", fontWeight: 800 }}>✓ Active</span>}
+                </div>
+                <p style={{ margin: "6px 0 0", fontSize: "12px", color: "#64748b", lineHeight: 1.4 }}>
+                  One-tap "Done" button advances order straight to completed. Ideal for fast-casual, cafes and quick bar orders.
+                </p>
+              </div>
+
+              <div
+                onClick={() => onSaveOrderFlow?.("steps")}
+                style={{
+                  padding: "16px",
+                  borderRadius: "12px",
+                  border: `2px solid ${orderFlow === "steps" ? "#2563eb" : "#e2e8f0"}`,
+                  background: orderFlow === "steps" ? "#eff6ff" : "#ffffff",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <strong style={{ fontSize: "14px", color: orderFlow === "steps" ? "#1d4ed8" : "#0f172a" }}>
+                    Steps Flow (Accept → Served)
+                  </strong>
+                  {orderFlow === "steps" && <span style={{ color: "#2563eb", fontWeight: 800 }}>✓ Active</span>}
+                </div>
+                <p style={{ margin: "6px 0 0", fontSize: "12px", color: "#64748b", lineHeight: 1.4 }}>
+                  Multi-stage buttons: Accept → Start prep → Mark ready → Served. Ideal for full-service dine-in restaurants.
+                </p>
+              </div>
             </div>
           </div>
         )}

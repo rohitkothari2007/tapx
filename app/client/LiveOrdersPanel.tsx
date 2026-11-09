@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
+export const LATE_ORDER_WARN_MINUTES = 10;
+export const LATE_ORDER_ALERT_MINUTES = 20;
+
 export type LiveOrder = {
   id: string;
   business_id: string;
@@ -34,6 +37,8 @@ type Props = {
   orderItems: LiveOrderItem[];
   updateOrderStatus: (id: string, status: string) => Promise<void>;
   updatingOrderId: string | null;
+  orderFlow?: "simple" | "steps";
+  onToggleOrderFlow?: (mode: "simple" | "steps") => Promise<void> | void;
 };
 
 const ACTIVE_STATUSES = ["pending", "accepted", "preparing", "ready", "served"];
@@ -48,6 +53,16 @@ function formatTimeAgo(isoString: string): string {
     const elapsedHours = Math.floor(elapsedMin / 60);
     if (elapsedHours < 24) return `${elapsedHours}h ago`;
     return `${Math.floor(elapsedHours / 24)}d ago`;
+  } catch {
+    return "";
+  }
+}
+
+function formatOrderTime(isoString: string): string {
+  try {
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
   } catch {
     return "";
   }
@@ -82,7 +97,7 @@ function getNextAction(status: string): { nextStatus: string; label: string; bg:
     case "pending":
       return { nextStatus: "accepted", label: "✓ Accept", bg: "#16a34a" };
     case "accepted":
-      return { nextStatus: "preparing", label: "🍳 Start preparing", bg: "#d97706" };
+      return { nextStatus: "preparing", label: "🍳 Start prep", bg: "#d97706" };
     case "preparing":
       return { nextStatus: "ready", label: "🔔 Mark ready", bg: "#2563eb" };
     case "ready":
@@ -117,6 +132,8 @@ export default function LiveOrdersPanel({
   orderItems,
   updateOrderStatus,
   updatingOrderId,
+  orderFlow = "simple",
+  onToggleOrderFlow,
 }: Props) {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [highlightedIds, setHighlightedIds] = useState<Record<string, boolean>>({});
@@ -149,13 +166,13 @@ export default function LiveOrdersPanel({
     });
   };
 
-  // Re-render every 30s to update elapsed time labels
+  // Re-render every 30s to update elapsed time labels & late warning colours
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 30000);
     return () => clearInterval(timer);
   }, []);
 
-  // Filter active orders & sort OLDEST first
+  // Filter active orders & sort OLDEST first (FIFO)
   const activeOrders = orders
     .filter((o) => ACTIVE_STATUSES.includes(o.status))
     .sort(
@@ -220,6 +237,10 @@ export default function LiveOrdersPanel({
     await updateOrderStatus(orderId, "cancelled");
   };
 
+  const handleSimpleDone = async (orderId: string) => {
+    await updateOrderStatus(orderId, "completed");
+  };
+
   return (
     <section style={styles.container} aria-label="Live table orders">
       <div style={styles.headerRow}>
@@ -236,20 +257,53 @@ export default function LiveOrdersPanel({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={toggleSound}
-          style={{
-            ...styles.soundButton,
-            background: soundEnabled ? "#ecfdf5" : "#f8fafc",
-            borderColor: soundEnabled ? "#6ee7b7" : "#cbd5e1",
-            color: soundEnabled ? "#065f46" : "#475569",
-          }}
-          title={soundEnabled ? "Disable order chime" : "Enable order chime"}
-        >
-          <span>{soundEnabled ? "🔔" : "🔕"}</span>
-          <span>Sound Alerts: {soundEnabled ? "ON" : "OFF"}</span>
-        </button>
+        <div style={styles.headerControls}>
+          {/* ORDER FLOW SWITCH */}
+          {onToggleOrderFlow && (
+            <div style={styles.flowToggleWrap}>
+              <span style={styles.flowToggleLabel}>Flow:</span>
+              <div style={styles.flowSegment}>
+                <button
+                  type="button"
+                  onClick={() => onToggleOrderFlow("simple")}
+                  style={{
+                    ...styles.flowBtn,
+                    ...(orderFlow === "simple" ? styles.flowBtnActive : styles.flowBtnInactive),
+                  }}
+                  title="Simple flow: one-tap Done + Cancel"
+                >
+                  Simple (Done)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleOrderFlow("steps")}
+                  style={{
+                    ...styles.flowBtn,
+                    ...(orderFlow === "steps" ? styles.flowBtnActive : styles.flowBtnInactive),
+                  }}
+                  title="Steps flow: Accept → Prep → Ready → Served + Cancel"
+                >
+                  Steps
+                </button>
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={toggleSound}
+            style={{
+              ...styles.soundButton,
+              background: soundEnabled ? "#ecfdf5" : "#f8fafc",
+              borderColor: soundEnabled ? "#6ee7b7" : "#cbd5e1",
+              color: soundEnabled ? "#065f46" : "#475569",
+            }}
+            title={soundEnabled ? "Disable order chime" : "Enable order chime"}
+          >
+            <span>{soundEnabled ? "🔔" : "🔕"}</span>
+            <span>Sound Alerts: {soundEnabled ? "ON" : "OFF"}</span>
+          </button>
+        </div>
       </div>
 
       {activeOrders.length === 0 ? (
@@ -270,29 +324,51 @@ export default function LiveOrdersPanel({
 
             const items = orderItems.filter((i) => i.order_id === order.id);
             const timeAgo = formatTimeAgo(order.created_at);
+            const orderTimeStr = formatOrderTime(order.created_at);
+
+            // Elapsed minutes & late alert threshold calculation
+            const elapsedMs = Math.max(0, Date.now() - new Date(order.created_at).getTime());
+            const elapsedMinutes = Math.floor(elapsedMs / 60000);
+            const isLateAlert = elapsedMinutes >= LATE_ORDER_ALERT_MINUTES;
+            const isLateWarn = !isLateAlert && elapsedMinutes >= LATE_ORDER_WARN_MINUTES;
 
             const cleanPhone = (order.customer_phone || "").replace(/\D/g, "");
             const whatsappUrl = cleanPhone
               ? `https://wa.me/${cleanPhone}`
               : null;
 
+            // Card border & background based on late urgency or highlight
+            let cardBorder = "#e2e8f0";
+            let cardBg = "#ffffff";
+            let cardShadow = "0 2px 8px rgba(0, 0, 0, 0.04)";
+
+            if (isHighlighted) {
+              cardBorder = "#3b82f6";
+              cardBg = "#f8faff";
+              cardShadow = "0 0 0 2px rgba(59, 130, 246, 0.4), 0 4px 12px rgba(0,0,0,0.06)";
+            } else if (isLateAlert) {
+              cardBorder = "#ef4444";
+              cardBg = "#fef2f2";
+              cardShadow = "0 0 0 1.5px rgba(239, 68, 68, 0.4), 0 4px 12px rgba(239, 68, 68, 0.08)";
+            } else if (isLateWarn) {
+              cardBorder = "#f59e0b";
+              cardBg = "#fffbeb";
+              cardShadow = "0 0 0 1.5px rgba(245, 158, 11, 0.35), 0 4px 12px rgba(245, 158, 11, 0.08)";
+            } else if (order.status === "pending") {
+              cardBorder = "#fbbf24";
+            }
+
             return (
               <div
                 key={order.id}
                 style={{
                   ...styles.orderCard,
-                  borderColor: isHighlighted
-                    ? "#3b82f6"
-                    : order.status === "pending"
-                    ? "#f59e0b"
-                    : "#e2e8f0",
-                  boxShadow: isHighlighted
-                    ? "0 0 0 2px rgba(59, 130, 246, 0.4), 0 4px 12px rgba(0,0,0,0.06)"
-                    : "0 2px 8px rgba(0, 0, 0, 0.04)",
-                  background: isHighlighted ? "#f8faff" : "#ffffff",
+                  borderColor: cardBorder,
+                  background: cardBg,
+                  boxShadow: cardShadow,
                 }}
               >
-                {/* CARD HEADER: TABLE & ORDER NUMBER */}
+                {/* CARD HEADER: TABLE & ORDER NUMBER & TIMING */}
                 <div style={styles.cardHeader}>
                   <div style={styles.tableBadgeContainer}>
                     <div style={styles.tableBadge}>
@@ -306,16 +382,33 @@ export default function LiveOrdersPanel({
                   </div>
 
                   <div style={styles.statusAndTiming}>
-                    <span
-                      style={{
-                        ...styles.statusBadge,
-                        background: statusBadge.bg,
-                        color: statusBadge.color,
-                      }}
-                    >
-                      {statusBadge.label}
-                    </span>
-                    <span style={styles.timeAgoText}>{timeAgo}</span>
+                    <div style={styles.badgeRow}>
+                      <span
+                        style={{
+                          ...styles.statusBadge,
+                          background: statusBadge.bg,
+                          color: statusBadge.color,
+                        }}
+                      >
+                        {statusBadge.label}
+                      </span>
+
+                      {/* LATE WARNING BADGE */}
+                      {isLateAlert ? (
+                        <span style={styles.lateAlertBadge}>
+                          🔴 {elapsedMinutes}m late
+                        </span>
+                      ) : isLateWarn ? (
+                        <span style={styles.lateWarnBadge}>
+                          🟠 {elapsedMinutes}m late
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div style={styles.timingDetails}>
+                      {orderTimeStr && <span style={styles.orderTimeText}>{orderTimeStr}</span>}
+                      <span style={styles.timeAgoText}>{timeAgo}</span>
+                    </div>
                   </div>
                 </div>
 
@@ -342,7 +435,7 @@ export default function LiveOrdersPanel({
                   ) : null}
                 </div>
 
-                {/* ITEMS LIST */}
+                {/* ITEMS LIST WITH QUANTITY & SPECIAL REQUEST */}
                 <div style={styles.itemsBox}>
                   {items.length === 0 ? (
                     <div style={styles.noItemsText}>Order items loading...</div>
@@ -350,10 +443,12 @@ export default function LiveOrdersPanel({
                     items.map((item) => (
                       <div key={item.id} style={styles.itemRow}>
                         <div style={styles.itemMain}>
-                          <span style={styles.itemQuantity}>
-                            {item.quantity}×
-                          </span>
-                          <span style={styles.itemName}>{item.item_name}</span>
+                          <div style={styles.itemTitleRow}>
+                            <span style={styles.itemQuantity}>
+                              {item.quantity}×
+                            </span>
+                            <span style={styles.itemName}>{item.item_name}</span>
+                          </div>
                           {(item.special_request || item.notes) && (
                             <div style={styles.itemNote}>
                               <strong style={styles.itemNoteLabel}>Request:</strong> {item.special_request || item.notes}
@@ -383,21 +478,39 @@ export default function LiveOrdersPanel({
                   </span>
                 </div>
 
-                {/* ACTION BUTTONS */}
+                {/* ACTION BUTTONS (SIMPLE OR STEPS FLOW) */}
                 <div style={styles.actionsRow}>
-                  {nextAction && (
+                  {orderFlow === "simple" ? (
+                    // SIMPLE FLOW: One big Done button + Cancel
                     <button
                       type="button"
                       disabled={isUpdating}
-                      onClick={() => updateOrderStatus(order.id, nextAction.nextStatus)}
+                      onClick={() => handleSimpleDone(order.id)}
                       style={{
                         ...styles.primaryActionButton,
-                        background: nextAction.bg,
+                        background: "#16a34a",
                         opacity: isUpdating ? 0.6 : 1,
                       }}
+                      title="Complete this order"
                     >
-                      {isUpdating ? "Updating..." : nextAction.label}
+                      {isUpdating ? "Updating..." : "✓ Done"}
                     </button>
+                  ) : (
+                    // STEPS FLOW: Sequential status button + Cancel
+                    nextAction && (
+                      <button
+                        type="button"
+                        disabled={isUpdating}
+                        onClick={() => updateOrderStatus(order.id, nextAction.nextStatus)}
+                        style={{
+                          ...styles.primaryActionButton,
+                          background: nextAction.bg,
+                          opacity: isUpdating ? 0.6 : 1,
+                        }}
+                      >
+                        {isUpdating ? "Updating..." : nextAction.label}
+                      </button>
+                    )
                   )}
 
                   <button
@@ -438,6 +551,52 @@ const styles: Record<string, CSSProperties> = {
   },
   titleGroup: {
     flex: "1 1 300px",
+  },
+  headerControls: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "10px",
+  },
+  flowToggleWrap: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    fontSize: "12px",
+    fontWeight: 700,
+    color: "#475569",
+  },
+  flowToggleLabel: {
+    fontSize: "11px",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    color: "#64748b",
+  },
+  flowSegment: {
+    display: "inline-flex",
+    background: "#f1f5f9",
+    borderRadius: "8px",
+    padding: "2px",
+    border: "1px solid #e2e8f0",
+  },
+  flowBtn: {
+    padding: "5px 10px",
+    borderRadius: "6px",
+    fontSize: "11px",
+    fontWeight: 700,
+    border: "none",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    transition: "all 0.15s ease",
+  },
+  flowBtnActive: {
+    background: "#ffffff",
+    color: "#0f172a",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+  },
+  flowBtnInactive: {
+    background: "transparent",
+    color: "#64748b",
   },
   liveIndicator: {
     display: "inline-flex",
@@ -513,12 +672,12 @@ const styles: Record<string, CSSProperties> = {
   },
   orderGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
     gap: "16px",
   },
   orderCard: {
     borderRadius: "14px",
-    border: "1.5px solid",
+    border: "2px solid",
     padding: "16px",
     display: "flex",
     flexDirection: "column",
@@ -531,7 +690,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-start",
     gap: "8px",
     paddingBottom: "10px",
-    borderBottom: "1px solid #f1f5f9",
+    borderBottom: "1px solid rgba(0,0,0,0.06)",
   },
   tableBadgeContainer: {
     display: "flex",
@@ -539,7 +698,7 @@ const styles: Record<string, CSSProperties> = {
     gap: "2px",
   },
   tableBadge: {
-    fontSize: "20px",
+    fontSize: "22px",
     fontWeight: 800,
     color: "#0f172a",
     letterSpacing: "-0.02em",
@@ -556,6 +715,11 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-end",
     gap: "4px",
   },
+  badgeRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+  },
   statusBadge: {
     padding: "3px 8px",
     borderRadius: "12px",
@@ -564,8 +728,39 @@ const styles: Record<string, CSSProperties> = {
     letterSpacing: "0.02em",
     lineHeight: 1.2,
   },
-  timeAgoText: {
+  lateAlertBadge: {
+    padding: "3px 8px",
+    borderRadius: "12px",
     fontSize: "11px",
+    fontWeight: 800,
+    background: "#fee2e2",
+    color: "#b91c1c",
+    border: "1px solid #fca5a5",
+    letterSpacing: "0.02em",
+    lineHeight: 1.2,
+  },
+  lateWarnBadge: {
+    padding: "3px 8px",
+    borderRadius: "12px",
+    fontSize: "11px",
+    fontWeight: 800,
+    background: "#fef3c7",
+    color: "#b45309",
+    border: "1px solid #fcd34d",
+    letterSpacing: "0.02em",
+    lineHeight: 1.2,
+  },
+  timingDetails: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    fontSize: "11px",
+  },
+  orderTimeText: {
+    color: "#64748b",
+    fontWeight: 600,
+  },
+  timeAgoText: {
     color: "#94a3b8",
     fontWeight: 600,
   },
@@ -573,7 +768,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    fontSize: "12px",
+    fontSize: "13px",
     gap: "8px",
   },
   customerName: {
@@ -603,7 +798,7 @@ const styles: Record<string, CSSProperties> = {
     padding: "10px 12px",
     display: "flex",
     flexDirection: "column",
-    gap: "6px",
+    gap: "8px",
     fontSize: "12px",
   },
   noItemsText: {
@@ -622,10 +817,15 @@ const styles: Record<string, CSSProperties> = {
     gap: "2px",
     flex: 1,
   },
+  itemTitleRow: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: "4px",
+  },
   itemQuantity: {
     fontWeight: 800,
     color: "#0f172a",
-    marginRight: "6px",
+    fontSize: "13px",
   },
   itemName: {
     fontWeight: 600,
@@ -634,10 +834,10 @@ const styles: Record<string, CSSProperties> = {
   itemNote: {
     display: "inline-block",
     marginTop: "3px",
-    padding: "2px 7px",
+    padding: "3px 8px",
     background: "#fef3c7",
     border: "1px solid #fde68a",
-    borderRadius: "5px",
+    borderRadius: "6px",
     color: "#92400e",
     fontSize: "11px",
     fontWeight: 600,
@@ -666,7 +866,7 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     paddingTop: "6px",
-    borderTop: "1px solid #f1f5f9",
+    borderTop: "1px solid rgba(0,0,0,0.06)",
   },
   totalLabel: {
     fontSize: "12px",
@@ -676,7 +876,7 @@ const styles: Record<string, CSSProperties> = {
     letterSpacing: "0.04em",
   },
   totalValue: {
-    fontSize: "16px",
+    fontSize: "18px",
     fontWeight: 800,
     color: "#0f172a",
   },
@@ -687,11 +887,11 @@ const styles: Record<string, CSSProperties> = {
   },
   primaryActionButton: {
     flex: 1,
-    padding: "9px 12px",
+    padding: "11px 16px",
     color: "#ffffff",
     border: "none",
-    borderRadius: "8px",
-    fontSize: "12px",
+    borderRadius: "10px",
+    fontSize: "14px",
     fontWeight: 700,
     cursor: "pointer",
     fontFamily: "inherit",
@@ -699,12 +899,12 @@ const styles: Record<string, CSSProperties> = {
     transition: "background 0.15s ease",
   },
   cancelButton: {
-    padding: "9px 12px",
+    padding: "11px 16px",
     background: "#fff1f2",
     color: "#e11d48",
     border: "1px solid #fecdd3",
-    borderRadius: "8px",
-    fontSize: "12px",
+    borderRadius: "10px",
+    fontSize: "13px",
     fontWeight: 700,
     cursor: "pointer",
     fontFamily: "inherit",
