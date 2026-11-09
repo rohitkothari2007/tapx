@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { supabase } from "../lib/supabase";
 import { parseStandTableNumber } from "../lib/tableNumber";
 import { WhatsAppIcon } from "./BrandIcons";
@@ -371,6 +371,18 @@ export default function RestaurantExperience({
   const [searchQuery, setSearchQuery] = useState("");
   const [activeCategoryId, setActiveCategoryId] = useState<string>("");
   const railNavRef = useRef<HTMLElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const searchBarRef = useRef<HTMLDivElement | null>(null);
+
+  // Dynamic sticky header metrics
+  const [stickyMetrics, setStickyMetrics] = useState({
+    headerTop: 0,
+    stickyOffset: 124,
+  });
+
+  // Flag to suppress scroll spy flickering during smooth scroll triggered by category tap
+  const isClickScrollingRef = useRef(false);
+  const clickScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Stand table number detection
   const standTableNum = useMemo(
@@ -634,30 +646,127 @@ export default function RestaurantExperience({
     }
   }, [groupedCategories, activeCategoryId]);
 
-  // Scroll to category section smoothly
+  // Find the real scrolling container (layerOverlay in DiningLayerWrapper, or window)
+  const getScrollContainer = useCallback((): HTMLElement | Window => {
+    let parent = rootRef.current?.parentElement;
+    while (parent && parent !== document.body && parent !== document.documentElement) {
+      const style = window.getComputedStyle(parent);
+      if (style.overflowY === "auto" || style.overflowY === "scroll") {
+        return parent;
+      }
+      parent = parent.parentElement;
+    }
+    return window;
+  }, []);
+
+  // Dynamically measure sticky header heights based on actual DOM elements
+  const measureStickyMetrics = useCallback(() => {
+    if (typeof window === "undefined" || !rootRef.current) return;
+
+    const container = getScrollContainer();
+    let topOffset = 0;
+
+    if (container instanceof HTMLElement) {
+      // In DiningLayerWrapper: container has layerHeader (Back button) at top: 0
+      const prevSibling = rootRef.current.parentElement?.previousElementSibling as HTMLElement | null;
+      if (prevSibling && prevSibling.offsetHeight > 0) {
+        topOffset = prevSibling.offsetHeight;
+      }
+    } else {
+      // In standalone window mode: topHeader sits at top
+      const topHeader = rootRef.current.querySelector<HTMLElement>("header");
+      if (topHeader && topHeader.offsetHeight > 0) {
+        topOffset = topHeader.offsetHeight;
+      }
+    }
+
+    const searchBarH = searchBarRef.current?.offsetHeight || 56;
+    const totalOffset = topOffset + searchBarH;
+
+    setStickyMetrics({
+      headerTop: topOffset,
+      stickyOffset: totalOffset > 0 ? totalOffset : 124,
+    });
+  }, [getScrollContainer]);
+
+  useEffect(() => {
+    measureStickyMetrics();
+    window.addEventListener("resize", measureStickyMetrics);
+    return () => window.removeEventListener("resize", measureStickyMetrics);
+  }, [measureStickyMetrics]);
+
+  // Scroll to category section smoothly on the real scroll container
   const scrollToCategory = (catId: string) => {
     setActiveCategoryId(catId);
+
+    // Suppress scroll spy updates during programmatic smooth scroll to prevent category flickering
+    isClickScrollingRef.current = true;
+    if (clickScrollTimeoutRef.current) {
+      clearTimeout(clickScrollTimeoutRef.current);
+    }
+    clickScrollTimeoutRef.current = setTimeout(() => {
+      isClickScrollingRef.current = false;
+    }, 800);
+
+    const container = getScrollContainer();
     const prefersReduced =
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const behavior: ScrollBehavior = prefersReduced ? "auto" : "smooth";
 
     if (catId === "all") {
-      window.scrollTo({ top: 0, behavior });
+      if (container instanceof HTMLElement) {
+        container.scrollTo({ top: 0, behavior });
+      } else {
+        window.scrollTo({ top: 0, behavior });
+      }
       return;
     }
+
     const elem = document.getElementById(`cat-section-${catId}`);
-    if (elem) {
-      const yOffset = -124;
-      const y = elem.getBoundingClientRect().top + window.pageYOffset + yOffset;
-      window.scrollTo({ top: Math.max(0, y), behavior });
+    if (!elem) return;
+
+    if (container instanceof HTMLElement) {
+      const containerRect = container.getBoundingClientRect();
+      const elemRect = elem.getBoundingClientRect();
+      const targetTop =
+        container.scrollTop + (elemRect.top - containerRect.top) - (stickyMetrics.stickyOffset + 8);
+      container.scrollTo({ top: Math.max(0, targetTop), behavior });
+    } else {
+      const elemRect = elem.getBoundingClientRect();
+      const targetTop =
+        window.scrollY + elemRect.top - (stickyMetrics.stickyOffset + 8);
+      window.scrollTo({ top: Math.max(0, targetTop), behavior });
     }
   };
 
-  // Throttled scroll spy to highlight active category in rail / chips
+  // Release scroll-lock if user manually wheels, touches or clicks during smooth scroll
   useEffect(() => {
+    const container = getScrollContainer();
+    const target = container instanceof HTMLElement ? container : window;
+    const unlock = () => {
+      isClickScrollingRef.current = false;
+    };
+
+    target.addEventListener("wheel", unlock, { passive: true });
+    target.addEventListener("touchstart", unlock, { passive: true });
+    target.addEventListener("pointerdown", unlock, { passive: true });
+
+    return () => {
+      target.removeEventListener("wheel", unlock);
+      target.removeEventListener("touchstart", unlock);
+      target.removeEventListener("pointerdown", unlock);
+    };
+  }, [getScrollContainer]);
+
+  // Throttled scroll spy on the REAL scroll container
+  useEffect(() => {
+    const container = getScrollContainer();
     let ticking = false;
+
     const handleScroll = () => {
+      if (isClickScrollingRef.current) return;
+
       if (!ticking) {
         window.requestAnimationFrame(() => {
           if (groupedCategories.length === 0) {
@@ -665,33 +774,48 @@ export default function RestaurantExperience({
             return;
           }
 
-          if (MENU_CATEGORY_NAV === "chips" && window.scrollY < 80) {
+          const currentScroll =
+            container instanceof HTMLElement
+              ? container.scrollTop
+              : window.scrollY;
+
+          const maxScroll =
+            container instanceof HTMLElement
+              ? container.scrollHeight - container.clientHeight
+              : document.documentElement.scrollHeight - window.innerHeight;
+
+          if (MENU_CATEGORY_NAV === "chips" && currentScroll < 80) {
             setActiveCategoryId("all");
             ticking = false;
             return;
           }
 
-          if (window.scrollY < 40) {
+          if (currentScroll < 40) {
             setActiveCategoryId(groupedCategories[0].cat.id);
             ticking = false;
             return;
           }
 
-          const nearBottom =
-            window.innerHeight + window.scrollY >=
-            document.documentElement.scrollHeight - 30;
-          if (nearBottom) {
+          // Near bottom of list
+          if (maxScroll > 0 && currentScroll >= maxScroll - 30) {
             setActiveCategoryId(groupedCategories[groupedCategories.length - 1].cat.id);
             ticking = false;
             return;
           }
+
+          const containerTop =
+            container instanceof HTMLElement
+              ? container.getBoundingClientRect().top
+              : 0;
+
+          const threshold = containerTop + stickyMetrics.stickyOffset + 24;
 
           for (let i = groupedCategories.length - 1; i >= 0; i--) {
             const grp = groupedCategories[i];
             const elem = document.getElementById(`cat-section-${grp.cat.id}`);
             if (elem) {
               const rect = elem.getBoundingClientRect();
-              if (rect.top <= 140) {
+              if (rect.top <= threshold) {
                 setActiveCategoryId(grp.cat.id);
                 break;
               }
@@ -703,9 +827,10 @@ export default function RestaurantExperience({
       }
     };
 
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, [groupedCategories]);
+    const target = container instanceof HTMLElement ? container : window;
+    target.addEventListener("scroll", handleScroll, { passive: true });
+    return () => target.removeEventListener("scroll", handleScroll);
+  }, [groupedCategories, getScrollContainer, stickyMetrics.stickyOffset]);
 
   // Keep active rail category button visible in scrollable rail
   useEffect(() => {
@@ -913,7 +1038,7 @@ export default function RestaurantExperience({
   };
 
   return (
-    <div className={menuFontClassNames} style={styles.container}>
+    <div ref={rootRef} className={menuFontClassNames} style={styles.container}>
       {/* Inject Design System CSS Keyframes, CSS variables, and overrides */}
       <style dangerouslySetInnerHTML={{ __html: MENU_THEME_GLOBAL_CSS }} />
 
@@ -982,7 +1107,13 @@ export default function RestaurantExperience({
       {activeTab === "menu" && (
         <div style={styles.menuTabContainer}>
           {/* SEARCH BAR (Quiet pill, sticky under header) */}
-          <div style={styles.searchBarWrapper}>
+          <div
+            ref={searchBarRef}
+            style={{
+              ...styles.searchBarWrapper,
+              top: `${stickyMetrics.headerTop}px`,
+            }}
+          >
             <div style={styles.searchInputBox}>
               <span style={styles.searchIcon}>🔍</span>
               <input
@@ -1046,7 +1177,16 @@ export default function RestaurantExperience({
           <div style={styles.menuBodyRow}>
             {/* LEFT RAIL (Categories) - Only shown in rail mode when >1 categories exist */}
             {MENU_CATEGORY_NAV === "rail" && groupedCategories.length > 1 && (
-              <nav aria-label="Categories" className="menu-rail-nav" ref={railNavRef} style={styles.railNav}>
+              <nav
+                aria-label="Categories"
+                className="menu-rail-nav"
+                ref={railNavRef}
+                style={{
+                  ...styles.railNav,
+                  top: `${stickyMetrics.stickyOffset + 6}px`,
+                  maxHeight: `calc(100vh - ${stickyMetrics.stickyOffset + 16}px)`,
+                }}
+              >
                 {groupedCategories.map((group) => {
                   const isActive = activeCategoryId === group.cat.id;
                   return (
@@ -1127,7 +1267,10 @@ export default function RestaurantExperience({
                   <section
                     key={group.cat.id}
                     id={`cat-section-${group.cat.id}`}
-                    style={styles.categorySection}
+                    style={{
+                      ...styles.categorySection,
+                      scrollMarginTop: `${stickyMetrics.stickyOffset + 8}px`,
+                    }}
                   >
                     <div style={styles.sectionHeaderRow}>
                       <h2 style={styles.sectionCategoryTitle}>{formatDisplayName(group.cat.name)}</h2>
@@ -1386,6 +1529,17 @@ export default function RestaurantExperience({
                     )}
                   </section>
                 ))
+              )}
+
+              {/* Bottom spacer so the last category can scroll all the way to the top */}
+              {groupedCategories.length > 0 && (
+                <div
+                  style={{
+                    minHeight: `calc(100vh - ${stickyMetrics.stickyOffset + 80}px)`,
+                    pointerEvents: "none",
+                  }}
+                  aria-hidden="true"
+                />
               )}
             </div>
           </div>
