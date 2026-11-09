@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
-import { parseStandTableNumber } from "../lib/tableNumber";
+import { parseStandTableNumber, resolveSessionTableNumber } from "../lib/tableNumber";
 import { WhatsAppIcon } from "./BrandIcons";
 import UpiPaymentModal from "./UpiPaymentModal";
 import { MENU_TOKENS, MENU_THEME_GLOBAL_CSS, formatDisplayName } from "../lib/menuTheme";
@@ -385,11 +385,26 @@ export default function RestaurantExperience({
   const isClickScrollingRef = useRef(false);
   const clickScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Stand table number detection
-  const standTableNum = useMemo(
-    () => parseStandTableNumber(device.label, device.location),
-    [device.label, device.location]
-  );
+  // Read URL query parameter for ?table=N
+  const [urlTableParam, setUrlTableParam] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setUrlTableParam(params.get("table"));
+    }
+  }, []);
+
+  // Table number resolution in order: (a) stand, (b) ?table=N or session, (c) null
+  const resolvedTableNum = useMemo(() => {
+    return resolveSessionTableNumber({
+      standLabel: device.label,
+      standLocation: device.location,
+      queryTableParam: urlTableParam,
+      deviceCode: device.device_code,
+      tableCount,
+    });
+  }, [device.label, device.location, device.device_code, urlTableParam, tableCount]);
 
   // Cart state: keyed by composite lineId: `${itemId}::${special_request.trim()}`
   const [cart, setCart] = useState<Record<string, CartLine>>({});
@@ -405,9 +420,30 @@ export default function RestaurantExperience({
   const [showTablePicker, setShowTablePicker] = useState(false);
   const [tablePickerInput, setTablePickerInput] = useState("");
   const [tableNumber, setTableNumber] = useState<string>(() => {
-    if (standTableNum !== null && standTableNum > 0) return String(standTableNum);
+    const initialNum = resolveSessionTableNumber({
+      standLabel: device.label,
+      standLocation: device.location,
+      deviceCode: device.device_code,
+      tableCount,
+    });
+    if (initialNum !== null && initialNum > 0) return String(initialNum);
     return "";
   });
+
+  useEffect(() => {
+    if (resolvedTableNum !== null && resolvedTableNum > 0) {
+      setTableNumber((prev) => (prev && prev.trim() ? prev : String(resolvedTableNum)));
+    }
+  }, [resolvedTableNum]);
+
+  const parsedCurrentTable = parseInt(tableNumber, 10);
+  const isTableValid = Boolean(
+    tableNumber &&
+    tableNumber.trim() &&
+    !isNaN(parsedCurrentTable) &&
+    parsedCurrentTable >= 1 &&
+    parsedCurrentTable <= (tableCount && tableCount > 0 ? tableCount : 999)
+  );
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [placingOrder, setPlacingOrder] = useState(false);
@@ -949,12 +985,9 @@ export default function RestaurantExperience({
   // Place Table Order
   const handlePlaceOrder = async () => {
     setOrderError("");
-    if (!tableNumber || !tableNumber.trim()) {
-      setOrderError("Please enter your table number.");
-      return;
-    }
-    if (!customerName.trim()) {
-      setOrderError("Please enter your name.");
+    const parsedNum = parseInt(tableNumber, 10);
+    if (!tableNumber || isNaN(parsedNum) || parsedNum < 1 || parsedNum > (tableCount && tableCount > 0 ? tableCount : 999)) {
+      setOrderError("Please select or enter a valid table number.");
       return;
     }
     if (cartLinesList.length === 0) {
@@ -962,14 +995,19 @@ export default function RestaurantExperience({
       return;
     }
 
+    // Name is optional. When blank, send "Table N" as p_customer_name (client side only)
+    const resolvedName = customerName.trim()
+      ? customerName.trim().slice(0, 80)
+      : `Table ${parsedNum}`.slice(0, 80);
+
     setPlacingOrder(true);
     try {
       const cleanPhone = customerPhone.replace(/\D/g, "");
 
       const { data, error: rpcErr } = await supabase.rpc("create_tapx_table_order", {
         p_business_id: business.id,
-        p_table_number: Number(tableNumber),
-        p_customer_name: customerName.trim(),
+        p_table_number: parsedNum,
+        p_customer_name: resolvedName,
         p_customer_phone: cleanPhone || null,
         p_source_device_code: device.device_code,
         p_items: cartLinesList.map((line) => ({
@@ -988,11 +1026,10 @@ export default function RestaurantExperience({
 
       setCart({});
       setShowCheckoutSheet(false);
-      await loadActiveOrder(newOrderId);
       setActiveTab("orders");
     } catch (err: any) {
-      console.error("Order error:", err);
-      setOrderError(err.message || "Failed to place order. Please try again.");
+      console.error("Error creating table order:", err);
+      setOrderError(err.message || "Failed to place order. Please check your table number.");
     } finally {
       setPlacingOrder(false);
     }
@@ -1086,7 +1123,7 @@ export default function RestaurantExperience({
           <div style={styles.brandTextWrap}>
             <h1 style={styles.businessNameHeading}>{business.name}</h1>
             {tableOrderingEnabled && (
-              standTableNum ? (
+              isTableValid ? (
                 <div style={styles.tableChip}>
                   Table {tableNumber}
                 </div>
@@ -1098,7 +1135,7 @@ export default function RestaurantExperience({
                   style={styles.tablePickerTriggerBtn}
                   title="Choose table number"
                 >
-                  {tableNumber ? `Table ${tableNumber} ✎` : "Choose Table ›"}
+                  Choose Table ›
                 </button>
               )
             )}
@@ -1954,7 +1991,7 @@ export default function RestaurantExperience({
               <div>
                 <h3 style={styles.modalTitle}>Your Order</h3>
                 <div style={styles.checkoutTableLabel}>
-                  {standTableNum ? `Table ${standTableNum} • Dine In` : "Dine In Order"}
+                  {isTableValid ? `Table ${tableNumber} • Dine In` : "Dine In Order"}
                 </div>
               </div>
               <button
@@ -2034,8 +2071,25 @@ export default function RestaurantExperience({
 
               {/* Customer Inputs */}
               <div style={styles.customerInputsBox}>
-                {!standTableNum && (
-                  <div style={{ marginBottom: "12px" }}>
+                {/* Table Line or Picker */}
+                {isTableValid ? (
+                  <div style={styles.checkoutTableCard}>
+                    <div style={styles.checkoutTableCardLeft}>
+                      <span style={styles.checkoutTableCardLabel}>Table</span>
+                      <span style={styles.checkoutTableCardValue}>Table {tableNumber}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowTablePicker(true)}
+                      style={styles.checkoutTableChangeBtn}
+                      className="menu-tap-press"
+                      aria-label="Change table number"
+                    >
+                      Change
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: "14px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
                       <label style={styles.inputLabel}>
                         Table Number <span style={{ color: "#ef4444" }}>*</span>
@@ -2050,25 +2104,38 @@ export default function RestaurantExperience({
                         </button>
                       )}
                     </div>
-                    <input
-                      type="number"
-                      min="1"
-                      max={tableCount || 999}
-                      placeholder="Enter your table number (e.g. 5)"
-                      value={tableNumber}
-                      onChange={(e) => setTableNumber(e.target.value)}
-                      style={styles.inputField}
-                    />
+                    {tableCount && tableCount > 0 && tableCount <= 50 ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowTablePicker(true)}
+                        className="menu-tap-press"
+                        style={styles.pickTablePromptBtn}
+                      >
+                        Select your table number ›
+                      </button>
+                    ) : (
+                      <input
+                        type="number"
+                        min="1"
+                        max={tableCount || 999}
+                        placeholder="Enter your table number (e.g. 5)"
+                        value={tableNumber}
+                        onChange={(e) => {
+                          setTableNumber(e.target.value);
+                          setOrderError("");
+                        }}
+                        style={styles.inputField}
+                      />
+                    )}
                   </div>
                 )}
 
                 <div style={{ marginBottom: "12px" }}>
-                  <label style={styles.inputLabel}>
-                    Your Name <span style={{ color: "#ef4444" }}>*</span>
-                  </label>
+                  <label style={styles.inputLabel}>Your name (optional)</label>
                   <input
                     type="text"
-                    placeholder="Enter your name"
+                    maxLength={80}
+                    placeholder="Enter your name (optional)"
                     value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
                     style={styles.inputField}
@@ -2084,6 +2151,7 @@ export default function RestaurantExperience({
                     onChange={(e) => setCustomerPhone(e.target.value)}
                     style={styles.inputField}
                   />
+                  <div style={styles.inputHint}>for offers and loyalty</div>
                 </div>
 
                 {orderError && (
@@ -2097,10 +2165,14 @@ export default function RestaurantExperience({
             <div style={styles.checkoutFooter}>
               <button
                 type="button"
-                disabled={placingOrder}
+                disabled={placingOrder || !isTableValid || cartLinesList.length === 0}
                 onClick={handlePlaceOrder}
                 className="menu-tap-press"
-                style={styles.placeOrderBtn}
+                style={{
+                  ...styles.placeOrderBtn,
+                  opacity: placingOrder || !isTableValid || cartLinesList.length === 0 ? 0.5 : 1,
+                  cursor: placingOrder || !isTableValid || cartLinesList.length === 0 ? "not-allowed" : "pointer",
+                }}
               >
                 {placingOrder ? "Placing Order..." : `Place Order (₹${cartTotal.toFixed(0)})`}
               </button>
@@ -2153,6 +2225,12 @@ export default function RestaurantExperience({
                         setTableNumber(String(num));
                         setShowTablePicker(false);
                         setOrderError("");
+                        try {
+                          const sessionKey = device.device_code ? `tapx_session_table_${device.device_code}` : "tapx_session_table";
+                          if (typeof window !== "undefined" && window.sessionStorage) {
+                            window.sessionStorage.setItem(sessionKey, String(num));
+                          }
+                        } catch {}
                       }}
                       className="menu-tap-press"
                       style={{
@@ -2184,13 +2262,19 @@ export default function RestaurantExperience({
                     type="button"
                     onClick={() => {
                       const parsed = parseInt(tablePickerInput, 10);
-                      if (!parsed || parsed <= 0) {
+                      if (!parsed || parsed <= 0 || (tableCount && tableCount > 0 && parsed > tableCount)) {
                         setOrderError("Please enter a valid table number.");
                         return;
                       }
                       setTableNumber(String(parsed));
                       setShowTablePicker(false);
                       setOrderError("");
+                      try {
+                        const sessionKey = device.device_code ? `tapx_session_table_${device.device_code}` : "tapx_session_table";
+                        if (typeof window !== "undefined" && window.sessionStorage) {
+                          window.sessionStorage.setItem(sessionKey, String(parsed));
+                        }
+                      } catch {}
                     }}
                     className="menu-tap-press"
                     style={styles.confirmAddBtn}
@@ -3284,6 +3368,63 @@ const styles: Record<string, CSSProperties> = {
   },
   customerInputsBox: {
     marginBottom: "12px",
+  },
+  checkoutTableCard: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "12px 14px",
+    backgroundColor: MENU_TOKENS.colors.light.bg,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: MENU_TOKENS.radii.input,
+    marginBottom: "14px",
+  },
+  checkoutTableCardLeft: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+  },
+  checkoutTableCardLabel: {
+    fontSize: "11px",
+    color: MENU_TOKENS.colors.light.muted,
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    fontWeight: 600,
+  },
+  checkoutTableCardValue: {
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "16px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.ink,
+  },
+  checkoutTableChangeBtn: {
+    padding: "6px 12px",
+    backgroundColor: "#FFFFFF",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: "8px",
+    fontSize: "12px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.accentInk,
+    cursor: "pointer",
+    boxShadow: "0 1px 2px rgba(28, 25, 23, 0.04)",
+  },
+  pickTablePromptBtn: {
+    width: "100%",
+    padding: "12px 14px",
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    border: `1px dashed ${MENU_TOKENS.colors.light.accentBorder}`,
+    borderRadius: MENU_TOKENS.radii.input,
+    fontSize: "13px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.accentInk,
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  inputHint: {
+    fontSize: "11px",
+    color: MENU_TOKENS.colors.light.muted,
+    marginTop: "4px",
+    lineHeight: 1.3,
   },
   inputLabel: {
     display: "block",

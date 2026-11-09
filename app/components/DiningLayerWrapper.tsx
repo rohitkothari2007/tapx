@@ -7,6 +7,7 @@ import RestaurantExperience, {
 import {
   parseStandTableNumber,
   getDiningCardSubtitle,
+  resolveSessionTableNumber,
 } from "../lib/tableNumber";
 import { MENU_TOKENS } from "../lib/menuTheme";
 import { menuFontClassNames } from "../lib/menuFonts";
@@ -138,9 +139,27 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
     }
   };
 
-  const standTableNum = parseStandTableNumber(device.label, device.location);
+  // Read URL query parameter for ?table=N
+  const [urlTableParam, setUrlTableParam] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setUrlTableParam(params.get("table"));
+    }
+  }, []);
+
+  // Resolve table: (a) stand device.label/location, (b) ?table=N or session, (c) null
+  const resolvedTableNum = resolveSessionTableNumber({
+    standLabel: device.label,
+    standLocation: device.location,
+    queryTableParam: urlTableParam,
+    deviceCode: device.device_code,
+    tableCount,
+  });
+
   const cardTitle = tableOrderingEnabled ? "Menu & order" : "View menu";
-  const cardSubtitle = getDiningCardSubtitle(Boolean(tableOrderingEnabled), standTableNum);
+  const cardSubtitle = getDiningCardSubtitle(Boolean(tableOrderingEnabled), resolvedTableNum);
 
   return (
     <>
@@ -200,6 +219,10 @@ export default function DiningLayerWrapper(props: DiningLayerWrapperProps) {
           {hasEverOpened && (
             <RestaurantExperience
               {...props}
+              device={{
+                ...device,
+                location: device.location || (resolvedTableNum ? `Table ${resolvedTableNum}` : null),
+              }}
               initialTab="menu"
               tableOrderingEnabled={tableOrderingEnabled}
               tableCount={tableCount}

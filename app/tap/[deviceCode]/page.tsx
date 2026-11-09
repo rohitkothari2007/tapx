@@ -10,6 +10,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import RestaurantExperience from "../../components/RestaurantExperience";
 import DiningLayerWrapper from "../../components/DiningLayerWrapper";
+import { resolveSessionTableNumber } from "../../lib/tableNumber";
 import { InstagramIcon, WhatsAppIcon } from "../../components/BrandIcons";
 import UpiPaymentModal from "../../components/UpiPaymentModal";
 import {
@@ -65,6 +66,7 @@ type Device = {
   device_code: string;
   business_id: string;
   device_type: string | null;
+  label?: string | null;
   location: string | null;
   status: string | null;
 };
@@ -307,6 +309,14 @@ export default function TapPage({
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [urlTableParam, setUrlTableParam] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setUrlTableParam(params.get("table"));
+    }
+  }, []);
 
   const [productItems, setProductItems] =
     useState<ProductItem[]>([]);
@@ -1500,28 +1510,44 @@ export default function TapPage({
                   styles.actionGrid
                 }
               >
-                {isRestaurantDining && (
-                  <DiningLayerWrapper
-                    business={{ ...business, payment_enabled: showPaymentButton }}
-                    device={device}
-                    categories={digitalMenuCategories}
-                    items={digitalMenuItems}
-                    offers={offerItems}
-                    tableOrderingEnabled={tableOrderingEnabled}
-                    quickRequests={quickRequests}
-                    tableCount={
-                      tableOrderingConfig?.table_count
-                        ? Number(tableOrderingConfig.table_count)
-                        : undefined
-                    }
-                    initialTab="menu"
-                    loyaltyEnabled={loyaltyEnabled}
-                    feedbackEnabled={feedbackEnabled}
-                    onOpenFeedback={() => setActiveModule("feedback")}
-                    onOpenLoyalty={() => setActiveModule("loyalty")}
-                    onTrackAction={(type) => void trackActionClick(type)}
-                  />
-                )}
+                {isRestaurantDining && (() => {
+                  const resolvedTableNum = device
+                    ? resolveSessionTableNumber({
+                        standLabel: device.label,
+                        standLocation: device.location,
+                        queryTableParam: urlTableParam,
+                        deviceCode: device.device_code,
+                        tableCount: tableOrderingConfig?.table_count
+                          ? Number(tableOrderingConfig.table_count)
+                          : undefined,
+                      })
+                    : null;
+                  return (
+                    <DiningLayerWrapper
+                      business={{ ...business, payment_enabled: showPaymentButton }}
+                      device={{
+                        ...device,
+                        location: device.location || (resolvedTableNum ? `Table ${resolvedTableNum}` : null),
+                      }}
+                      categories={digitalMenuCategories}
+                      items={digitalMenuItems}
+                      offers={offerItems}
+                      tableOrderingEnabled={tableOrderingEnabled}
+                      quickRequests={quickRequests}
+                      tableCount={
+                        tableOrderingConfig?.table_count
+                          ? Number(tableOrderingConfig.table_count)
+                          : undefined
+                      }
+                      initialTab="menu"
+                      loyaltyEnabled={loyaltyEnabled}
+                      feedbackEnabled={feedbackEnabled}
+                      onOpenFeedback={() => setActiveModule("feedback")}
+                      onOpenLoyalty={() => setActiveModule("loyalty")}
+                      onTrackAction={(type) => void trackActionClick(type)}
+                    />
+                  );
+                })()}
 
                 {/* CORE */}
 
