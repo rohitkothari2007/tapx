@@ -8,6 +8,7 @@ export type MenuCategory = {
   id: string;
   name: string;
   description?: string;
+  image?: string;
 };
 
 export type MenuItem = {
@@ -112,6 +113,7 @@ export default function DigitalMenuEditor({
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editCategoryName, setEditCategoryName] = useState("");
   const [editCategoryDesc, setEditCategoryDesc] = useState("");
+  const [editCategoryImage, setEditCategoryImage] = useState("");
 
   // Editing Item state (Modal / inline)
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -127,7 +129,9 @@ export default function DigitalMenuEditor({
   // New Category draft
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryDesc, setNewCategoryDesc] = useState("");
+  const [newCategoryImage, setNewCategoryImage] = useState("");
   const [categoryError, setCategoryError] = useState("");
+  const [editCategoryError, setEditCategoryError] = useState("");
 
   // New Item draft
   const [newItemName, setNewItemName] = useState("");
@@ -205,10 +209,23 @@ export default function DigitalMenuEditor({
       return;
     }
 
+    const imgTrimmed = newCategoryImage.trim();
+    if (imgTrimmed) {
+      if (imgTrimmed.length > 500) {
+        setCategoryError("Category image URL must be 500 characters or fewer.");
+        return;
+      }
+      if (!/^https:\/\//i.test(imgTrimmed)) {
+        setCategoryError("Category image URL must start with https://");
+        return;
+      }
+    }
+
     const newCat: MenuCategory = {
       id: makeId(),
       name: trimmed,
       description: newCategoryDesc.trim() || undefined,
+      image: imgTrimmed || undefined,
     };
 
     const nextCategories = [...categories, newCat];
@@ -221,22 +238,50 @@ export default function DigitalMenuEditor({
 
     setNewCategoryName("");
     setNewCategoryDesc("");
+    setNewCategoryImage("");
   };
 
   const handleStartEditCategory = (cat: MenuCategory) => {
     setEditingCategoryId(cat.id);
     setEditCategoryName(cat.name);
     setEditCategoryDesc(cat.description || "");
+    setEditCategoryImage(cat.image || "");
+    setEditCategoryError("");
   };
 
   const handleSaveEditCategory = () => {
+    setEditCategoryError("");
     if (!editingCategoryId) return;
     const trimmed = editCategoryName.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setEditCategoryError("Category name is required.");
+      return;
+    }
+    if (trimmed.length > 80) {
+      setEditCategoryError("Category name must be 80 characters or fewer.");
+      return;
+    }
+
+    const imgTrimmed = editCategoryImage.trim();
+    if (imgTrimmed) {
+      if (imgTrimmed.length > 500) {
+        setEditCategoryError("Category image URL must be 500 characters or fewer.");
+        return;
+      }
+      if (!/^https:\/\//i.test(imgTrimmed)) {
+        setEditCategoryError("Category image URL must start with https://");
+        return;
+      }
+    }
 
     const nextCategories = categories.map((c) =>
       c.id === editingCategoryId
-        ? { ...c, name: trimmed, description: editCategoryDesc.trim() || undefined }
+        ? {
+            ...c,
+            name: trimmed,
+            description: editCategoryDesc.trim() || undefined,
+            image: imgTrimmed || undefined,
+          }
         : c
     );
 
@@ -334,13 +379,26 @@ export default function DigitalMenuEditor({
       return;
     }
 
+    // Validate image URL
+    const imgStr = newItemImageUrl.trim();
+    if (imgStr) {
+      if (imgStr.length > 500) {
+        setItemError("Image URL must be 500 characters or fewer.");
+        return;
+      }
+      if (!/^https:\/\//i.test(imgStr)) {
+        setItemError("Image URL must start with https://");
+        return;
+      }
+    }
+
     const newItem: MenuItem = {
       id: makeId(),
       categoryId: assignedCategoryId,
       name: trimmedName,
       price: priceStr || undefined,
       description: descStr || undefined,
-      imageUrl: newItemImageUrl.trim() || undefined,
+      imageUrl: imgStr || undefined,
       dietary: newItemDietary,
       popular: newItemPopular,
       available: true,
@@ -426,6 +484,19 @@ export default function DigitalMenuEditor({
       return;
     }
 
+    // Validate image URL
+    const imgStr = editItemImageUrl.trim();
+    if (imgStr) {
+      if (imgStr.length > 500) {
+        setEditItemError("Image URL must be 500 characters or fewer.");
+        return;
+      }
+      if (!/^https:\/\//i.test(imgStr)) {
+        setEditItemError("Image URL must start with https://");
+        return;
+      }
+    }
+
     const nextItems = items.map((i) =>
       i.id === editingItemId
         ? {
@@ -435,7 +506,7 @@ export default function DigitalMenuEditor({
             description: descStr || undefined,
             categoryId: editItemCategory || i.categoryId,
             dietary: editItemDietary,
-            imageUrl: editItemImageUrl.trim() || undefined,
+            imageUrl: imgStr || undefined,
             popular: editItemPopular,
           }
         : i
@@ -596,7 +667,7 @@ export default function DigitalMenuEditor({
 
         {/* Add Category Form */}
         <div style={styles.formRow}>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: "160px" }}>
             <label style={styles.inputLabel}>
               Category Name <span style={{ color: "#ef4444" }}>*</span> (max 80 chars)
             </label>
@@ -611,7 +682,7 @@ export default function DigitalMenuEditor({
             />
           </div>
 
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: "160px" }}>
             <label style={styles.inputLabel}>Description (optional)</label>
             <input
               type="text"
@@ -622,6 +693,31 @@ export default function DigitalMenuEditor({
               disabled={categories.length >= MAX_CATEGORIES}
               style={styles.input}
             />
+          </div>
+
+          <div style={{ flex: 1, minWidth: "160px" }}>
+            <label style={styles.inputLabel}>Image URL (optional, https://)</label>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              {newCategoryImage.trim() && (
+                <img
+                  src={newCategoryImage.trim()}
+                  alt=""
+                  style={styles.categoryThumbnailSmall}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLElement).style.display = "none";
+                  }}
+                />
+              )}
+              <input
+                type="url"
+                placeholder="https://..."
+                maxLength={500}
+                value={newCategoryImage}
+                onChange={(e) => setNewCategoryImage(e.target.value)}
+                disabled={categories.length >= MAX_CATEGORIES}
+                style={styles.input}
+              />
+            </div>
           </div>
 
           <button
@@ -648,39 +744,92 @@ export default function DigitalMenuEditor({
               return (
                 <div key={cat.id} style={styles.categoryItem}>
                   {isEditing ? (
-                    <div style={{ display: "flex", gap: "8px", flex: 1, alignItems: "center" }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", flex: 1, alignItems: "center" }}>
                       <input
                         type="text"
                         maxLength={80}
                         value={editCategoryName}
                         onChange={(e) => setEditCategoryName(e.target.value)}
-                        style={styles.input}
+                        placeholder="Category Name"
+                        style={{ ...styles.input, flex: "1 1 140px" }}
                       />
                       <input
                         type="text"
                         maxLength={150}
                         value={editCategoryDesc}
                         onChange={(e) => setEditCategoryDesc(e.target.value)}
-                        placeholder="Description"
-                        style={styles.input}
+                        placeholder="Description (optional)"
+                        style={{ ...styles.input, flex: "1 1 140px" }}
                       />
-                      <button
-                        type="button"
-                        onClick={handleSaveEditCategory}
-                        style={styles.smallPrimaryButton}
-                      >
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingCategoryId(null)}
-                        style={styles.smallSecondaryButton}
-                      >
-                        Cancel
-                      </button>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center", flex: "1 1 180px" }}>
+                        {editCategoryImage.trim() && (
+                          <img
+                            src={editCategoryImage.trim()}
+                            alt=""
+                            style={styles.categoryThumbnailSmall}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLElement).style.display = "none";
+                            }}
+                          />
+                        )}
+                        <input
+                          type="url"
+                          maxLength={500}
+                          value={editCategoryImage}
+                          onChange={(e) => setEditCategoryImage(e.target.value)}
+                          placeholder="Image URL https://..."
+                          style={styles.input}
+                        />
+                      </div>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button
+                          type="button"
+                          onClick={handleSaveEditCategory}
+                          style={styles.smallPrimaryButton}
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingCategoryId(null)}
+                          style={styles.smallSecondaryButton}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {editCategoryError && (
+                        <div style={{ width: "100%", color: "#EF4444", fontSize: "12px", marginTop: "4px" }}>
+                          {editCategoryError}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <>
+                      {/* Category Thumbnail 40px round */}
+                      <div style={styles.categoryThumbnailBox}>
+                        {cat.image ? (
+                          <img
+                            src={cat.image}
+                            alt=""
+                            loading="lazy"
+                            style={styles.categoryThumbnailImg}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLElement).style.display = "none";
+                              const sib = e.currentTarget.nextElementSibling as HTMLElement;
+                              if (sib) sib.style.display = "flex";
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          style={{
+                            ...styles.categoryThumbnailLetter,
+                            display: cat.image ? "none" : "flex",
+                          }}
+                        >
+                          {(cat.name || "C").charAt(0).toUpperCase()}
+                        </div>
+                      </div>
+
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                           <span style={styles.categoryNameText}>{cat.name}</span>
@@ -1577,6 +1726,45 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     gap: "8px",
     marginTop: "14px",
+  },
+  categoryThumbnailSmall: {
+    width: "36px",
+    height: "36px",
+    borderRadius: "50%",
+    objectFit: "cover",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    flexShrink: 0,
+    backgroundColor: "#F5EFE6",
+  },
+  categoryThumbnailBox: {
+    width: "40px",
+    height: "40px",
+    borderRadius: "50%",
+    overflow: "hidden",
+    flexShrink: 0,
+    position: "relative",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+  },
+  categoryThumbnailImg: {
+    width: "100%",
+    height: "100%",
+    borderRadius: "50%",
+    objectFit: "cover",
+    display: "block",
+  },
+  categoryThumbnailLetter: {
+    width: "100%",
+    height: "100%",
+    borderRadius: "50%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "15px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.accentInk,
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
   },
   categoryItem: {
     display: "flex",

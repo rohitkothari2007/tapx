@@ -1,12 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
-import { parseStandTableNumber } from "../lib/tableNumber";
+import { parseStandTableNumber, resolveSessionTableNumber } from "../lib/tableNumber";
 import { WhatsAppIcon } from "./BrandIcons";
 import UpiPaymentModal from "./UpiPaymentModal";
 import { MENU_TOKENS, MENU_THEME_GLOBAL_CSS, formatDisplayName } from "../lib/menuTheme";
 import { menuFontClassNames } from "../lib/menuFonts";
+
+// Layout configuration constants
+const MENU_LAYOUT: "rail-grid" | "rail-list" = "rail-grid";
+const MENU_CATEGORY_NAV: "rail" | "chips" = "rail";
 
 export type RestaurantExperienceProps = {
   business: {
@@ -35,6 +40,7 @@ export type RestaurantExperienceProps = {
     id: string;
     name: string;
     description?: string;
+    image?: string;
   }>;
   items: Array<{
     id: string;
@@ -266,6 +272,83 @@ function DishImage({
   );
 }
 
+// Round Dish Photo with fixed size, shimmer placeholder, letter fallback, and smooth fade-in
+function RoundDishPhoto({
+  src,
+  name,
+  size = 64,
+}: {
+  src?: string;
+  name: string;
+  size?: number;
+}) {
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  const initial = (name || "D").trim().charAt(0).toUpperCase();
+
+  if (!src || failed) {
+    return (
+      <div
+        style={{
+          width: `${size}px`,
+          height: `${size}px`,
+          borderRadius: "50%",
+          background: "linear-gradient(135deg, #F5EFE6 0%, #E8DCCB 100%)",
+          border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: MENU_TOKENS.colors.light.accentInk,
+          fontFamily: MENU_TOKENS.fonts.serif,
+          fontSize: `${Math.floor(size * 0.42)}px`,
+          fontWeight: 700,
+          flexShrink: 0,
+          userSelect: "none",
+          boxSizing: "border-box",
+        }}
+      >
+        {initial}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={!loaded ? "menu-shimmer-bg" : undefined}
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: "50%",
+        overflow: "hidden",
+        backgroundColor: "#F5EFE6",
+        border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+        flexShrink: 0,
+        position: "relative",
+        boxSizing: "border-box",
+      }}
+    >
+      <img
+        src={src}
+        alt={name}
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setLoaded(true)}
+        onError={() => setFailed(true)}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          display: "block",
+          borderRadius: "50%",
+          opacity: loaded ? 1 : 0,
+          transition: "opacity 200ms ease",
+        }}
+      />
+    </div>
+  );
+}
+
 export default function RestaurantExperience({
   business,
   device,
@@ -285,16 +368,43 @@ export default function RestaurantExperience({
   // Navigation tabs
   const [activeTab, setActiveTab] = useState<"menu" | "orders">(initialTab);
 
-  // Search & dietary filter
+  // Search & category navigation
   const [searchQuery, setSearchQuery] = useState("");
-  const [dietaryFilter, setDietaryFilter] = useState<"all" | "veg" | "non_veg" | "egg">("all");
-  const [activeCategoryChip, setActiveCategoryChip] = useState<string>("all");
+  const [activeCategoryId, setActiveCategoryId] = useState<string>("");
+  const railNavRef = useRef<HTMLElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const searchBarRef = useRef<HTMLDivElement | null>(null);
 
-  // Stand table number detection
-  const standTableNum = useMemo(
-    () => parseStandTableNumber(device.label, device.location),
-    [device.label, device.location]
-  );
+  // Dynamic sticky header metrics
+  const [stickyMetrics, setStickyMetrics] = useState({
+    headerTop: 0,
+    stickyOffset: 124,
+  });
+
+  // Flag to suppress scroll spy flickering during smooth scroll triggered by category tap
+  const isClickScrollingRef = useRef(false);
+  const clickScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Read URL query parameter for ?table=N
+  const [urlTableParam, setUrlTableParam] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setUrlTableParam(params.get("table"));
+    }
+  }, []);
+
+  // Table number resolution in order: (a) stand, (b) ?table=N or session, (c) null
+  const resolvedTableNum = useMemo(() => {
+    return resolveSessionTableNumber({
+      standLabel: device.label,
+      standLocation: device.location,
+      queryTableParam: urlTableParam,
+      deviceCode: device.device_code,
+      tableCount,
+    });
+  }, [device.label, device.location, device.device_code, urlTableParam, tableCount]);
 
   // Cart state: keyed by composite lineId: `${itemId}::${special_request.trim()}`
   const [cart, setCart] = useState<Record<string, CartLine>>({});
@@ -310,13 +420,39 @@ export default function RestaurantExperience({
   const [showTablePicker, setShowTablePicker] = useState(false);
   const [tablePickerInput, setTablePickerInput] = useState("");
   const [tableNumber, setTableNumber] = useState<string>(() => {
-    if (standTableNum !== null && standTableNum > 0) return String(standTableNum);
+    const initialNum = resolveSessionTableNumber({
+      standLabel: device.label,
+      standLocation: device.location,
+      deviceCode: device.device_code,
+      tableCount,
+    });
+    if (initialNum !== null && initialNum > 0) return String(initialNum);
     return "";
   });
+
+  useEffect(() => {
+    if (resolvedTableNum !== null && resolvedTableNum > 0) {
+      setTableNumber((prev) => (prev && prev.trim() ? prev : String(resolvedTableNum)));
+    }
+  }, [resolvedTableNum]);
+
+  const parsedCurrentTable = parseInt(tableNumber, 10);
+  const isTableValid = Boolean(
+    tableNumber &&
+    tableNumber.trim() &&
+    !isNaN(parsedCurrentTable) &&
+    parsedCurrentTable >= 1 &&
+    parsedCurrentTable <= (tableCount && tableCount > 0 ? tableCount : 999)
+  );
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [placingOrder, setPlacingOrder] = useState(false);
   const [orderError, setOrderError] = useState("");
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Live order state
   const storageKey = `tapx_active_order_${business.id}_${device.device_code}`;
@@ -496,19 +632,10 @@ export default function RestaurantExperience({
     }
   };
 
-  // Filtered menu items
+  // Filtered menu items (search only, dietary filter removed from customer menu)
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
-      // Dietary filter
-      if (dietaryFilter === "veg") {
-        if (item.dietary !== "veg" && item.dietary !== "vegan") return false;
-      } else if (dietaryFilter === "non_veg") {
-        if (item.dietary !== "non_veg") return false;
-      } else if (dietaryFilter === "egg") {
-        if (item.dietary !== "egg") return false;
-      }
-
-      // Search query
+      // Search query (filters by dish name and description)
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchesName = item.name.toLowerCase().includes(q);
@@ -518,9 +645,9 @@ export default function RestaurantExperience({
 
       return true;
     });
-  }, [items, dietaryFilter, searchQuery]);
+  }, [items, searchQuery]);
 
-  // Group filtered items by category
+  // Group filtered items by category (preserves owner order, excludes empty categories)
   const groupedCategories = useMemo(() => {
     const categoryMap = new Map<string, { cat: (typeof categories)[number]; items: ItemType[] }>();
 
@@ -551,39 +678,209 @@ export default function RestaurantExperience({
     return result;
   }, [categories, filteredItems]);
 
-  // Scroll to category section smoothly
+  // Sync active category ID when groupedCategories load or update
+  useEffect(() => {
+    if (groupedCategories.length > 0) {
+      const exists = groupedCategories.some((g) => g.cat.id === activeCategoryId);
+      if (!exists) {
+        setActiveCategoryId(groupedCategories[0].cat.id);
+      }
+    }
+  }, [groupedCategories, activeCategoryId]);
+
+  // Find the real scrolling container (layerOverlay in DiningLayerWrapper, or window)
+  const getScrollContainer = useCallback((): HTMLElement | Window => {
+    let parent = rootRef.current?.parentElement;
+    while (parent && parent !== document.body && parent !== document.documentElement) {
+      const style = window.getComputedStyle(parent);
+      if (style.overflowY === "auto" || style.overflowY === "scroll") {
+        return parent;
+      }
+      parent = parent.parentElement;
+    }
+    return window;
+  }, []);
+
+  // Lock background scroll when any modal sheet is open
+  const isAnySheetOpen = Boolean(detailItem || showCheckoutSheet || showTablePicker);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || !isAnySheetOpen) return;
+    const container = getScrollContainer();
+    const origBodyOverflow = document.body.style.overflow;
+    let origContainerOverflow = "";
+    if (container instanceof HTMLElement) {
+      origContainerOverflow = container.style.overflow;
+      container.style.overflow = "hidden";
+    }
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = origBodyOverflow;
+      if (container instanceof HTMLElement) {
+        container.style.overflow = origContainerOverflow;
+      }
+    };
+  }, [isAnySheetOpen, getScrollContainer]);
+
+  // Dynamically measure sticky header heights based on actual DOM elements
+  const measureStickyMetrics = useCallback(() => {
+    if (typeof window === "undefined" || !rootRef.current) return;
+
+    const container = getScrollContainer();
+    let topOffset = 0;
+
+    if (container instanceof HTMLElement) {
+      // In DiningLayerWrapper: container has layerHeader (Back button) at top: 0
+      const prevSibling = rootRef.current.parentElement?.previousElementSibling as HTMLElement | null;
+      if (prevSibling && prevSibling.offsetHeight > 0) {
+        topOffset = prevSibling.offsetHeight;
+      }
+    } else {
+      // In standalone window mode: topHeader sits at top
+      const topHeader = rootRef.current.querySelector<HTMLElement>("header");
+      if (topHeader && topHeader.offsetHeight > 0) {
+        topOffset = topHeader.offsetHeight;
+      }
+    }
+
+    const searchBarH = searchBarRef.current?.offsetHeight || 56;
+    const totalOffset = topOffset + searchBarH;
+
+    setStickyMetrics({
+      headerTop: topOffset,
+      stickyOffset: totalOffset > 0 ? totalOffset : 124,
+    });
+  }, [getScrollContainer]);
+
+  useEffect(() => {
+    measureStickyMetrics();
+    window.addEventListener("resize", measureStickyMetrics);
+    return () => window.removeEventListener("resize", measureStickyMetrics);
+  }, [measureStickyMetrics]);
+
+  // Scroll to category section smoothly on the real scroll container
   const scrollToCategory = (catId: string) => {
-    setActiveCategoryChip(catId);
+    setActiveCategoryId(catId);
+
+    // Suppress scroll spy updates during programmatic smooth scroll to prevent category flickering
+    isClickScrollingRef.current = true;
+    if (clickScrollTimeoutRef.current) {
+      clearTimeout(clickScrollTimeoutRef.current);
+    }
+    clickScrollTimeoutRef.current = setTimeout(() => {
+      isClickScrollingRef.current = false;
+    }, 800);
+
+    const container = getScrollContainer();
+    const prefersReduced =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const behavior: ScrollBehavior = prefersReduced ? "auto" : "smooth";
+
     if (catId === "all") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      if (container instanceof HTMLElement) {
+        container.scrollTo({ top: 0, behavior });
+      } else {
+        window.scrollTo({ top: 0, behavior });
+      }
       return;
     }
+
     const elem = document.getElementById(`cat-section-${catId}`);
-    if (elem) {
-      const yOffset = -120;
-      const y = elem.getBoundingClientRect().top + window.pageYOffset + yOffset;
-      window.scrollTo({ top: y, behavior: "smooth" });
+    if (!elem) return;
+
+    if (container instanceof HTMLElement) {
+      const containerRect = container.getBoundingClientRect();
+      const elemRect = elem.getBoundingClientRect();
+      const targetTop =
+        container.scrollTop + (elemRect.top - containerRect.top) - (stickyMetrics.stickyOffset + 8);
+      container.scrollTo({ top: Math.max(0, targetTop), behavior });
+    } else {
+      const elemRect = elem.getBoundingClientRect();
+      const targetTop =
+        window.scrollY + elemRect.top - (stickyMetrics.stickyOffset + 8);
+      window.scrollTo({ top: Math.max(0, targetTop), behavior });
     }
   };
 
-  // Throttled scroll spy to highlight active category chip
+  // Release scroll-lock if user manually wheels, touches or clicks during smooth scroll
   useEffect(() => {
+    const container = getScrollContainer();
+    const target = container instanceof HTMLElement ? container : window;
+    const unlock = () => {
+      isClickScrollingRef.current = false;
+    };
+
+    target.addEventListener("wheel", unlock, { passive: true });
+    target.addEventListener("touchstart", unlock, { passive: true });
+    target.addEventListener("pointerdown", unlock, { passive: true });
+
+    return () => {
+      target.removeEventListener("wheel", unlock);
+      target.removeEventListener("touchstart", unlock);
+      target.removeEventListener("pointerdown", unlock);
+    };
+  }, [getScrollContainer]);
+
+  // Throttled scroll spy on the REAL scroll container
+  useEffect(() => {
+    const container = getScrollContainer();
     let ticking = false;
+
     const handleScroll = () => {
+      if (isClickScrollingRef.current) return;
+
       if (!ticking) {
         window.requestAnimationFrame(() => {
-          if (window.scrollY < 80) {
-            setActiveCategoryChip("all");
+          if (groupedCategories.length === 0) {
             ticking = false;
             return;
           }
+
+          const currentScroll =
+            container instanceof HTMLElement
+              ? container.scrollTop
+              : window.scrollY;
+
+          const maxScroll =
+            container instanceof HTMLElement
+              ? container.scrollHeight - container.clientHeight
+              : document.documentElement.scrollHeight - window.innerHeight;
+
+          if (MENU_CATEGORY_NAV === "chips" && currentScroll < 80) {
+            setActiveCategoryId("all");
+            ticking = false;
+            return;
+          }
+
+          if (currentScroll < 40) {
+            setActiveCategoryId(groupedCategories[0].cat.id);
+            ticking = false;
+            return;
+          }
+
+          // Near bottom of list
+          if (maxScroll > 0 && currentScroll >= maxScroll - 30) {
+            setActiveCategoryId(groupedCategories[groupedCategories.length - 1].cat.id);
+            ticking = false;
+            return;
+          }
+
+          const containerTop =
+            container instanceof HTMLElement
+              ? container.getBoundingClientRect().top
+              : 0;
+
+          const threshold = containerTop + stickyMetrics.stickyOffset + 24;
+
           for (let i = groupedCategories.length - 1; i >= 0; i--) {
             const grp = groupedCategories[i];
             const elem = document.getElementById(`cat-section-${grp.cat.id}`);
             if (elem) {
               const rect = elem.getBoundingClientRect();
-              if (rect.top <= 160) {
-                setActiveCategoryChip(grp.cat.id);
+              if (rect.top <= threshold) {
+                setActiveCategoryId(grp.cat.id);
                 break;
               }
             }
@@ -594,9 +891,33 @@ export default function RestaurantExperience({
       }
     };
 
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, [groupedCategories]);
+    const target = container instanceof HTMLElement ? container : window;
+    target.addEventListener("scroll", handleScroll, { passive: true });
+    return () => target.removeEventListener("scroll", handleScroll);
+  }, [groupedCategories, getScrollContainer, stickyMetrics.stickyOffset]);
+
+  // Keep active rail category button visible in scrollable rail
+  useEffect(() => {
+    if (railNavRef.current && activeCategoryId) {
+      const activeBtn = railNavRef.current.querySelector<HTMLElement>(
+        `[data-category-id="${activeCategoryId}"]`
+      );
+      if (activeBtn) {
+        const navTop = railNavRef.current.scrollTop;
+        const navHeight = railNavRef.current.clientHeight;
+        const btnTop = activeBtn.offsetTop;
+        const btnHeight = activeBtn.offsetHeight;
+        if (btnTop < navTop) {
+          railNavRef.current.scrollTo({ top: btnTop, behavior: "smooth" });
+        } else if (btnTop + btnHeight > navTop + navHeight) {
+          railNavRef.current.scrollTo({
+            top: btnTop + btnHeight - navHeight,
+            behavior: "smooth",
+          });
+        }
+      }
+    }
+  }, [activeCategoryId]);
 
   // Load active order from storage
   const loadActiveOrder = async (orderIdOverride?: string) => {
@@ -664,12 +985,9 @@ export default function RestaurantExperience({
   // Place Table Order
   const handlePlaceOrder = async () => {
     setOrderError("");
-    if (!tableNumber || !tableNumber.trim()) {
-      setOrderError("Please enter your table number.");
-      return;
-    }
-    if (!customerName.trim()) {
-      setOrderError("Please enter your name.");
+    const parsedNum = parseInt(tableNumber, 10);
+    if (!tableNumber || isNaN(parsedNum) || parsedNum < 1 || parsedNum > (tableCount && tableCount > 0 ? tableCount : 999)) {
+      setOrderError("Please select or enter a valid table number.");
       return;
     }
     if (cartLinesList.length === 0) {
@@ -677,14 +995,19 @@ export default function RestaurantExperience({
       return;
     }
 
+    // Name is optional. When blank, send "Table N" as p_customer_name (client side only)
+    const resolvedName = customerName.trim()
+      ? customerName.trim().slice(0, 80)
+      : `Table ${parsedNum}`.slice(0, 80);
+
     setPlacingOrder(true);
     try {
       const cleanPhone = customerPhone.replace(/\D/g, "");
 
       const { data, error: rpcErr } = await supabase.rpc("create_tapx_table_order", {
         p_business_id: business.id,
-        p_table_number: Number(tableNumber),
-        p_customer_name: customerName.trim(),
+        p_table_number: parsedNum,
+        p_customer_name: resolvedName,
         p_customer_phone: cleanPhone || null,
         p_source_device_code: device.device_code,
         p_items: cartLinesList.map((line) => ({
@@ -703,11 +1026,10 @@ export default function RestaurantExperience({
 
       setCart({});
       setShowCheckoutSheet(false);
-      await loadActiveOrder(newOrderId);
       setActiveTab("orders");
     } catch (err: any) {
-      console.error("Order error:", err);
-      setOrderError(err.message || "Failed to place order. Please try again.");
+      console.error("Error creating table order:", err);
+      setOrderError(err.message || "Failed to place order. Please check your table number.");
     } finally {
       setPlacingOrder(false);
     }
@@ -781,7 +1103,7 @@ export default function RestaurantExperience({
   };
 
   return (
-    <div className={menuFontClassNames} style={styles.container}>
+    <div ref={rootRef} className={menuFontClassNames} style={styles.container}>
       {/* Inject Design System CSS Keyframes, CSS variables, and overrides */}
       <style dangerouslySetInnerHTML={{ __html: MENU_THEME_GLOBAL_CSS }} />
 
@@ -801,7 +1123,7 @@ export default function RestaurantExperience({
           <div style={styles.brandTextWrap}>
             <h1 style={styles.businessNameHeading}>{business.name}</h1>
             {tableOrderingEnabled && (
-              standTableNum ? (
+              isTableValid ? (
                 <div style={styles.tableChip}>
                   Table {tableNumber}
                 </div>
@@ -813,7 +1135,7 @@ export default function RestaurantExperience({
                   style={styles.tablePickerTriggerBtn}
                   title="Choose table number"
                 >
-                  {tableNumber ? `Table ${tableNumber} ✎` : "Choose Table ›"}
+                  Choose Table ›
                 </button>
               )
             )}
@@ -849,8 +1171,14 @@ export default function RestaurantExperience({
       {/* ---------------------------------------------------- */}
       {activeTab === "menu" && (
         <div style={styles.menuTabContainer}>
-          {/* SEARCH BAR */}
-          <div style={styles.searchBarWrapper}>
+          {/* SEARCH BAR (Quiet pill, sticky under header) */}
+          <div
+            ref={searchBarRef}
+            style={{
+              ...styles.searchBarWrapper,
+              top: `${stickyMetrics.headerTop}px`,
+            }}
+          >
             <div style={styles.searchInputBox}>
               <span style={styles.searchIcon}>🔍</span>
               <input
@@ -873,264 +1201,412 @@ export default function RestaurantExperience({
             </div>
           </div>
 
-          {/* STICKY FILTER ROW (Dietary Filters + Category Chips) */}
-          <div style={styles.stickyFilterContainer}>
-            {/* Dietary Filter Pills */}
-            <div style={styles.dietaryFilterRow}>
-              <button
-                type="button"
-                onClick={() => setDietaryFilter("all")}
-                className="menu-tap-press"
-                style={{
-                  ...styles.dietFilterPill,
-                  backgroundColor: dietaryFilter === "all" ? MENU_TOKENS.colors.light.ink : "#FFFFFF",
-                  color: dietaryFilter === "all" ? "#FFFFFF" : MENU_TOKENS.colors.light.muted,
-                  borderColor: dietaryFilter === "all" ? MENU_TOKENS.colors.light.ink : MENU_TOKENS.colors.light.hairline,
-                }}
-              >
-                All
-              </button>
-              <button
-                type="button"
-                onClick={() => setDietaryFilter("veg")}
-                className="menu-tap-press"
-                style={{
-                  ...styles.dietFilterPill,
-                  backgroundColor: dietaryFilter === "veg" ? MENU_TOKENS.colors.light.veg : "#FFFFFF",
-                  color: dietaryFilter === "veg" ? "#FFFFFF" : MENU_TOKENS.colors.light.veg,
-                  borderColor: dietaryFilter === "veg" ? MENU_TOKENS.colors.light.veg : "#C8EBD4",
-                }}
-              >
-                <DietaryBadge dietary="veg" size={12} />
-                <span>Veg</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setDietaryFilter("non_veg")}
-                className="menu-tap-press"
-                style={{
-                  ...styles.dietFilterPill,
-                  backgroundColor: dietaryFilter === "non_veg" ? MENU_TOKENS.colors.light.nonVeg : "#FFFFFF",
-                  color: dietaryFilter === "non_veg" ? "#FFFFFF" : MENU_TOKENS.colors.light.nonVeg,
-                  borderColor: dietaryFilter === "non_veg" ? MENU_TOKENS.colors.light.nonVeg : "#FBCBCB",
-                }}
-              >
-                <DietaryBadge dietary="non_veg" size={12} />
-                <span>Non-Veg</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setDietaryFilter("egg")}
-                className="menu-tap-press"
-                style={{
-                  ...styles.dietFilterPill,
-                  backgroundColor: dietaryFilter === "egg" ? MENU_TOKENS.colors.light.egg : "#FFFFFF",
-                  color: dietaryFilter === "egg" ? "#FFFFFF" : MENU_TOKENS.colors.light.egg,
-                  borderColor: dietaryFilter === "egg" ? MENU_TOKENS.colors.light.egg : "#FCE0B0",
-                }}
-              >
-                <DietaryBadge dietary="egg" size={12} />
-                <span>Egg</span>
-              </button>
-            </div>
-
-            {/* Category Navigation Chips */}
-            <div style={styles.categoryScrollContainer}>
-              <button
-                type="button"
-                onClick={() => scrollToCategory("all")}
-                className="menu-tap-press"
-                style={{
-                  ...styles.categoryChip,
-                  backgroundColor: activeCategoryChip === "all" ? MENU_TOKENS.colors.light.ink : "#FFFFFF",
-                  color: activeCategoryChip === "all" ? "#FFFFFF" : MENU_TOKENS.colors.light.muted,
-                  borderColor: activeCategoryChip === "all" ? MENU_TOKENS.colors.light.ink : MENU_TOKENS.colors.light.hairline,
-                }}
-              >
-                All ({filteredItems.length})
-              </button>
-              {groupedCategories.map((group) => (
+          {/* HORIZONTAL CHIPS NAV (Preserved behind MENU_CATEGORY_NAV === 'chips') */}
+          {MENU_CATEGORY_NAV === "chips" && (
+            <div style={styles.stickyFilterContainer}>
+              <div style={styles.categoryScrollContainer}>
                 <button
-                  key={group.cat.id}
                   type="button"
-                  onClick={() => scrollToCategory(group.cat.id)}
+                  onClick={() => scrollToCategory("all")}
                   className="menu-tap-press"
                   style={{
                     ...styles.categoryChip,
-                    backgroundColor: activeCategoryChip === group.cat.id ? MENU_TOKENS.colors.light.ink : "#FFFFFF",
-                    color: activeCategoryChip === group.cat.id ? "#FFFFFF" : MENU_TOKENS.colors.light.muted,
-                    borderColor: activeCategoryChip === group.cat.id ? MENU_TOKENS.colors.light.ink : MENU_TOKENS.colors.light.hairline,
+                    backgroundColor: activeCategoryId === "all" ? MENU_TOKENS.colors.light.ink : "#FFFFFF",
+                    color: activeCategoryId === "all" ? "#FFFFFF" : MENU_TOKENS.colors.light.muted,
+                    borderColor: activeCategoryId === "all" ? MENU_TOKENS.colors.light.ink : MENU_TOKENS.colors.light.hairline,
                   }}
                 >
-                  {formatDisplayName(group.cat.name)} ({group.items.length})
+                  All ({filteredItems.length})
                 </button>
-              ))}
-            </div>
-          </div>
-
-          {/* DISH SECTIONS */}
-          <div style={styles.sectionsList}>
-            {groupedCategories.length === 0 ? (
-              <div style={styles.emptyStateCard}>
-                <div style={{ fontSize: "32px", marginBottom: "8px" }}>🍽️</div>
-                <div style={styles.emptyStateTitle}>No dishes found</div>
-                <div style={styles.emptyStateSubtitle}>
-                  Try clearing your search query or switching the dietary filter.
-                </div>
+                {groupedCategories.map((group) => (
+                  <button
+                    key={group.cat.id}
+                    type="button"
+                    onClick={() => scrollToCategory(group.cat.id)}
+                    className="menu-tap-press"
+                    style={{
+                      ...styles.categoryChip,
+                      backgroundColor: activeCategoryId === group.cat.id ? MENU_TOKENS.colors.light.ink : "#FFFFFF",
+                      color: activeCategoryId === group.cat.id ? "#FFFFFF" : MENU_TOKENS.colors.light.muted,
+                      borderColor: activeCategoryId === group.cat.id ? MENU_TOKENS.colors.light.ink : MENU_TOKENS.colors.light.hairline,
+                    }}
+                  >
+                    {formatDisplayName(group.cat.name)} ({group.items.length})
+                  </button>
+                ))}
               </div>
-            ) : (
-              groupedCategories.map((group) => (
-                <section
-                  key={group.cat.id}
-                  id={`cat-section-${group.cat.id}`}
-                  style={styles.categorySection}
-                >
-                  <div style={styles.sectionHeaderRow}>
-                    <h2 style={styles.sectionCategoryTitle}>{formatDisplayName(group.cat.name)}</h2>
-                    <span style={styles.sectionItemCountBadge}>
-                      {group.items.length} {group.items.length === 1 ? "dish" : "dishes"}
-                    </span>
-                  </div>
+            </div>
+          )}
 
-                  <div style={styles.cardsGrid}>
-                    {group.items.map((dish, idx) => {
-                      const isSoldOut = dish.available === false;
-                      const numPrice = parsePrice(dish.price);
-                      const stdQty = getStandardItemQty(dish.id);
-
-                      return (
+          {/* TWO-COLUMN LAYOUT: Left Rail + Content Column */}
+          <div style={styles.menuBodyRow}>
+            {/* LEFT RAIL (Categories) - Only shown in rail mode when >1 categories exist */}
+            {MENU_CATEGORY_NAV === "rail" && groupedCategories.length > 1 && (
+              <nav
+                aria-label="Categories"
+                className="menu-rail-nav"
+                ref={railNavRef}
+                style={{
+                  ...styles.railNav,
+                  top: `${stickyMetrics.stickyOffset + 6}px`,
+                  maxHeight: `calc(100vh - ${stickyMetrics.stickyOffset + 16}px)`,
+                }}
+              >
+                {groupedCategories.map((group) => {
+                  const isActive = activeCategoryId === group.cat.id;
+                  return (
+                    <button
+                      key={group.cat.id}
+                      type="button"
+                      onClick={() => scrollToCategory(group.cat.id)}
+                      className="menu-rail-btn menu-tap-press"
+                      aria-current={isActive ? "true" : undefined}
+                      data-category-id={group.cat.id}
+                      style={{
+                        ...styles.railItemBtn,
+                        backgroundColor: isActive ? MENU_TOKENS.colors.light.accentLight : "transparent",
+                      }}
+                    >
+                      <div
+                        style={{
+                          ...styles.railThumbnailBox,
+                          boxShadow: isActive
+                            ? `0 0 0 2px ${MENU_TOKENS.colors.light.accent}`
+                            : `0 0 0 1px ${MENU_TOKENS.colors.light.hairline}`,
+                        }}
+                      >
+                        {group.cat.image ? (
+                          <img
+                            src={group.cat.image}
+                            alt=""
+                            loading="lazy"
+                            style={styles.railThumbnailImg}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLElement).style.display = "none";
+                              const sib = e.currentTarget.nextElementSibling as HTMLElement;
+                              if (sib) sib.style.display = "flex";
+                            }}
+                          />
+                        ) : null}
                         <div
-                          key={dish.id}
-                          className="menu-tap-press"
                           style={{
-                            ...styles.dishCard,
-                            opacity: isSoldOut ? 0.55 : 1,
-                            backgroundColor: isSoldOut ? "#F7F5F0" : "#FFFFFF",
-                            filter: isSoldOut ? "grayscale(25%)" : "none",
-                            animation: idx < 6 ? `menuCardFadeIn 260ms cubic-bezier(0.22, 1, 0.36, 1) ${idx * 40}ms both` : undefined,
-                          }}
-                          onClick={() => {
-                            if (tableOrderingEnabled && !isSoldOut) {
-                              openItemDetail(dish);
-                            } else if (!tableOrderingEnabled) {
-                              openItemDetail(dish);
-                            }
+                            ...styles.railThumbnailLetter,
+                            display: group.cat.image ? "none" : "flex",
                           }}
                         >
-                          {/* Left: Info */}
-                          <div style={styles.dishInfoCol}>
-                            <div style={styles.dishTagRow}>
-                              <DietaryBadge dietary={dish.dietary} size={15} />
-                              {dish.popular && (
-                                <span style={styles.popularTag}>★ Bestseller</span>
-                              )}
-                              {isSoldOut && (
-                                <span style={styles.soldOutBadge}>Sold out</span>
-                              )}
-                            </div>
-
-                            <h3 style={styles.dishName}>{formatDisplayName(dish.name)}</h3>
-
-                            <div style={styles.dishPriceText}>
-                              ₹{numPrice.toFixed(0)}
-                            </div>
-
-                            {dish.description && (
-                              <p style={styles.dishDescription}>{dish.description}</p>
-                            )}
-                          </div>
-
-                          {/* Right: Image & Action */}
-                          <div
-                            style={styles.dishActionCol}
-                            onClick={(e) => {
-                              // Prevent double trigger when clicking action buttons
-                              if (tableOrderingEnabled) e.stopPropagation();
-                            }}
-                          >
-                            <DishImage
-                              src={dish.imageUrl || dish.image_url}
-                              name={dish.name}
-                              width={92}
-                              height={69}
-                            />
-
-                            {/* Ordering controls or menu-only sold out label */}
-                            {tableOrderingEnabled ? (
-                              <div style={styles.dishBtnWrap}>
-                                {isSoldOut ? (
-                                  <button
-                                    type="button"
-                                    disabled
-                                    style={styles.soldOutBtn}
-                                  >
-                                    Sold out
-                                  </button>
-                                ) : stdQty > 0 ? (
-                                  <div style={styles.stepperBox}>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeStandardItem(dish.id)}
-                                      className="menu-tap-press"
-                                      style={styles.stepperActionBtn}
-                                      aria-label={`Remove one ${dish.name}`}
-                                    >
-                                      −
-                                    </button>
-                                    <span style={styles.stepperValue}>{stdQty}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => addStandardItem(dish)}
-                                      className="menu-tap-press"
-                                      style={styles.stepperActionBtn}
-                                      aria-label={`Add one ${dish.name}`}
-                                    >
-                                      +
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => addStandardItem(dish)}
-                                    className="menu-tap-press"
-                                    style={styles.addBtn}
-                                  >
-                                    + ADD
-                                  </button>
-                                )}
-
-                                {!isSoldOut && (
-                                  <button
-                                    type="button"
-                                    onClick={() => openItemDetail(dish)}
-                                    style={styles.customizeLinkBtn}
-                                  >
-                                    Customize ›
-                                  </button>
-                                )}
-                              </div>
-                            ) : isSoldOut ? (
-                              <div style={styles.dishBtnWrap}>
-                                <div
-                                  style={{
-                                    ...styles.soldOutBtn,
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                  }}
-                                >
-                                  Sold out
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
+                          {(group.cat.name || "C").charAt(0).toUpperCase()}
                         </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))
+                      </div>
+                      <span
+                        style={{
+                          ...styles.railItemLabel,
+                          color: isActive ? MENU_TOKENS.colors.light.accentInk : MENU_TOKENS.colors.light.ink,
+                          fontWeight: isActive ? 700 : 500,
+                        }}
+                      >
+                        {formatDisplayName(group.cat.name)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </nav>
             )}
+
+            {/* CONTENT COLUMN */}
+            <div
+              style={{
+                ...styles.contentCol,
+                width: MENU_CATEGORY_NAV === "rail" && groupedCategories.length > 1 ? undefined : "100%",
+              }}
+            >
+              {groupedCategories.length === 0 ? (
+                <div style={styles.emptyStateCard}>
+                  <div style={{ fontSize: "32px", marginBottom: "8px" }}>🍽️</div>
+                  <div style={styles.emptyStateTitle}>No dishes found</div>
+                  <div style={styles.emptyStateSubtitle}>
+                    Try clearing your search query.
+                  </div>
+                </div>
+              ) : (
+                groupedCategories.map((group) => (
+                  <section
+                    key={group.cat.id}
+                    id={`cat-section-${group.cat.id}`}
+                    style={{
+                      ...styles.categorySection,
+                      scrollMarginTop: `${stickyMetrics.stickyOffset + 8}px`,
+                    }}
+                  >
+                    <div style={styles.sectionHeaderRow}>
+                      <h2 style={styles.sectionCategoryTitle}>{formatDisplayName(group.cat.name)}</h2>
+                      <span style={styles.sectionItemCountBadge}>
+                        {group.items.length} {group.items.length === 1 ? "dish" : "dishes"}
+                      </span>
+                    </div>
+
+                    {/* DISH CARDS (Controlled by MENU_LAYOUT) */}
+                    {MENU_LAYOUT === "rail-grid" ? (
+                      <div style={styles.dishGridWrap}>
+                        {group.items.map((dish, idx) => {
+                          const isSoldOut = dish.available === false;
+                          const numPrice = parsePrice(dish.price);
+                          const stdQty = getStandardItemQty(dish.id);
+
+                          return (
+                            <div
+                              key={dish.id}
+                              className="menu-tap-press"
+                              style={{
+                                ...styles.gridDishCard,
+                                opacity: isSoldOut ? 0.55 : 1,
+                                backgroundColor: isSoldOut ? "#F7F5F0" : "#FFFFFF",
+                                filter: isSoldOut ? "grayscale(25%)" : "none",
+                                animation: idx < 8 ? `menuCardFadeIn 260ms cubic-bezier(0.22, 1, 0.36, 1) ${idx * 30}ms both` : undefined,
+                              }}
+                              onClick={() => {
+                                openItemDetail(dish);
+                              }}
+                            >
+                              {/* Round Photo with Dietary mark */}
+                              <div style={styles.gridPhotoWrap}>
+                                <RoundDishPhoto
+                                  src={dish.imageUrl || dish.image_url}
+                                  name={dish.name}
+                                  size={64}
+                                />
+                                {dish.dietary && (
+                                  <div style={styles.gridDietaryMark}>
+                                    <DietaryBadge dietary={dish.dietary} size={14} />
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Bestseller Badge */}
+                              {dish.popular && (
+                                <span style={styles.gridPopularTag}>★ Bestseller</span>
+                              )}
+
+                              {/* Dish Name */}
+                              <h3 style={styles.gridDishName}>{formatDisplayName(dish.name)}</h3>
+
+                              {/* Description (omitted if empty) */}
+                              {dish.description ? (
+                                <p style={styles.gridDishDescription}>{dish.description}</p>
+                              ) : null}
+
+                              {/* Tabular Price */}
+                              <div style={styles.gridDishPrice}>
+                                ₹{numPrice.toFixed(0)}
+                              </div>
+
+                              {/* Actions / Stepper */}
+                              <div
+                                style={styles.gridDishActions}
+                                onClick={(e) => {
+                                  if (tableOrderingEnabled) e.stopPropagation();
+                                }}
+                              >
+                                {tableOrderingEnabled ? (
+                                  <>
+                                    {isSoldOut ? (
+                                      <div style={styles.gridSoldOutPill}>Sold out</div>
+                                    ) : stdQty > 0 ? (
+                                      <div style={styles.gridStepperBox}>
+                                        <button
+                                          type="button"
+                                          onClick={() => removeStandardItem(dish.id)}
+                                          className="menu-tap-press"
+                                          style={styles.gridStepperBtn}
+                                          aria-label={`Remove one ${dish.name}`}
+                                        >
+                                          −
+                                        </button>
+                                        <span style={styles.gridStepperQty}>{stdQty}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => addStandardItem(dish)}
+                                          className="menu-tap-press"
+                                          style={styles.gridStepperBtn}
+                                          aria-label={`Add one ${dish.name}`}
+                                        >
+                                          +
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => addStandardItem(dish)}
+                                        className="menu-tap-press"
+                                        style={styles.gridAddBtn}
+                                      >
+                                        + ADD
+                                      </button>
+                                    )}
+
+                                    {!isSoldOut && (
+                                      <button
+                                        type="button"
+                                        onClick={() => openItemDetail(dish)}
+                                        style={styles.gridCustomizeLink}
+                                      >
+                                        Customize ›
+                                      </button>
+                                    )}
+                                  </>
+                                ) : isSoldOut ? (
+                                  <div style={styles.gridSoldOutPill}>Sold out</div>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      /* rail-list alternative */
+                      <div style={styles.dishListWrap}>
+                        {group.items.map((dish, idx) => {
+                          const isSoldOut = dish.available === false;
+                          const numPrice = parsePrice(dish.price);
+                          const stdQty = getStandardItemQty(dish.id);
+
+                          return (
+                            <div
+                              key={dish.id}
+                              className="menu-tap-press"
+                              style={{
+                                ...styles.listDishCard,
+                                opacity: isSoldOut ? 0.55 : 1,
+                                backgroundColor: isSoldOut ? "#F7F5F0" : "#FFFFFF",
+                                filter: isSoldOut ? "grayscale(25%)" : "none",
+                                animation: idx < 6 ? `menuCardFadeIn 260ms cubic-bezier(0.22, 1, 0.36, 1) ${idx * 40}ms both` : undefined,
+                              }}
+                              onClick={() => {
+                                openItemDetail(dish);
+                              }}
+                            >
+                              {/* Left: 76px Round Photo with Dietary mark */}
+                              <div style={styles.listPhotoWrap}>
+                                <RoundDishPhoto
+                                  src={dish.imageUrl || dish.image_url}
+                                  name={dish.name}
+                                  size={76}
+                                />
+                                {dish.dietary && (
+                                  <div style={styles.listDietaryMark}>
+                                    <DietaryBadge dietary={dish.dietary} size={15} />
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Middle: Info */}
+                              <div style={styles.dishInfoCol}>
+                                <div style={styles.dishTagRow}>
+                                  {dish.popular && (
+                                    <span style={styles.popularTag}>★ Bestseller</span>
+                                  )}
+                                  {isSoldOut && (
+                                    <span style={styles.soldOutBadge}>Sold out</span>
+                                  )}
+                                </div>
+                                <h3 style={styles.dishName}>{formatDisplayName(dish.name)}</h3>
+                                <div style={styles.dishPriceText}>
+                                  ₹{numPrice.toFixed(0)}
+                                </div>
+                                {dish.description && (
+                                  <p style={styles.dishDescription}>{dish.description}</p>
+                                )}
+                              </div>
+
+                              {/* Right: Actions */}
+                              <div
+                                style={styles.dishActionCol}
+                                onClick={(e) => {
+                                  if (tableOrderingEnabled) e.stopPropagation();
+                                }}
+                              >
+                                {tableOrderingEnabled ? (
+                                  <div style={styles.dishBtnWrap}>
+                                    {isSoldOut ? (
+                                      <button type="button" disabled style={styles.soldOutBtn}>
+                                        Sold out
+                                      </button>
+                                    ) : stdQty > 0 ? (
+                                      <div style={styles.stepperBox}>
+                                        <button
+                                          type="button"
+                                          onClick={() => removeStandardItem(dish.id)}
+                                          className="menu-tap-press"
+                                          style={styles.stepperActionBtn}
+                                          aria-label={`Remove one ${dish.name}`}
+                                        >
+                                          −
+                                        </button>
+                                        <span style={styles.stepperValue}>{stdQty}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => addStandardItem(dish)}
+                                          className="menu-tap-press"
+                                          style={styles.stepperActionBtn}
+                                          aria-label={`Add one ${dish.name}`}
+                                        >
+                                          +
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => addStandardItem(dish)}
+                                        className="menu-tap-press"
+                                        style={styles.addBtn}
+                                      >
+                                        + ADD
+                                      </button>
+                                    )}
+                                    {!isSoldOut && (
+                                      <button
+                                        type="button"
+                                        onClick={() => openItemDetail(dish)}
+                                        style={styles.customizeLinkBtn}
+                                      >
+                                        Customize ›
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : isSoldOut ? (
+                                  <div style={styles.dishBtnWrap}>
+                                    <div
+                                      style={{
+                                        ...styles.soldOutBtn,
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                      }}
+                                    >
+                                      Sold out
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+                ))
+              )}
+
+              {/* Bottom spacer so the last category can scroll all the way to the top */}
+              {groupedCategories.length > 0 && (
+                <div
+                  style={{
+                    minHeight: `calc(100vh - ${stickyMetrics.stickyOffset + 80}px)`,
+                    pointerEvents: "none",
+                  }}
+                  aria-hidden="true"
+                />
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1347,8 +1823,12 @@ export default function RestaurantExperience({
       {/* ---------------------------------------------------- */}
       {/* 5. ITEM DETAIL & CUSTOMIZATION SHEET (MODAL) */}
       {/* ---------------------------------------------------- */}
-      {detailItem && (
-        <div style={styles.modalOverlay} onClick={() => setDetailItem(null)}>
+      {mounted && typeof document !== "undefined" && detailItem && createPortal(
+        <div
+          style={styles.modalOverlay}
+          className={menuFontClassNames}
+          onClick={() => setDetailItem(null)}
+        >
           <div
             style={styles.modalSheet}
             onClick={(e) => e.stopPropagation()}
@@ -1488,14 +1968,19 @@ export default function RestaurantExperience({
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ---------------------------------------------------- */}
       {/* 6. CART CHECKOUT SHEET (MODAL) */}
       {/* ---------------------------------------------------- */}
-      {tableOrderingEnabled && showCheckoutSheet && (
-        <div style={styles.modalOverlay} onClick={() => setShowCheckoutSheet(false)}>
+      {mounted && typeof document !== "undefined" && tableOrderingEnabled && showCheckoutSheet && createPortal(
+        <div
+          style={styles.modalOverlay}
+          className={menuFontClassNames}
+          onClick={() => setShowCheckoutSheet(false)}
+        >
           <div
             style={styles.checkoutSheet}
             onClick={(e) => e.stopPropagation()}
@@ -1506,7 +1991,7 @@ export default function RestaurantExperience({
               <div>
                 <h3 style={styles.modalTitle}>Your Order</h3>
                 <div style={styles.checkoutTableLabel}>
-                  {standTableNum ? `Table ${standTableNum} • Dine In` : "Dine In Order"}
+                  {isTableValid ? `Table ${tableNumber} • Dine In` : "Dine In Order"}
                 </div>
               </div>
               <button
@@ -1586,8 +2071,25 @@ export default function RestaurantExperience({
 
               {/* Customer Inputs */}
               <div style={styles.customerInputsBox}>
-                {!standTableNum && (
-                  <div style={{ marginBottom: "12px" }}>
+                {/* Table Line or Picker */}
+                {isTableValid ? (
+                  <div style={styles.checkoutTableCard}>
+                    <div style={styles.checkoutTableCardLeft}>
+                      <span style={styles.checkoutTableCardLabel}>Table</span>
+                      <span style={styles.checkoutTableCardValue}>Table {tableNumber}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowTablePicker(true)}
+                      style={styles.checkoutTableChangeBtn}
+                      className="menu-tap-press"
+                      aria-label="Change table number"
+                    >
+                      Change
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: "14px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
                       <label style={styles.inputLabel}>
                         Table Number <span style={{ color: "#ef4444" }}>*</span>
@@ -1602,25 +2104,38 @@ export default function RestaurantExperience({
                         </button>
                       )}
                     </div>
-                    <input
-                      type="number"
-                      min="1"
-                      max={tableCount || 999}
-                      placeholder="Enter your table number (e.g. 5)"
-                      value={tableNumber}
-                      onChange={(e) => setTableNumber(e.target.value)}
-                      style={styles.inputField}
-                    />
+                    {tableCount && tableCount > 0 && tableCount <= 50 ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowTablePicker(true)}
+                        className="menu-tap-press"
+                        style={styles.pickTablePromptBtn}
+                      >
+                        Select your table number ›
+                      </button>
+                    ) : (
+                      <input
+                        type="number"
+                        min="1"
+                        max={tableCount || 999}
+                        placeholder="Enter your table number (e.g. 5)"
+                        value={tableNumber}
+                        onChange={(e) => {
+                          setTableNumber(e.target.value);
+                          setOrderError("");
+                        }}
+                        style={styles.inputField}
+                      />
+                    )}
                   </div>
                 )}
 
                 <div style={{ marginBottom: "12px" }}>
-                  <label style={styles.inputLabel}>
-                    Your Name <span style={{ color: "#ef4444" }}>*</span>
-                  </label>
+                  <label style={styles.inputLabel}>Your name (optional)</label>
                   <input
                     type="text"
-                    placeholder="Enter your name"
+                    maxLength={80}
+                    placeholder="Enter your name (optional)"
                     value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
                     style={styles.inputField}
@@ -1636,6 +2151,7 @@ export default function RestaurantExperience({
                     onChange={(e) => setCustomerPhone(e.target.value)}
                     style={styles.inputField}
                   />
+                  <div style={styles.inputHint}>for offers and loyalty</div>
                 </div>
 
                 {orderError && (
@@ -1649,23 +2165,32 @@ export default function RestaurantExperience({
             <div style={styles.checkoutFooter}>
               <button
                 type="button"
-                disabled={placingOrder}
+                disabled={placingOrder || !isTableValid || cartLinesList.length === 0}
                 onClick={handlePlaceOrder}
                 className="menu-tap-press"
-                style={styles.placeOrderBtn}
+                style={{
+                  ...styles.placeOrderBtn,
+                  opacity: placingOrder || !isTableValid || cartLinesList.length === 0 ? 0.5 : 1,
+                  cursor: placingOrder || !isTableValid || cartLinesList.length === 0 ? "not-allowed" : "pointer",
+                }}
               >
                 {placingOrder ? "Placing Order..." : `Place Order (₹${cartTotal.toFixed(0)})`}
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ---------------------------------------------------- */}
       {/* 6.5 WHICH TABLE ARE YOU AT? MODAL */}
       {/* ---------------------------------------------------- */}
-      {tableOrderingEnabled && showTablePicker && (
-        <div style={styles.modalOverlay} onClick={() => setShowTablePicker(false)}>
+      {mounted && typeof document !== "undefined" && tableOrderingEnabled && showTablePicker && createPortal(
+        <div
+          style={styles.modalOverlay}
+          className={menuFontClassNames}
+          onClick={() => setShowTablePicker(false)}
+        >
           <div
             style={styles.tablePickerModal}
             onClick={(e) => e.stopPropagation()}
@@ -1700,6 +2225,12 @@ export default function RestaurantExperience({
                         setTableNumber(String(num));
                         setShowTablePicker(false);
                         setOrderError("");
+                        try {
+                          const sessionKey = device.device_code ? `tapx_session_table_${device.device_code}` : "tapx_session_table";
+                          if (typeof window !== "undefined" && window.sessionStorage) {
+                            window.sessionStorage.setItem(sessionKey, String(num));
+                          }
+                        } catch {}
                       }}
                       className="menu-tap-press"
                       style={{
@@ -1731,13 +2262,19 @@ export default function RestaurantExperience({
                     type="button"
                     onClick={() => {
                       const parsed = parseInt(tablePickerInput, 10);
-                      if (!parsed || parsed <= 0) {
+                      if (!parsed || parsed <= 0 || (tableCount && tableCount > 0 && parsed > tableCount)) {
                         setOrderError("Please enter a valid table number.");
                         return;
                       }
                       setTableNumber(String(parsed));
                       setShowTablePicker(false);
                       setOrderError("");
+                      try {
+                        const sessionKey = device.device_code ? `tapx_session_table_${device.device_code}` : "tapx_session_table";
+                        if (typeof window !== "undefined" && window.sessionStorage) {
+                          window.sessionStorage.setItem(sessionKey, String(parsed));
+                        }
+                      } catch {}
                     }}
                     className="menu-tap-press"
                     style={styles.confirmAddBtn}
@@ -1748,7 +2285,8 @@ export default function RestaurantExperience({
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ---------------------------------------------------- */}
@@ -1909,8 +2447,290 @@ const styles: Record<string, CSSProperties> = {
     flex: 1,
   },
   searchBarWrapper: {
-    padding: "12px 16px 8px 16px",
-    backgroundColor: MENU_TOKENS.colors.light.bg,
+    position: "sticky",
+    top: "64px",
+    zIndex: 90,
+    padding: "10px 16px 8px 16px",
+    backgroundColor: "rgba(251, 248, 243, 0.94)",
+    backdropFilter: "blur(14px)",
+    WebkitBackdropFilter: "blur(14px)",
+    borderBottom: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    boxShadow: "0 1px 3px rgba(28, 25, 23, 0.02)",
+  },
+  menuBodyRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "10px",
+    padding: "12px 10px 24px 8px",
+    boxSizing: "border-box",
+  },
+  railNav: {
+    position: "sticky",
+    top: "124px",
+    maxHeight: "calc(100vh - 130px)",
+    overflowY: "auto",
+    scrollbarWidth: "none",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    paddingBottom: "80px",
+    boxSizing: "border-box",
+  },
+  railItemBtn: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    padding: "6px 2px",
+    borderRadius: "14px",
+    border: "none",
+    background: "transparent",
+    cursor: "pointer",
+    width: "100%",
+    boxSizing: "border-box",
+  },
+  railThumbnailBox: {
+    width: "44px",
+    height: "44px",
+    borderRadius: "50%",
+    overflow: "hidden",
+    position: "relative",
+    flexShrink: 0,
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    transition: "box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1)",
+  },
+  railThumbnailImg: {
+    width: "100%",
+    height: "100%",
+    borderRadius: "50%",
+    objectFit: "cover",
+    display: "block",
+  },
+  railThumbnailLetter: {
+    width: "100%",
+    height: "100%",
+    borderRadius: "50%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "16px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.accentInk,
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+  },
+  railItemLabel: {
+    marginTop: "4px",
+    fontSize: "12px",
+    lineHeight: 1.25,
+    textAlign: "center",
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    wordBreak: "break-word",
+    maxWidth: "100%",
+    padding: "0 2px",
+  },
+  contentCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  dishGridWrap: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(112px, 1fr))",
+    gap: "10px",
+  },
+  gridDishCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: "18px",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    boxShadow: MENU_TOKENS.shadows.card,
+    padding: "12px 8px 10px 8px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    textAlign: "center",
+    position: "relative",
+    cursor: "pointer",
+    boxSizing: "border-box",
+    transition: "background-color 0.15s ease, transform 160ms cubic-bezier(0.22, 1, 0.36, 1)",
+  },
+  gridPhotoWrap: {
+    position: "relative",
+    width: "64px",
+    height: "64px",
+    margin: "0 auto",
+    flexShrink: 0,
+  },
+  gridDietaryMark: {
+    position: "absolute",
+    top: "-2px",
+    left: "-2px",
+    zIndex: 2,
+    boxShadow: "0 1px 3px rgba(0,0,0,0.12)",
+    borderRadius: "4px",
+  },
+  gridPopularTag: {
+    fontSize: "10px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.accentInk,
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
+    padding: "1px 6px",
+    borderRadius: "4px",
+    marginTop: "6px",
+    whiteSpace: "nowrap",
+  },
+  gridDishName: {
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "13.5px",
+    fontWeight: 700,
+    margin: "6px 0 2px 0",
+    color: MENU_TOKENS.colors.light.ink,
+    lineHeight: 1.25,
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    width: "100%",
+  },
+  gridDishDescription: {
+    fontSize: "12px",
+    color: MENU_TOKENS.colors.light.muted,
+    margin: "2px 0 0 0",
+    lineHeight: 1.35,
+    display: "-webkit-box",
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    width: "100%",
+  },
+  gridDishPrice: {
+    fontSize: "13px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.ink,
+    fontVariantNumeric: "tabular-nums",
+    marginTop: "6px",
+    marginBottom: "4px",
+  },
+  gridDishActions: {
+    width: "100%",
+    marginTop: "auto",
+    paddingTop: "4px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "3px",
+  },
+  gridAddBtn: {
+    minHeight: "32px",
+    width: "100%",
+    maxWidth: "100px",
+    padding: "0 12px",
+    backgroundColor: "#FFFFFF",
+    color: MENU_TOKENS.colors.light.veg,
+    border: `1.5px solid ${MENU_TOKENS.colors.light.veg}`,
+    borderRadius: "16px",
+    fontSize: "11.5px",
+    fontWeight: 800,
+    cursor: "pointer",
+    boxShadow: "0 1px 2px rgba(30, 142, 62, 0.08)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    boxSizing: "border-box",
+  },
+  gridStepperBox: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: MENU_TOKENS.colors.light.veg,
+    color: "#FFFFFF",
+    borderRadius: "16px",
+    overflow: "hidden",
+    boxShadow: "0 1px 3px rgba(30, 142, 62, 0.2)",
+    width: "100%",
+    maxWidth: "100px",
+    height: "32px",
+    boxSizing: "border-box",
+  },
+  gridStepperBtn: {
+    background: "none",
+    border: "none",
+    color: "#FFFFFF",
+    fontSize: "15px",
+    fontWeight: 700,
+    width: "30px",
+    height: "32px",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
+  },
+  gridStepperQty: {
+    fontSize: "12px",
+    fontWeight: 700,
+    padding: "0 4px",
+    minWidth: "16px",
+    textAlign: "center",
+    fontVariantNumeric: "tabular-nums",
+  },
+  gridCustomizeLink: {
+    background: "none",
+    border: "none",
+    color: MENU_TOKENS.colors.light.accentInk,
+    fontSize: "11px",
+    fontWeight: 600,
+    cursor: "pointer",
+    padding: "2px 4px",
+  },
+  gridSoldOutPill: {
+    fontSize: "11px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.soldOutText,
+    backgroundColor: MENU_TOKENS.colors.light.soldOutBg,
+    border: `1px solid ${MENU_TOKENS.colors.light.soldOutBorder}`,
+    borderRadius: "6px",
+    padding: "3px 8px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dishListWrap: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  listDishCard: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "12px",
+    padding: "14px",
+    borderRadius: "18px",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    boxShadow: MENU_TOKENS.shadows.card,
+    cursor: "pointer",
+    boxSizing: "border-box",
+    transition: "background-color 0.15s ease, transform 160ms cubic-bezier(0.22, 1, 0.36, 1)",
+  },
+  listPhotoWrap: {
+    position: "relative",
+    width: "76px",
+    height: "76px",
+    flexShrink: 0,
+  },
+  listDietaryMark: {
+    position: "absolute",
+    top: "-2px",
+    left: "-2px",
+    zIndex: 2,
+    boxShadow: "0 1px 3px rgba(0,0,0,0.12)",
+    borderRadius: "4px",
   },
   searchInputBox: {
     display: "flex",
@@ -2260,10 +3080,11 @@ const styles: Record<string, CSSProperties> = {
     backgroundColor: "rgba(28, 25, 23, 0.6)",
     backdropFilter: "blur(6px)",
     WebkitBackdropFilter: "blur(6px)",
-    zIndex: 999,
+    zIndex: 100000,
     display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "center",
+    flexDirection: "column",
+    justifyContent: "flex-end",
+    alignItems: "center",
     animation: "menuBackdropFadeIn 200ms ease",
   },
   modalSheet: {
@@ -2271,11 +3092,10 @@ const styles: Record<string, CSSProperties> = {
     maxWidth: MENU_TOKENS.layout.maxContentWidth,
     backgroundColor: "#FFFFFF",
     borderRadius: MENU_TOKENS.radii.sheetTop,
-    maxHeight: "88vh",
-    overflowY: "auto",
-    WebkitOverflowScrolling: "touch",
+    maxHeight: "90dvh",
     display: "flex",
     flexDirection: "column",
+    overflow: "hidden",
     boxShadow: MENU_TOKENS.shadows.modal,
     animation: "menuSheetSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1)",
   },
@@ -2285,10 +3105,9 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    position: "sticky",
-    top: 0,
     backgroundColor: "#FFFFFF",
     zIndex: 10,
+    flexShrink: 0,
   },
   modalTitleRow: {
     display: "flex",
@@ -2320,6 +3139,10 @@ const styles: Record<string, CSSProperties> = {
   modalBody: {
     padding: "16px 20px",
     flex: 1,
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    minHeight: 0,
+    overscrollBehavior: "contain",
   },
   modalImageWrap: {
     width: "100%",
@@ -2423,6 +3246,7 @@ const styles: Record<string, CSSProperties> = {
     borderTop: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     backgroundColor: "#FFFFFF",
     paddingBottom: "max(16px, env(safe-area-inset-bottom, 16px))",
+    flexShrink: 0,
   },
   confirmAddBtn: {
     width: "100%",
@@ -2442,11 +3266,10 @@ const styles: Record<string, CSSProperties> = {
     maxWidth: MENU_TOKENS.layout.maxContentWidth,
     backgroundColor: "#FFFFFF",
     borderRadius: MENU_TOKENS.radii.sheetTop,
-    maxHeight: "90vh",
-    overflowY: "auto",
-    WebkitOverflowScrolling: "touch",
+    maxHeight: "90dvh",
     display: "flex",
     flexDirection: "column",
+    overflow: "hidden",
     boxShadow: MENU_TOKENS.shadows.modal,
     animation: "menuSheetSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1)",
   },
@@ -2459,6 +3282,10 @@ const styles: Record<string, CSSProperties> = {
   checkoutBody: {
     padding: "16px 20px",
     flex: 1,
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    minHeight: 0,
+    overscrollBehavior: "contain",
   },
   checkoutItemsList: {
     display: "flex",
@@ -2542,6 +3369,63 @@ const styles: Record<string, CSSProperties> = {
   customerInputsBox: {
     marginBottom: "12px",
   },
+  checkoutTableCard: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "12px 14px",
+    backgroundColor: MENU_TOKENS.colors.light.bg,
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: MENU_TOKENS.radii.input,
+    marginBottom: "14px",
+  },
+  checkoutTableCardLeft: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+  },
+  checkoutTableCardLabel: {
+    fontSize: "11px",
+    color: MENU_TOKENS.colors.light.muted,
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    fontWeight: 600,
+  },
+  checkoutTableCardValue: {
+    fontFamily: MENU_TOKENS.fonts.serif,
+    fontSize: "16px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.ink,
+  },
+  checkoutTableChangeBtn: {
+    padding: "6px 12px",
+    backgroundColor: "#FFFFFF",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: "8px",
+    fontSize: "12px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.accentInk,
+    cursor: "pointer",
+    boxShadow: "0 1px 2px rgba(28, 25, 23, 0.04)",
+  },
+  pickTablePromptBtn: {
+    width: "100%",
+    padding: "12px 14px",
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    border: `1px dashed ${MENU_TOKENS.colors.light.accentBorder}`,
+    borderRadius: MENU_TOKENS.radii.input,
+    fontSize: "13px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.accentInk,
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  inputHint: {
+    fontSize: "11px",
+    color: MENU_TOKENS.colors.light.muted,
+    marginTop: "4px",
+    lineHeight: 1.3,
+  },
   inputLabel: {
     display: "block",
     fontSize: "12px",
@@ -2576,6 +3460,7 @@ const styles: Record<string, CSSProperties> = {
     borderTop: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
     backgroundColor: "#FFFFFF",
     paddingBottom: "max(16px, env(safe-area-inset-bottom, 16px))",
+    flexShrink: 0,
   },
   placeOrderBtn: {
     width: "100%",
@@ -2903,9 +3788,10 @@ const styles: Record<string, CSSProperties> = {
     maxWidth: MENU_TOKENS.layout.maxContentWidth,
     backgroundColor: "#FFFFFF",
     borderRadius: MENU_TOKENS.radii.sheetTop,
-    maxHeight: "85vh",
-    overflowY: "auto",
-    WebkitOverflowScrolling: "touch",
+    maxHeight: "85dvh",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
     boxShadow: MENU_TOKENS.shadows.modal,
     animation: "menuSheetSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1)",
   },
@@ -2916,6 +3802,11 @@ const styles: Record<string, CSSProperties> = {
   },
   tablePickerBody: {
     padding: "16px 20px 24px 20px",
+    flex: 1,
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    minHeight: 0,
+    overscrollBehavior: "contain",
   },
   tablePillGrid: {
     display: "grid",

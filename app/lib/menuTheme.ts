@@ -141,6 +141,7 @@ export const MENU_TOKENS = {
 export const MENU_THEME_GLOBAL_CSS = `
 :root {
   color-scheme: light;
+  --menu-rail-width: 72px;
   --menu-bg: #FBF8F3;
   --menu-surface: #FFFFFF;
   --menu-surface-elevated: #FFFFFF;
@@ -163,6 +164,28 @@ export const MENU_THEME_GLOBAL_CSS = `
   --menu-card-shadow: 0 2px 4px rgba(28, 25, 23, 0.02), 0 8px 16px rgba(28, 25, 23, 0.04);
   --menu-elevated-shadow: 0 4px 12px rgba(28, 25, 23, 0.05), 0 16px 32px rgba(28, 25, 23, 0.08);
   --menu-floating-shadow: 0 4px 12px rgba(28, 25, 23, 0.08), 0 12px 28px rgba(28, 25, 23, 0.12);
+}
+
+@media (max-width: 359px) {
+  :root {
+    --menu-rail-width: 60px;
+  }
+}
+
+.menu-rail-nav {
+  width: var(--menu-rail-width, 72px);
+  flex-shrink: 0;
+}
+
+.menu-rail-btn {
+  min-height: 44px;
+  min-width: 44px;
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.menu-rail-btn:focus-visible {
+  outline: 2px solid var(--menu-accent, #B8893B);
+  outline-offset: 2px;
 }
 
 @keyframes menuCardFadeIn {
