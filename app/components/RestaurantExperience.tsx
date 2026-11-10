@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 import { parseStandTableNumber, resolveSessionTableNumber } from "../lib/tableNumber";
+import { formatOrderNumber } from "../lib/orderNumber";
 import { WhatsAppIcon } from "./BrandIcons";
 import UpiPaymentModal from "./UpiPaymentModal";
 import { MENU_TOKENS, MENU_THEME_GLOBAL_CSS, formatDisplayName } from "../lib/menuTheme";
@@ -1630,7 +1631,7 @@ export default function RestaurantExperience({
               <div style={styles.orderTopMetaRow}>
                 <div>
                   <div style={styles.orderIdText}>
-                    Order #{currentOrder.order_number || currentOrder.id.slice(0, 6).toUpperCase()}
+                    Order #{formatOrderNumber(currentOrder)}
                   </div>
                   <div style={styles.orderTimeText}>
                     Placed at {formatOrderTime(currentOrder.created_at) || "Just now"}

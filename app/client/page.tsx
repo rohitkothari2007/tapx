@@ -5,6 +5,7 @@ import LiveOrdersPanel, {
   LATE_ORDER_ALERT_MINUTES,
 } from "./LiveOrdersPanel";
 import MenuManagerSection from "./MenuManagerSection";
+import { formatOrderNumber } from "../lib/orderNumber";
 
 import {
   useCallback,
@@ -820,20 +821,7 @@ export default function ClientPortalPage() {
         throw new Error(ordersResult.error.message);
       }
 
-      const rawOrders = (ordersResult.data || []) as Order[];
-
-      const sortedAsc = [...rawOrders].sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-      );
-      const orderNumberMap: Record<string, number> = {};
-      sortedAsc.forEach((ord, index) => {
-        orderNumberMap[ord.id] = ord.order_number || index + 1;
-      });
-
-      const loadedOrders = rawOrders.map((ord) => ({
-        ...ord,
-        order_number: ord.order_number || orderNumberMap[ord.id] || 1,
-      }));
+      const loadedOrders = (ordersResult.data || []) as Order[];
 
       setBusiness(businessResult.data as Business);
       setFeatures((featuresResult.data || []) as Feature[]);
@@ -1133,6 +1121,8 @@ export default function ClientPortalPage() {
   const handleSaveOrderFlow = async (newFlow: "simple" | "steps") => {
     if (!business?.id) return;
     try {
+      // Read existing module config JSON first (from database with fallback to state)
+      // to ensure table_count and any other existing settings are strictly preserved when saving order_flow.
       const { data: existingRow } = await supabase
         .from("business_module_configs")
         .select("id, config, feature_id")
@@ -1140,8 +1130,16 @@ export default function ClientPortalPage() {
         .eq("module_key", "table_ordering")
         .maybeSingle();
 
+      const baseConfig =
+        existingRow?.config && typeof existingRow.config === "object"
+          ? existingRow.config
+          : tableOrderingConfigRow?.config && typeof tableOrderingConfigRow.config === "object"
+          ? tableOrderingConfigRow.config
+          : {};
+
+      // Merge order_flow into existing config JSON so all existing keys (e.g. table_count) stay intact
       const mergedConfig = {
-        ...(existingRow?.config || {}),
+        ...baseConfig,
         order_flow: newFlow,
       };
 
@@ -1185,7 +1183,7 @@ export default function ClientPortalPage() {
         if (found) {
           return current.map((m) =>
             normalizeKey(m.module_key) === "table_ordering"
-              ? { ...m, config: { ...(m.config || {}), order_flow: newFlow } }
+              ? { ...m, config: mergedConfig }
               : m
           );
         }
@@ -1238,16 +1236,12 @@ export default function ClientPortalPage() {
     );
   }, [orders]);
 
+  // Counts every non-cancelled order of today
   const todayRevenue = useMemo(() => {
-    return todayOrders
-      .filter((order) =>
-        ["completed", "served"].includes(order.status)
-      )
-      .reduce(
-        (sum, order) =>
-          sum + Number(order.total || 0),
-        0
-      );
+    return todayOrders.reduce(
+      (sum, order) => sum + Number(order.total || 0),
+      0
+    );
   }, [todayOrders]);
 
   const todayCompletedOrdersCount = useMemo(() => {
@@ -3134,7 +3128,7 @@ function Overview({
 
       <section className="stats">
         <StatCard
-          label="Today's revenue"
+          label="Today's order value (not cancelled)"
           value={formatCurrency(todayRevenue)}
           note={`${todayOrders.length} orders today (excluding cancelled)`}
           icon="₹"
@@ -4980,7 +4974,7 @@ function OrdersPage({
                       {order.table_number ? `Table ${order.table_number}` : "No Table"}
                     </div>
                     <div className="card-order-num">
-                      #{order.order_number || order.id.slice(0, 8)}
+                      #{formatOrderNumber(order)}
                     </div>
                   </div>
 
@@ -5129,7 +5123,7 @@ function OrdersPage({
                 </div>
 
                 <h2>
-                  Order #{selectedOrder.order_number || selectedOrder.id.slice(0, 8)}
+                  Order #{formatOrderNumber(selectedOrder)}
                 </h2>
               </div>
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { formatOrderNumber } from "../lib/orderNumber";
 
 export const LATE_ORDER_WARN_MINUTES = 10;
 export const LATE_ORDER_ALERT_MINUTES = 20;
@@ -377,7 +378,7 @@ export default function LiveOrdersPanel({
                         : "No Table"}
                     </div>
                     <div style={styles.orderRef}>
-                      #{order.order_number || order.id.slice(0, 8)}
+                      #{formatOrderNumber(order)}
                     </div>
                   </div>
 

@@ -1732,7 +1732,7 @@ export default function AnalyticsPage({
         <section className="analytics-orders-section">
           <div className="analytics-grid">
             <StatMetricCard
-              title="Today's revenue"
+              title="Today's order value (not cancelled)"
               value={formatCurrency(todayRevenue)}
               note={`${todayOrders.length} orders created today`}
             />
