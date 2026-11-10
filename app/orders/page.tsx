@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { formatOrderNumber } from "../lib/orderNumber";
 
 type Order = {
   id: string;
@@ -657,13 +658,7 @@ export default function OrdersPage() {
                           styles.orderId
                         }
                       >
-                        ORDER #
-                        {order.id
-                          .slice(
-                            0,
-                            8
-                          )
-                          .toUpperCase()}
+                        ORDER #{formatOrderNumber(order)}
                       </div>
 
                       <h2
@@ -863,13 +858,7 @@ export default function OrdersPage() {
                       styles.eyebrow
                     }
                   >
-                    ORDER #
-                    {selected.id
-                      .slice(
-                        0,
-                        8
-                      )
-                      .toUpperCase()}
+                    ORDER #{formatOrderNumber(selected)}
                   </div>
 
                   <h2
