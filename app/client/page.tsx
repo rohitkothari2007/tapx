@@ -35,6 +35,7 @@ import {
   validateOnlineOrderingConfig,
   sanitizeOnlineOrderingLinks,
 } from "../lib/onlineOrdering";
+import TablesBoard from "../components/TablesBoard";
 
 function playDashboardChime() {
   try {
@@ -177,6 +178,7 @@ type ClientDevice = {
 type PageKey =
   | "overview"
   | "devices"
+  | "tables"
   | "hotel_requests"
   | "orders"
   | "appointments"
@@ -1203,6 +1205,153 @@ export default function ClientPortalPage() {
     }
   };
 
+  const hasTableOrdering = hasModule(
+    "table_ordering",
+    "table-ordering",
+    "table ordering"
+  );
+
+  const tableCount = useMemo(() => {
+    const raw = (tableOrderingConfigRow?.config as Record<string, any>)?.table_count;
+    if (typeof raw === "number") return raw;
+    const parsed = parseInt(String(raw || ""), 10);
+    return isNaN(parsed) ? 0 : parsed;
+  }, [tableOrderingConfigRow]);
+
+  const primaryDeviceCode = useMemo(() => {
+    return (
+      (tableOrderingConfigRow?.config as Record<string, any>)?.primary_device_code || null
+    );
+  }, [tableOrderingConfigRow]);
+
+  const handleSaveTableCount = async (newCount: number) => {
+    if (!business?.id) return;
+    try {
+      const { data: existingRow } = await supabase
+        .from("business_module_configs")
+        .select("id, config, feature_id")
+        .eq("business_id", business.id)
+        .eq("module_key", "table_ordering")
+        .maybeSingle();
+
+      const baseConfig = (existingRow?.config || tableOrderingConfigRow?.config || {}) as Record<string, any>;
+      const mergedConfig = { ...baseConfig, table_count: newCount };
+
+      if (existingRow?.id) {
+        await supabase
+          .from("business_module_configs")
+          .update({ config: mergedConfig })
+          .eq("id", existingRow.id);
+      } else {
+        let featId = businessFeatures.find(
+          (f) => normalizeKey(f.feature_id) === "table_ordering"
+        )?.feature_id;
+        if (!featId) {
+          const { data: fc } = await supabase
+            .from("feature_catalog")
+            .select("id")
+            .eq("feature_key", "table_ordering")
+            .maybeSingle();
+          if (fc?.id) featId = fc.id;
+        }
+        await supabase.from("business_module_configs").insert({
+          business_id: business.id,
+          feature_id: featId,
+          module_key: "table_ordering",
+          config: mergedConfig,
+          status: "active",
+        });
+      }
+
+      setModuleConfigs((current) => {
+        const found = current.some((m) => normalizeKey(m.module_key) === "table_ordering");
+        if (found) {
+          return current.map((m) =>
+            normalizeKey(m.module_key) === "table_ordering"
+              ? { ...m, config: mergedConfig }
+              : m
+          );
+        }
+        return [
+          ...current,
+          {
+            id: existingRow?.id || "temp-table-ordering",
+            module_key: "table_ordering",
+            config: mergedConfig,
+            business_id: business.id,
+            feature_id: "",
+          },
+        ];
+      });
+    } catch (err) {
+      console.error("Save table count error:", err);
+    }
+  };
+
+  const handleSavePrimaryDeviceCode = async (newCode: string) => {
+    if (!business?.id) return;
+    try {
+      const { data: existingRow } = await supabase
+        .from("business_module_configs")
+        .select("id, config, feature_id")
+        .eq("business_id", business.id)
+        .eq("module_key", "table_ordering")
+        .maybeSingle();
+
+      const baseConfig = (existingRow?.config || tableOrderingConfigRow?.config || {}) as Record<string, any>;
+      const mergedConfig = { ...baseConfig, primary_device_code: newCode };
+
+      if (existingRow?.id) {
+        await supabase
+          .from("business_module_configs")
+          .update({ config: mergedConfig })
+          .eq("id", existingRow.id);
+      } else {
+        let featId = businessFeatures.find(
+          (f) => normalizeKey(f.feature_id) === "table_ordering"
+        )?.feature_id;
+        if (!featId) {
+          const { data: fc } = await supabase
+            .from("feature_catalog")
+            .select("id")
+            .eq("feature_key", "table_ordering")
+            .maybeSingle();
+          if (fc?.id) featId = fc.id;
+        }
+        await supabase.from("business_module_configs").insert({
+          business_id: business.id,
+          feature_id: featId,
+          module_key: "table_ordering",
+          config: mergedConfig,
+          status: "active",
+        });
+      }
+
+      setModuleConfigs((current) => {
+        const found = current.some((m) => normalizeKey(m.module_key) === "table_ordering");
+        if (found) {
+          return current.map((m) =>
+            normalizeKey(m.module_key) === "table_ordering"
+              ? { ...m, config: mergedConfig }
+              : m
+          );
+        }
+        return [
+          ...current,
+          {
+            id: existingRow?.id || "temp-table-ordering",
+            module_key: "table_ordering",
+            config: mergedConfig,
+            business_id: business.id,
+            feature_id: "",
+          },
+        ];
+      });
+    } catch (err) {
+      console.error("Save primary stand error:", err);
+    }
+  };
+
   const nonCancelledOrders = useMemo(() => {
     return orders.filter((order) => order.status !== "cancelled");
   }, [orders]);
@@ -1438,6 +1587,12 @@ export default function ClientPortalPage() {
       icon: "📱",
       show: true,
       badge: clientDevices.length > 0 ? clientDevices.length : undefined,
+    },
+    {
+      key: "tables" as PageKey,
+      label: "Tables",
+      icon: "🪑",
+      show: hasTableOrdering,
     },
     {
       key: "hotel_requests" as PageKey,
@@ -1994,6 +2149,28 @@ export default function ClientPortalPage() {
                 setRequestSuccess("");
               }}
             />
+          )}
+
+          {activePage === "tables" && hasTableOrdering && business && (
+            <div className="client-dashboard-page" style={{ padding: "24px" }}>
+              <TablesBoard
+                businessId={business.id}
+                businessName={business.name}
+                businessLogoUrl={business.logo_url}
+                tableCount={tableCount}
+                devices={clientDevices}
+                primaryDeviceCode={primaryDeviceCode}
+                isAdmin={false}
+                onRefreshDevices={loadPortal}
+                onUpdateTableCount={async (newCount) => {
+                  await handleSaveTableCount(newCount);
+                }}
+                onUpdatePrimaryDeviceCode={async (newCode) => {
+                  await handleSavePrimaryDeviceCode(newCode);
+                }}
+                onGoToSettings={() => navigate("settings")}
+              />
+            </div>
           )}
 
           {activePage === "hotel_requests" && (
@@ -3024,6 +3201,12 @@ function Overview({
   onToggleOrderFlow?: (mode: "simple" | "steps") => Promise<void> | void;
 }) {
   const services = [
+    hasTableOrdering && {
+      title: "Tables",
+      description: "View tables, stand assignment and print QR codes.",
+      icon: "🪑",
+      page: "tables" as PageKey,
+    },
     hasOrders && {
       title: "Orders",
       description:
@@ -4767,6 +4950,7 @@ function OrdersPage({
   onToggleOrderFlow?: (mode: "simple" | "steps") => Promise<void> | void;
 }) {
   const [filter, setFilter] = useState<"active" | "all" | "completed" | "cancelled">("active");
+  const [tableFilter, setTableFilter] = useState<string>("all");
   const [, setTick] = useState(0);
 
   // Re-render every 30s to update elapsed minutes and late order alerts
@@ -4774,6 +4958,16 @@ function OrdersPage({
     const timer = setInterval(() => setTick((t) => t + 1), 30000);
     return () => clearInterval(timer);
   }, []);
+
+  const availableTables = useMemo(() => {
+    const set = new Set<number>();
+    for (const o of orders) {
+      if (typeof o.table_number === "number" && o.table_number > 0) {
+        set.add(o.table_number);
+      }
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }, [orders]);
 
   const nonCancelledOrders = useMemo(
     () => orders.filter((o) => o.status !== "cancelled"),
@@ -4799,21 +4993,32 @@ function OrdersPage({
   }, [orders]);
 
   const displayedOrders = useMemo(() => {
+    let list: Order[];
     switch (filter) {
       case "active":
-        return activeOrders;
+        list = activeOrders;
+        break;
       case "completed":
-        return completedOrders;
+        list = completedOrders;
+        break;
       case "cancelled":
-        return cancelledOrders;
+        list = cancelledOrders;
+        break;
       case "all":
       default:
-        return [
+        list = [
           ...activeOrders,
           ...orders.filter((o) => !["pending", "accepted", "preparing", "ready", "served"].includes(o.status)),
         ];
+        break;
     }
-  }, [filter, activeOrders, completedOrders, cancelledOrders, orders]);
+
+    if (tableFilter !== "all") {
+      const num = parseInt(tableFilter, 10);
+      return list.filter((o) => o.table_number === num);
+    }
+    return list;
+  }, [filter, tableFilter, activeOrders, completedOrders, cancelledOrders, orders]);
 
   const handleSimpleDone = async (orderId: string) => {
     await updateOrderStatus(orderId, "completed");
@@ -4918,6 +5123,33 @@ function OrdersPage({
         >
           All ({orders.length})
         </button>
+
+        {availableTables.length > 0 && (
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px" }}>
+            <span style={{ fontSize: "12px", color: "#64748b", fontWeight: 600 }}>Table:</span>
+            <select
+              value={tableFilter}
+              onChange={(e) => setTableFilter(e.target.value)}
+              style={{
+                padding: "6px 10px",
+                borderRadius: "6px",
+                border: "1px solid #cbd5e1",
+                fontSize: "12px",
+                fontWeight: 600,
+                color: "#0f172a",
+                background: "#ffffff",
+                cursor: "pointer",
+              }}
+            >
+              <option value="all">All Tables ({availableTables.length})</option>
+              {availableTables.map((t) => (
+                <option key={t} value={String(t)}>
+                  Table {t}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {displayedOrders.length === 0 ? (

@@ -11,6 +11,7 @@ import {
   validateOnlineOrderingConfig,
   sanitizeOnlineOrderingLinks,
 } from "../../lib/onlineOrdering";
+import TablesBoard from "../../components/TablesBoard";
 
 type Feature = {
   id: string;
@@ -60,6 +61,8 @@ type ActivatedClient = {
   ownerAccessCreated?: boolean;
   ownerAccessError?: string;
   qrDataUrl?: string;
+  hasTableOrdering?: boolean;
+  tableCount?: number;
 };
 
 const CATEGORIES = [
@@ -157,6 +160,18 @@ export default function AddClientPage() {
   const [copied, setCopied] = useState(false);
   const [copiedPortal, setCopiedPortal] = useState(false);
   const [copiedMsg, setCopiedMsg] = useState(false);
+  const [activatedDevices, setActivatedDevices] = useState<Device[]>([]);
+
+  const loadActivatedDevices = async () => {
+    if (!activatedClient?.id) return;
+    const { data } = await supabase
+      .from("devices")
+      .select("*")
+      .eq("business_id", activatedClient.id);
+    if (data) {
+      setActivatedDevices(data as Device[]);
+    }
+  };
 
   const handleRetryOwnerAccess = async () => {
     if (!activatedClient?.id || !activatedClient.ownerEmail) return;
@@ -786,6 +801,20 @@ export default function AddClientPage() {
         }
       }
 
+      const tableOrderingFeature = features.find((f) => {
+        const k = (f.feature_key || "").toLowerCase().replace(/[-_]/g, "");
+        return k === "tableordering";
+      });
+      const hasTableOrdering = Boolean(
+        tableOrderingFeature && selectedPaidFeatures.includes(tableOrderingFeature.id)
+      );
+      const toConfig = tableOrderingFeature ? moduleConfigs[tableOrderingFeature.id] : undefined;
+      const rawTableCount = (toConfig as any)?.table_count;
+      const parsedTableCount =
+        typeof rawTableCount === "number"
+          ? rawTableCount
+          : parseInt(String(rawTableCount || ""), 10) || 0;
+
       const activated: ActivatedClient = {
         id: business.id,
         name: business.name,
@@ -797,9 +826,12 @@ export default function AddClientPage() {
         ownerAccessCreated,
         ownerAccessError: ownerAccessError || undefined,
         qrDataUrl,
+        hasTableOrdering,
+        tableCount: parsedTableCount,
       };
 
       setActivatedClient(activated);
+      setActivatedDevices([device as Device]);
 
       setSuccess(
         `Client activated successfully. ${device.device_code} is now assigned to ${business.name}.`
@@ -1458,6 +1490,20 @@ Click the Owner Login link above to sign in once your password is set!`;
               </div>
             </div>
           </div>
+
+          {activatedClient.hasTableOrdering && (activatedClient.tableCount || 0) > 0 && (
+            <div style={{ marginTop: "32px", width: "100%" }}>
+              <TablesBoard
+                businessId={activatedClient.id}
+                businessName={activatedClient.name}
+                tableCount={activatedClient.tableCount || 0}
+                devices={activatedDevices}
+                isAdmin={true}
+                onRefreshDevices={loadActivatedDevices}
+                onGoToSettings={() => router.push(`/clients/${activatedClient.id}`)}
+              />
+            </div>
+          )}
         </div>
       </main>
     );
