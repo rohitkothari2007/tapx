@@ -15,6 +15,7 @@ import {
   validateOnlineOrderingConfig,
   sanitizeOnlineOrderingLinks,
 } from "../../lib/onlineOrdering";
+import TablesBoard from "../../components/TablesBoard";
 
 type Business = {
   id: string;
@@ -89,7 +90,8 @@ type TabKey =
   | "modules"
   | "analytics"
   | "devices"
-  | "loyalty";
+  | "loyalty"
+  | "tables";
 
 const CATEGORY_ACCENTS: Record<
   string,
@@ -951,6 +953,74 @@ export default function ClientPage() {
     );
   }, [devices]);
 
+  const tableOrderingFeature = useMemo(() => {
+    return enabledFeatures.find((feature) => {
+      const k = (feature.feature_key || "").toLowerCase().replace(/[-_]/g, "");
+      return k === "tableordering";
+    });
+  }, [enabledFeatures]);
+
+  const hasTableOrdering = Boolean(tableOrderingFeature);
+
+  const tableOrderingConfigRow = useMemo(() => {
+    return moduleConfigs.find((m) => {
+      const k = (m.module_key || "").toLowerCase().replace(/[-_]/g, "");
+      return k === "tableordering";
+    });
+  }, [moduleConfigs]);
+
+  const tableCount = useMemo(() => {
+    const raw = (tableOrderingConfigRow?.config as Record<string, any>)?.table_count;
+    if (typeof raw === "number") return raw;
+    const parsed = parseInt(String(raw || ""), 10);
+    return isNaN(parsed) ? 0 : parsed;
+  }, [tableOrderingConfigRow]);
+
+  const primaryDeviceCode = useMemo(() => {
+    return (
+      (tableOrderingConfigRow?.config as Record<string, any>)?.primary_device_code || null
+    );
+  }, [tableOrderingConfigRow]);
+
+  const handleSaveTableOrderingConfig = async (patch: Record<string, any>) => {
+    if (!businessId) return;
+    try {
+      const { data: existingRow } = await supabase
+        .from("business_module_configs")
+        .select("id, config, feature_id")
+        .eq("business_id", businessId)
+        .eq("module_key", "table_ordering")
+        .maybeSingle();
+
+      const baseConfig = (existingRow?.config as Record<string, any>) || {};
+      const mergedConfig = { ...baseConfig, ...patch };
+
+      if (existingRow?.id) {
+        await supabase
+          .from("business_module_configs")
+          .update({ config: mergedConfig })
+          .eq("id", existingRow.id);
+      } else {
+        const { data: fc } = await supabase
+          .from("feature_catalog")
+          .select("id")
+          .eq("feature_key", "table_ordering")
+          .maybeSingle();
+
+        await supabase.from("business_module_configs").insert({
+          business_id: businessId,
+          feature_id: fc?.id || "",
+          module_key: "table_ordering",
+          config: mergedConfig,
+          status: "active",
+        });
+      }
+      await loadWorkspace();
+    } catch (err) {
+      console.error("Save table ordering config error:", err);
+    }
+  };
+
   const todayInteractions = useMemo(() => {
     const today = new Date();
 
@@ -1533,6 +1603,14 @@ export default function ClientPage() {
             setActiveTab("devices")
           }
         />
+
+        {hasTableOrdering && (
+          <Tab
+            label="Tables"
+            active={activeTab === "tables"}
+            onClick={() => setActiveTab("tables")}
+          />
+        )}
       </div>
 
       {/* =====================================================
@@ -2796,6 +2874,32 @@ export default function ClientPage() {
               </div>
             )}
           </Card>
+        </section>
+      )}
+
+      {/* =====================================================
+          TABLES BOARD
+      ===================================================== */}
+
+      {activeTab === "tables" && hasTableOrdering && business && (
+        <section>
+          <TablesBoard
+            businessId={business.id}
+            businessName={business.name}
+            businessLogoUrl={business.logo_url}
+            tableCount={tableCount}
+            devices={devices}
+            primaryDeviceCode={primaryDeviceCode}
+            isAdmin={true}
+            onRefreshDevices={loadWorkspace}
+            onUpdateTableCount={async (newCount) => {
+              await handleSaveTableOrderingConfig({ table_count: newCount });
+            }}
+            onUpdatePrimaryDeviceCode={async (newCode) => {
+              await handleSaveTableOrderingConfig({ primary_device_code: newCode });
+            }}
+            onGoToSettings={() => setActiveTab("modules")}
+          />
         </section>
       )}
 
