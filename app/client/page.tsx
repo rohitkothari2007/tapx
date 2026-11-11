@@ -5,7 +5,12 @@ import LiveOrdersPanel, {
   LATE_ORDER_ALERT_MINUTES,
 } from "./LiveOrdersPanel";
 import MenuManagerSection from "./MenuManagerSection";
-import { formatOrderNumber } from "../lib/orderNumber";
+import {
+  formatOrderLabel,
+  formatPaymentMethodLabel,
+  getISTDateStr,
+  getOrderBusinessDay,
+} from "../lib/orderNumber";
 
 import {
   useCallback,
@@ -63,6 +68,37 @@ function playDashboardChime() {
   } catch {
     // AudioContext blocked or unsupported
   }
+}
+
+function prettyRequestType(type?: string | null): string {
+  const key = String(type || "").trim().toLowerCase();
+  if (key === "water") return "Water";
+  if (key === "bill") return "Bill";
+  if (key === "staff") return "Call staff";
+  return key ? key.charAt(0).toUpperCase() + key.slice(1) : "Request";
+}
+
+function formatTimeAgoLabel(iso?: string | null): string {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms) || ms < 0) return "Just now";
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return remMins > 0 ? `${hrs}h ${remMins}m ago` : `${hrs}h ago`;
+}
+
+function formatAutoResumeTime(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 type Business = {
@@ -128,6 +164,30 @@ type Order = {
   source_device_code: string | null;
   created_at: string;
   order_number?: number | null;
+  order_day?: string | null;
+  payment_status?: string | null;
+  payment_method?: string | null;
+  paid_at?: string | null;
+  archived_at?: string | null;
+  archived_by?: string | null;
+};
+
+type StaffRequest = {
+  id: string;
+  business_id: string;
+  table_number: number | null;
+  request_type: string;
+  status: string;
+  source_device_code: string | null;
+  created_at: string;
+  handled_at?: string | null;
+  handled_by?: string | null;
+};
+
+type OrderingStatusSummary = {
+  accepting: boolean;
+  reason: string | null;
+  wait_minutes: number | null;
 };
 
 type OrderItem = {
@@ -181,6 +241,7 @@ type PageKey =
   | "tables"
   | "hotel_requests"
   | "orders"
+  | "requests"
   | "appointments"
   | "menu"
   | "offers"
@@ -390,10 +451,22 @@ export default function ClientPortalPage() {
   const [soundAlertsEnabled, setSoundAlertsEnabled] = useState(false);
   const soundAlertsEnabledRef = useRef(false);
   const [newOrderToast, setNewOrderToast] = useState<{
+    kind?: "order" | "request";
     id: string;
+    order_number?: number | null;
+    order_day?: string | null;
+    created_at?: string | null;
     table_number: number | null;
     total: number | null;
+    request_type?: string | null;
   } | null>(null);
+
+  const [archivedOrders, setArchivedOrders] = useState<Order[]>([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const [staffRequests, setStaffRequests] = useState<StaffRequest[]>([]);
+  const seenOpenRequestIdsRef = useRef<Set<string>>(new Set());
+  const staffRequestsInitializedRef = useRef(false);
+  const [orderingStatus, setOrderingStatus] = useState<OrderingStatusSummary | null>(null);
 
   // Initialize sound alerts preference from localStorage
   useEffect(() => {
@@ -446,17 +519,17 @@ export default function ClientPortalPage() {
     return () => clearTimeout(timer);
   }, [newOrderToast]);
 
-  // Repeat chime every 20s while an unhandled placed order remains
+  // Repeat chime every 20s while a non-archived unhandled placed order remains
   useEffect(() => {
     if (!soundAlertsEnabled) return;
     const hasUnhandled = orders.some(
-      (o) => o.status === "pending" || o.status === "placed"
+      (o) => !o.archived_at && (o.status === "pending" || o.status === "placed")
     );
     if (!hasUnhandled) return;
 
     const timer = setInterval(() => {
       const stillUnhandled = orders.some(
-        (o) => o.status === "pending" || o.status === "placed"
+        (o) => !o.archived_at && (o.status === "pending" || o.status === "placed")
       );
       if (stillUnhandled && soundAlertsEnabledRef.current) {
         playDashboardChime();
@@ -755,14 +828,22 @@ export default function ClientPortalPage() {
               total,
               status,
               source_device_code,
+              order_number,
+              order_day,
+              payment_status,
+              payment_method,
+              paid_at,
+              archived_at,
+              archived_by,
               created_at
             `
           )
           .eq("business_id", businessId)
+          .is("archived_at", null)
           .order("created_at", {
             ascending: false,
           })
-          .limit(100),
+          .limit(150),
 
         supabase
           .from("tapx_appointments")
@@ -860,14 +941,39 @@ export default function ClientPortalPage() {
       });
       setDeviceInteractions(counts);
 
-      // Safely fetch optional hotel requests & feedback
+      // Safely fetch optional hotel requests, feedback, staff requests & ordering status
       try {
-        const [hotelReqsRes, feedbackRes] = await Promise.all([
+        const [hotelReqsRes, feedbackRes, staffReqsRes, orderingStatusRes] = await Promise.all([
           supabase.from("customer_requests").select("*").eq("business_id", businessId).in("request_type", ["hotel_room_service", "hotel_service", "custom_guest_request"]).order("created_at", { ascending: false }),
-          supabase.from("customer_feedback").select("*").eq("business_id", businessId).order("created_at", { ascending: false })
+          supabase.from("customer_feedback").select("*").eq("business_id", businessId).order("created_at", { ascending: false }),
+          supabase
+            .from("tapx_staff_requests")
+            .select("id, business_id, table_number, request_type, status, source_device_code, created_at, handled_at, handled_by")
+            .eq("business_id", businessId)
+            .order("created_at", { ascending: false })
+            .limit(120),
+          supabase.rpc("get_tap_ordering_status", { p_business_id: businessId }),
         ]);
         setHotelRequests((hotelReqsRes.data || []) as HotelRequestItem[]);
         setCustomerFeedbackList((feedbackRes.data || []) as FeedbackItem[]);
+        if (!staffReqsRes.error) {
+          const loadedReqs = (staffReqsRes.data || []) as StaffRequest[];
+          setStaffRequests(loadedReqs);
+          if (!staffRequestsInitializedRef.current) {
+            seenOpenRequestIdsRef.current = new Set(
+              loadedReqs.filter((r) => r.status === "open").map((r) => r.id)
+            );
+            staffRequestsInitializedRef.current = true;
+          }
+        }
+        if (!orderingStatusRes.error && orderingStatusRes.data && typeof orderingStatusRes.data === "object") {
+          const st = orderingStatusRes.data as any;
+          setOrderingStatus({
+            accepting: st.accepting !== false,
+            reason: st.reason ? String(st.reason) : null,
+            wait_minutes: typeof st.wait_minutes === "number" ? st.wait_minutes : null,
+          });
+        }
       } catch (err) {
         setHotelRequests([]);
         setCustomerFeedbackList([]);
@@ -926,6 +1032,140 @@ export default function ClientPortalPage() {
     }, 1800);
   }, []);
 
+  const fetchStaffRequestsAndAlert = useCallback(
+    async (bId: string) => {
+      try {
+        const { data, error: reqErr } = await supabase
+          .from("tapx_staff_requests")
+          .select(
+            "id, business_id, table_number, request_type, status, source_device_code, created_at, handled_at, handled_by"
+          )
+          .eq("business_id", bId)
+          .order("created_at", { ascending: false })
+          .limit(120);
+        if (reqErr || !data) return;
+        const rows = data as StaffRequest[];
+        setStaffRequests(rows);
+
+        const openRows = rows.filter((r) => r.status === "open");
+        if (!staffRequestsInitializedRef.current) {
+          seenOpenRequestIdsRef.current = new Set(openRows.map((r) => r.id));
+          staffRequestsInitializedRef.current = true;
+          return;
+        }
+
+        const newlyArrived = openRows.find(
+          (r) => !seenOpenRequestIdsRef.current.has(r.id)
+        );
+        openRows.forEach((r) => seenOpenRequestIdsRef.current.add(r.id));
+
+        if (newlyArrived) {
+          triggerHighlight("requests");
+          if (soundAlertsEnabledRef.current) {
+            playDashboardChime();
+          }
+          setNewOrderToast({
+            kind: "request",
+            id: newlyArrived.id,
+            table_number: newlyArrived.table_number,
+            total: null,
+            request_type: newlyArrived.request_type,
+          });
+        }
+      } catch {
+        // non-blocking polling fallback
+      }
+    },
+    [triggerHighlight]
+  );
+
+  const loadArchivedOrders = useCallback(async () => {
+    if (!business?.id) return;
+    setArchivedLoading(true);
+    try {
+      const { data: archData, error: archErr } = await supabase
+        .from("tapx_orders")
+        .select(
+          `
+            id,
+            business_id,
+            table_number,
+            customer_name,
+            customer_phone,
+            subtotal,
+            total,
+            status,
+            source_device_code,
+            order_number,
+            order_day,
+            payment_status,
+            payment_method,
+            paid_at,
+            archived_at,
+            archived_by,
+            created_at
+          `
+        )
+        .eq("business_id", business.id)
+        .not("archived_at", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (archErr) throw archErr;
+      const loadedArchived = (archData || []) as Order[];
+      setArchivedOrders(loadedArchived);
+
+      if (loadedArchived.length > 0) {
+        const archIds = loadedArchived.map((o) => o.id);
+        const { data: archItems } = await supabase
+          .from("tapx_order_items")
+          .select(
+            `
+              id,
+              order_id,
+              item_name,
+              unit_price,
+              quantity,
+              line_total,
+              special_request
+            `
+          )
+          .in("order_id", archIds);
+        if (archItems && archItems.length > 0) {
+          setOrderItems((prev) => {
+            const byId = new Map(prev.map((it) => [it.id, it]));
+            (archItems as OrderItem[]).forEach((it) => byId.set(it.id, it));
+            return Array.from(byId.values());
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("Could not load archived orders:", err);
+    } finally {
+      setArchivedLoading(false);
+    }
+  }, [business?.id]);
+
+  const refreshOrderingStatus = useCallback(async (bIdOverride?: string) => {
+    const targetBusinessId = bIdOverride || business?.id;
+    if (!targetBusinessId) return;
+    try {
+      const { data, error: statusErr } = await supabase.rpc(
+        "get_tap_ordering_status",
+        { p_business_id: targetBusinessId }
+      );
+      if (!statusErr && data && typeof data === "object") {
+        const st = data as any;
+        setOrderingStatus({
+          accepting: st.accepting !== false,
+          reason: st.reason ? String(st.reason) : null,
+          wait_minutes: typeof st.wait_minutes === "number" ? st.wait_minutes : null,
+        });
+      }
+    } catch {
+      // ignore transient poll failures
+    }
+  }, [business?.id]);
+
   useEffect(() => {
     loadPortal();
   }, [loadPortal]);
@@ -956,21 +1196,52 @@ export default function ClientPortalPage() {
         "postgres_changes",
         { event: "*", schema: "public", table: "tapx_orders", filter: `business_id=eq.${bId}` },
         (payload: any) => {
-          triggerHighlight("orders");
-          if (payload?.eventType === "INSERT") {
-            const newOrder = payload.new as any;
+          const changedOrder = (payload?.new || null) as Order | null;
+          if (!changedOrder?.archived_at) {
+            triggerHighlight("orders");
+          }
+          if (payload?.eventType === "INSERT" && changedOrder && !changedOrder.archived_at) {
             if (soundAlertsEnabledRef.current) {
               playDashboardChime();
             }
-            if (newOrder) {
-              setNewOrderToast({
-                id: newOrder.id,
-                table_number: newOrder.table_number,
-                total: newOrder.total,
-              });
-            }
+            setNewOrderToast({
+              kind: "order",
+              id: changedOrder.id,
+              order_number: changedOrder.order_number ?? null,
+              order_day: changedOrder.order_day ?? null,
+              created_at: changedOrder.created_at ?? null,
+              table_number: changedOrder.table_number,
+              total: changedOrder.total,
+            });
           }
           loadPortal();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tapx_staff_requests", filter: `business_id=eq.${bId}` },
+        (payload: any) => {
+          const reqRow = (payload?.new || null) as StaffRequest | null;
+          if (
+            payload?.eventType === "INSERT" &&
+            reqRow &&
+            reqRow.status === "open" &&
+            !seenOpenRequestIdsRef.current.has(reqRow.id)
+          ) {
+            seenOpenRequestIdsRef.current.add(reqRow.id);
+            triggerHighlight("requests");
+            if (soundAlertsEnabledRef.current) {
+              playDashboardChime();
+            }
+            setNewOrderToast({
+              kind: "request",
+              id: reqRow.id,
+              table_number: reqRow.table_number,
+              total: null,
+              request_type: reqRow.request_type,
+            });
+          }
+          void fetchStaffRequestsAndAlert(bId);
         }
       )
       .on(
@@ -1012,11 +1283,18 @@ export default function ClientPortalPage() {
       loadPortal();
     }, 25000);
 
+    // 30-Second Polling Fallback for staff requests & effective ordering status
+    const staffPollInterval = setInterval(() => {
+      void fetchStaffRequestsAndAlert(bId);
+      void refreshOrderingStatus(bId);
+    }, 30000);
+
     return () => {
       supabase.removeChannel(channel);
       clearInterval(interval);
+      clearInterval(staffPollInterval);
     };
-  }, [business?.id, loadPortal, triggerHighlight]);
+  }, [business?.id, loadPortal, triggerHighlight, fetchStaffRequestsAndAlert, refreshOrderingStatus]);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -1352,46 +1630,65 @@ export default function ClientPortalPage() {
     }
   };
 
-  const nonCancelledOrders = useMemo(() => {
-    return orders.filter((order) => order.status !== "cancelled");
+  const nonArchivedOrders = useMemo(() => {
+    return orders.filter((order) => !order.archived_at);
   }, [orders]);
 
-  const today = new Date();
+  const nonCancelledOrders = useMemo(() => {
+    return nonArchivedOrders.filter((order) => order.status !== "cancelled");
+  }, [nonArchivedOrders]);
 
   const todayOrders = useMemo(() => {
-    return orders.filter((order) => {
+    const istToday = getISTDateStr();
+    return nonArchivedOrders.filter((order) => {
       if (order.status === "cancelled") return false;
-      const date = new Date(order.created_at);
-
-      return (
-        date.getFullYear() === today.getFullYear() &&
-        date.getMonth() === today.getMonth() &&
-        date.getDate() === today.getDate()
-      );
+      return getOrderBusinessDay(order) === istToday;
     });
-  }, [orders]);
+  }, [nonArchivedOrders]);
 
   const pendingOrders = useMemo(() => {
-    return orders.filter((order) =>
+    return nonArchivedOrders.filter((order) =>
       ["pending", "accepted", "preparing", "ready"].includes(
         order.status
       )
     );
-  }, [orders]);
+  }, [nonArchivedOrders]);
 
   const completedOrders = useMemo(() => {
-    return orders.filter((order) =>
+    return nonArchivedOrders.filter((order) =>
       ["completed", "served"].includes(order.status)
     );
-  }, [orders]);
+  }, [nonArchivedOrders]);
 
-  // Counts every non-cancelled order of today
+  // Counts every non-cancelled, non-archived order of today (today's order_day)
   const todayRevenue = useMemo(() => {
     return todayOrders.reduce(
       (sum, order) => sum + Number(order.total || 0),
       0
     );
   }, [todayOrders]);
+
+  const paidTodayOrders = useMemo(() => {
+    return todayOrders.filter((order) => order.payment_status === "paid");
+  }, [todayOrders]);
+
+  const paidTodayTotal = useMemo(() => {
+    return paidTodayOrders.reduce(
+      (sum, order) => sum + Number(order.total || 0),
+      0
+    );
+  }, [paidTodayOrders]);
+
+  const unpaidTodayOrders = useMemo(() => {
+    return todayOrders.filter((order) => order.payment_status !== "paid");
+  }, [todayOrders]);
+
+  const unpaidTodayTotal = useMemo(() => {
+    return unpaidTodayOrders.reduce(
+      (sum, order) => sum + Number(order.total || 0),
+      0
+    );
+  }, [unpaidTodayOrders]);
 
   const todayCompletedOrdersCount = useMemo(() => {
     return todayOrders.filter((order) =>
@@ -1406,6 +1703,189 @@ export default function ClientPortalPage() {
       0
     );
   }, [completedOrders]);
+
+  const openStaffRequests = useMemo(() => {
+    return staffRequests
+      .filter((r) => r.status === "open")
+      .sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+  }, [staffRequests]);
+
+  const openRequestTableNumbers = useMemo(() => {
+    const set = new Set<number>();
+    openStaffRequests.forEach((r) => {
+      if (typeof r.table_number === "number" && r.table_number > 0) {
+        set.add(r.table_number);
+      }
+    });
+    return Array.from(set);
+  }, [openStaffRequests]);
+
+  const activeOrderTableNumbers = useMemo(() => {
+    const set = new Set<number>();
+    nonArchivedOrders.forEach((o) => {
+      if (
+        ["pending", "accepted", "preparing", "ready", "served"].includes(o.status) &&
+        typeof o.table_number === "number" &&
+        o.table_number > 0
+      ) {
+        set.add(o.table_number);
+      }
+    });
+    return Array.from(set);
+  }, [nonArchivedOrders]);
+
+  const handleSaveOrderingControls = useCallback(
+    async (controls: {
+      paused: boolean;
+      pauseMinutes: number | null;
+      message: string | null;
+      waitMinutes: number | null;
+      hoursEnabled: boolean;
+      open: string | null;
+      close: string | null;
+    }) => {
+      if (!business?.id) return;
+      const { error: rpcErr } = await supabase.rpc(
+        "set_tapx_ordering_controls",
+        {
+          p_business_id: business.id,
+          p_paused: controls.paused,
+          p_pause_minutes: controls.paused ? controls.pauseMinutes : null,
+          p_message: controls.message?.trim() ? controls.message.trim() : null,
+          p_wait_minutes: controls.waitMinutes,
+          p_hours_enabled: controls.hoursEnabled,
+          p_open: controls.hoursEnabled ? controls.open : null,
+          p_close: controls.hoursEnabled ? controls.close : null,
+        }
+      );
+      if (rpcErr) throw new Error(rpcErr.message);
+      await Promise.all([loadPortal(), refreshOrderingStatus(business.id)]);
+    },
+    [business?.id, loadPortal, refreshOrderingStatus]
+  );
+
+  const handleResumeOrdering = useCallback(async () => {
+    if (!business?.id) return;
+    // Read existing table_ordering config from database first so wait_minutes and hours are preserved as-is.
+    const { data: existingRow, error: cfgErr } = await supabase
+      .from("business_module_configs")
+      .select("config")
+      .eq("business_id", business.id)
+      .eq("module_key", "table_ordering")
+      .maybeSingle();
+    if (cfgErr) throw new Error(cfgErr.message);
+
+    const cfg =
+      (existingRow?.config && typeof existingRow.config === "object"
+        ? existingRow.config
+        : tableOrderingConfigRow?.config &&
+          typeof tableOrderingConfigRow.config === "object"
+        ? tableOrderingConfigRow.config
+        : {}) as Record<string, any>;
+
+    const waitMinutes =
+      typeof cfg.wait_minutes === "number" ? cfg.wait_minutes : null;
+    const hoursEnabled = Boolean(cfg.hours?.enabled);
+    const open = hoursEnabled && cfg.hours?.open ? String(cfg.hours.open) : null;
+    const close =
+      hoursEnabled && cfg.hours?.close ? String(cfg.hours.close) : null;
+
+    await handleSaveOrderingControls({
+      paused: false,
+      pauseMinutes: null,
+      message: null,
+      waitMinutes,
+      hoursEnabled,
+      open,
+      close,
+    });
+  }, [business?.id, tableOrderingConfigRow?.config, handleSaveOrderingControls]);
+
+  const handleArchiveOrders = useCallback(
+    async (orderIds: string[], archive: boolean) => {
+      if (!business?.id || orderIds.length === 0) return;
+      const { error: rpcErr } = await supabase.rpc("archive_tapx_orders", {
+        p_order_ids: orderIds,
+        p_archive: archive,
+      });
+      if (rpcErr) throw new Error(rpcErr.message);
+      await loadPortal();
+      if (!archive || archivedOrders.length > 0) {
+        await loadArchivedOrders();
+      }
+    },
+    [business?.id, loadPortal, archivedOrders.length, loadArchivedOrders]
+  );
+
+  const handleSetOrderPayment = useCallback(
+    async (
+      orderId: string,
+      paymentStatus: "paid" | "unpaid",
+      method: "cash" | "upi" | "card" | null
+    ) => {
+      const { error: rpcErr } = await supabase.rpc("set_tapx_order_payment", {
+        p_order_id: orderId,
+        p_payment_status: paymentStatus,
+        p_method: paymentStatus === "paid" ? method : null,
+      });
+      if (rpcErr) throw new Error(rpcErr.message);
+      const nowIso = paymentStatus === "paid" ? new Date().toISOString() : null;
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                payment_status: paymentStatus,
+                payment_method: paymentStatus === "paid" ? method : null,
+                paid_at: nowIso,
+              }
+            : o
+        )
+      );
+      setSelectedOrder((prev) =>
+        prev?.id === orderId
+          ? {
+              ...prev,
+              payment_status: paymentStatus,
+              payment_method: paymentStatus === "paid" ? method : null,
+              paid_at: nowIso,
+            }
+          : prev
+      );
+    },
+    []
+  );
+
+  const handleUpdateStaffRequestStatus = useCallback(
+    async (requestId: string, status: "open" | "done") => {
+      const { error: rpcErr } = await supabase.rpc(
+        "update_tapx_staff_request_status",
+        {
+          p_request_id: requestId,
+          p_status: status,
+        }
+      );
+      if (rpcErr) throw new Error(rpcErr.message);
+      setStaffRequests((prev) =>
+        prev.map((r) =>
+          r.id === requestId
+            ? {
+                ...r,
+                status,
+                handled_at: status === "done" ? new Date().toISOString() : null,
+              }
+            : r
+        )
+      );
+      if (business?.id) {
+        void fetchStaffRequestsAndAlert(business.id);
+      }
+    },
+    [business?.id, fetchStaffRequestsAndAlert]
+  );
 
   const todayAppointments = useMemo(() => {
     const today = todayDateString();
@@ -1611,6 +2091,16 @@ export default function ClientPortalPage() {
       badge:
         pendingOrders.length > 0
           ? pendingOrders.length
+          : undefined,
+    },
+    {
+      key: "requests" as PageKey,
+      label: "Requests",
+      icon: "🔔",
+      show: hasTableOrdering || hasOrders,
+      badge:
+        openStaffRequests.length > 0
+          ? openStaffRequests.length
           : undefined,
     },
     {
@@ -2074,14 +2564,18 @@ export default function ClientPortalPage() {
             role="status"
             aria-live="polite"
             onClick={() => {
-              setActivePage("orders");
+              setActivePage(newOrderToast.kind === "request" ? "requests" : "orders");
               setNewOrderToast(null);
             }}
           >
             <div className="new-order-toast-header">
               <div className="new-order-toast-title">
                 <span className="toast-dot" />
-                <strong>NEW TABLE ORDER!</strong>
+                <strong>
+                  {newOrderToast.kind === "request"
+                    ? "NEW TABLE REQUEST!"
+                    : `NEW TABLE ORDER ${formatOrderLabel(newOrderToast, { showDayIfNotToday: true })}`}
+                </strong>
               </div>
               <button
                 type="button"
@@ -2097,9 +2591,17 @@ export default function ClientPortalPage() {
             </div>
             <div className="new-order-toast-body">
               <div className="toast-table">Table {newOrderToast.table_number || "—"}</div>
-              <div className="toast-total">₹{Number(newOrderToast.total || 0).toFixed(0)}</div>
+              {newOrderToast.kind === "request" ? (
+                <div className="toast-total">
+                  {prettyRequestType(newOrderToast.request_type)}
+                </div>
+              ) : (
+                <div className="toast-total">₹{Number(newOrderToast.total || 0).toFixed(0)}</div>
+              )}
             </div>
-            <div className="toast-hint">Tap to view orders ›</div>
+            <div className="toast-hint">
+              {newOrderToast.kind === "request" ? "Tap to view requests ›" : "Tap to view orders ›"}
+            </div>
           </aside>
         )}
 
@@ -2108,10 +2610,14 @@ export default function ClientPortalPage() {
             <Overview
               business={business}
               todayRevenue={todayRevenue}
+              paidTodayTotal={paidTodayTotal}
+              paidTodayCount={paidTodayOrders.length}
+              unpaidTodayTotal={unpaidTodayTotal}
+              unpaidTodayCount={unpaidTodayOrders.length}
               todayOrders={todayOrders}
               pendingOrders={pendingOrders}
               completedRevenue={completedRevenue}
-              orders={orders}
+              orders={nonArchivedOrders}
               enabledPaidFeatures={
                 enabledPaidFeatures
               }
@@ -2169,6 +2675,8 @@ export default function ClientPortalPage() {
                   await handleSavePrimaryDeviceCode(newCode);
                 }}
                 onGoToSettings={() => navigate("settings")}
+                openRequestTables={openRequestTableNumbers}
+                activeOrderTables={activeOrderTableNumbers}
               />
             </div>
           )}
@@ -2182,7 +2690,10 @@ export default function ClientPortalPage() {
 
           {activePage === "orders" && hasOrders && (
             <OrdersPage
-              orders={orders}
+              orders={nonArchivedOrders}
+              archivedOrders={archivedOrders}
+              archivedLoading={archivedLoading}
+              onLoadArchivedOrders={loadArchivedOrders}
               orderItems={orderItems}
               selectedOrder={selectedOrder}
               setSelectedOrder={
@@ -2196,6 +2707,29 @@ export default function ClientPortalPage() {
               }
               orderFlow={orderFlow}
               onToggleOrderFlow={handleSaveOrderFlow}
+              onArchiveOrders={handleArchiveOrders}
+              onSetOrderPayment={handleSetOrderPayment}
+              hasTableOrdering={hasTableOrdering}
+              tableOrderingConfig={tableOrderingConfigRow?.config}
+              orderingStatus={orderingStatus}
+              onResumeOrdering={handleResumeOrdering}
+              todayRevenue={todayRevenue}
+              paidTodayTotal={paidTodayTotal}
+              paidTodayCount={paidTodayOrders.length}
+              unpaidTodayTotal={unpaidTodayTotal}
+              unpaidTodayCount={unpaidTodayOrders.length}
+              openRequestsCount={openStaffRequests.length}
+              onOpenRequests={() => navigate("requests")}
+              onOpenSettings={() => navigate("settings")}
+            />
+          )}
+
+          {activePage === "requests" && (hasTableOrdering || hasOrders) && (
+            <StaffRequestsPage
+              requests={staffRequests}
+              onUpdateStatus={handleUpdateStaffRequestStatus}
+              hasOrders={hasOrders}
+              onOpenOrders={() => navigate("orders")}
             />
           )}
 
@@ -2270,7 +2804,7 @@ export default function ClientPortalPage() {
             <AnalyticsPage
               business={business}
               hasLoyalty={hasLoyalty}
-              orders={orders}
+              orders={nonArchivedOrders}
               todayOrders={todayOrders}
               pendingOrders={pendingOrders}
               completedOrders={completedOrders}
@@ -2287,6 +2821,9 @@ export default function ClientPortalPage() {
               email={currentUserEmail}
               hasOnlineOrdering={hasOnlineOrdering}
               hasDiningMenu={hasMenu || hasOrders}
+              hasTableOrdering={hasTableOrdering}
+              tableOrderingConfig={tableOrderingConfigRow?.config}
+              onSaveOrderingControls={handleSaveOrderingControls}
               moduleConfigs={moduleConfigs}
               features={features}
               onUpdateBusiness={(updated) => setBusiness(updated)}
@@ -3154,6 +3691,10 @@ export default function ClientPortalPage() {
 function Overview({
   business,
   todayRevenue,
+  paidTodayTotal = 0,
+  paidTodayCount = 0,
+  unpaidTodayTotal = 0,
+  unpaidTodayCount = 0,
   todayOrders,
   pendingOrders,
   completedRevenue,
@@ -3178,6 +3719,10 @@ function Overview({
 }: {
   business: Business;
   todayRevenue: number;
+  paidTodayTotal?: number;
+  paidTodayCount?: number;
+  unpaidTodayTotal?: number;
+  unpaidTodayCount?: number;
   todayOrders: Order[];
   pendingOrders: Order[];
   completedRevenue: number;
@@ -3318,6 +3863,20 @@ function Overview({
         />
 
         <StatCard
+          label="Paid today"
+          value={formatCurrency(paidTodayTotal)}
+          note={`${paidTodayCount} paid today`}
+          icon="✓"
+        />
+
+        <StatCard
+          label="Unpaid"
+          value={formatCurrency(unpaidTodayTotal)}
+          note={`${unpaidTodayCount} unpaid today`}
+          icon="⏳"
+        />
+
+        <StatCard
           label="Today's orders"
           value={String(todayOrders.length)}
           note={
@@ -3330,7 +3889,7 @@ function Overview({
 
         <StatCard
           label="All orders"
-          value={String(orders.filter((o) => o.status !== "cancelled").length)}
+          value={String(orders.filter((o) => !o.archived_at && o.status !== "cancelled").length)}
           note="Active & completed orders"
           icon="◉"
         />
@@ -3684,7 +4243,7 @@ function Overview({
 
         .stats {
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
+          grid-template-columns: repeat(3, 1fr);
           gap: 14px;
           margin-top: 15px;
         }
@@ -4927,6 +5486,9 @@ function Detail({
 
 function OrdersPage({
   orders,
+  archivedOrders = [],
+  archivedLoading = false,
+  onLoadArchivedOrders,
   orderItems,
   selectedOrder,
   setSelectedOrder,
@@ -4934,8 +5496,25 @@ function OrdersPage({
   updatingOrderId,
   orderFlow = "simple",
   onToggleOrderFlow,
+  onArchiveOrders,
+  onSetOrderPayment,
+  hasTableOrdering = false,
+  tableOrderingConfig,
+  orderingStatus,
+  onResumeOrdering,
+  todayRevenue = 0,
+  paidTodayTotal = 0,
+  paidTodayCount = 0,
+  unpaidTodayTotal = 0,
+  unpaidTodayCount = 0,
+  openRequestsCount = 0,
+  onOpenRequests,
+  onOpenSettings,
 }: {
   orders: Order[];
+  archivedOrders?: Order[];
+  archivedLoading?: boolean;
+  onLoadArchivedOrders?: () => Promise<void> | void;
   orderItems: OrderItem[];
   selectedOrder: Order | null;
   setSelectedOrder: (
@@ -4948,9 +5527,34 @@ function OrdersPage({
   updatingOrderId: string | null;
   orderFlow?: "simple" | "steps";
   onToggleOrderFlow?: (mode: "simple" | "steps") => Promise<void> | void;
+  onArchiveOrders?: (orderIds: string[], archive: boolean) => Promise<void>;
+  onSetOrderPayment?: (
+    orderId: string,
+    paymentStatus: "paid" | "unpaid",
+    method: "cash" | "upi" | "card" | null
+  ) => Promise<void>;
+  hasTableOrdering?: boolean;
+  tableOrderingConfig?: Record<string, any> | null;
+  orderingStatus?: OrderingStatusSummary | null;
+  onResumeOrdering?: () => Promise<void>;
+  todayRevenue?: number;
+  paidTodayTotal?: number;
+  paidTodayCount?: number;
+  unpaidTodayTotal?: number;
+  unpaidTodayCount?: number;
+  openRequestsCount?: number;
+  onOpenRequests?: () => void;
+  onOpenSettings?: () => void;
 }) {
   const [filter, setFilter] = useState<"active" | "all" | "completed" | "cancelled">("active");
   const [tableFilter, setTableFilter] = useState<string>("all");
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivingIds, setArchivingIds] = useState<Record<string, boolean>>({});
+  const [bulkArchiving, setBulkArchiving] = useState(false);
+  const [paymentUpdatingId, setPaymentUpdatingId] = useState<string | null>(null);
+  const [openPaymentPickerId, setOpenPaymentPickerId] = useState<string | null>(null);
+  const [resumingOrdering, setResumingOrdering] = useState(false);
+  const [actionError, setActionError] = useState("");
   const [, setTick] = useState(0);
 
   // Re-render every 30s to update elapsed minutes and late order alerts
@@ -4959,40 +5563,163 @@ function OrdersPage({
     return () => clearInterval(timer);
   }, []);
 
+  const pauseCfg = tableOrderingConfig?.pause as
+    | { paused?: boolean; paused_until?: string | null; message?: string | null }
+    | undefined;
+  const isManualPauseActive = Boolean(
+    hasTableOrdering &&
+      pauseCfg?.paused &&
+      (!pauseCfg?.paused_until ||
+        new Date(pauseCfg.paused_until).getTime() > Date.now())
+  );
+
+  const handleToggleShowArchived = () => {
+    const next = !showArchived;
+    setShowArchived(next);
+    if (next && onLoadArchivedOrders) {
+      void onLoadArchivedOrders();
+    }
+  };
+
+  const handleArchiveSingle = async (orderId: string) => {
+    if (!onArchiveOrders) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("This hides the order from your lists. Nothing is deleted.")
+    ) {
+      return;
+    }
+    setActionError("");
+    setArchivingIds((prev) => ({ ...prev, [orderId]: true }));
+    try {
+      await onArchiveOrders([orderId], true);
+      if (selectedOrder?.id === orderId) setSelectedOrder(null);
+    } catch (err: any) {
+      setActionError(err?.message || "Unable to archive order.");
+    } finally {
+      setArchivingIds((prev) => ({ ...prev, [orderId]: false }));
+    }
+  };
+
+  const handleUnarchiveSingle = async (orderId: string) => {
+    if (!onArchiveOrders) return;
+    setActionError("");
+    setArchivingIds((prev) => ({ ...prev, [orderId]: true }));
+    try {
+      await onArchiveOrders([orderId], false);
+    } catch (err: any) {
+      setActionError(err?.message || "Unable to unarchive order.");
+    } finally {
+      setArchivingIds((prev) => ({ ...prev, [orderId]: false }));
+    }
+  };
+
+  const handlePaymentAction = async (
+    orderId: string,
+    paymentStatus: "paid" | "unpaid",
+    method: "cash" | "upi" | "card" | null
+  ) => {
+    if (!onSetOrderPayment) return;
+    setActionError("");
+    setPaymentUpdatingId(orderId);
+    try {
+      await onSetOrderPayment(orderId, paymentStatus, method);
+      setOpenPaymentPickerId(null);
+    } catch (err: any) {
+      setActionError(err?.message || "Unable to update payment status.");
+    } finally {
+      setPaymentUpdatingId(null);
+    }
+  };
+
+  const handleResumeClick = async () => {
+    if (!onResumeOrdering) return;
+    setActionError("");
+    setResumingOrdering(true);
+    try {
+      await onResumeOrdering();
+    } catch (err: any) {
+      setActionError(err?.message || "Unable to resume ordering.");
+    } finally {
+      setResumingOrdering(false);
+    }
+  };
+
+  const nonArchivedOrders = useMemo(
+    () => orders.filter((o) => !o.archived_at),
+    [orders]
+  );
+
   const availableTables = useMemo(() => {
+    const source = showArchived ? archivedOrders : nonArchivedOrders;
     const set = new Set<number>();
-    for (const o of orders) {
+    for (const o of source) {
       if (typeof o.table_number === "number" && o.table_number > 0) {
         set.add(o.table_number);
       }
     }
     return Array.from(set).sort((a, b) => a - b);
-  }, [orders]);
+  }, [nonArchivedOrders, archivedOrders, showArchived]);
 
   const nonCancelledOrders = useMemo(
-    () => orders.filter((o) => o.status !== "cancelled"),
-    [orders]
+    () => nonArchivedOrders.filter((o) => o.status !== "cancelled"),
+    [nonArchivedOrders]
   );
 
   const activeOrders = useMemo(() => {
-    return orders
+    return nonArchivedOrders
       .filter((o) => ["pending", "accepted", "preparing", "ready", "served"].includes(o.status))
       .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()); // FIFO: Oldest active first
-  }, [orders]);
+  }, [nonArchivedOrders]);
 
   const completedOrders = useMemo(() => {
-    return orders
+    return nonArchivedOrders
       .filter((o) => ["completed"].includes(o.status))
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [orders]);
+  }, [nonArchivedOrders]);
 
   const cancelledOrders = useMemo(() => {
-    return orders
+    return nonArchivedOrders
       .filter((o) => o.status === "cancelled")
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  }, [orders]);
+  }, [nonArchivedOrders]);
+
+  const handleArchiveAllCancelled = async () => {
+    if (!onArchiveOrders || cancelledOrders.length === 0) return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Archive ${cancelledOrders.length} cancelled order${cancelledOrders.length === 1 ? "" : "s"}? This hides the order from your lists. Nothing is deleted.`
+      )
+    ) {
+      return;
+    }
+    setActionError("");
+    setBulkArchiving(true);
+    try {
+      await onArchiveOrders(
+        cancelledOrders.map((o) => o.id),
+        true
+      );
+    } catch (err: any) {
+      setActionError(err?.message || "Unable to archive cancelled orders.");
+    } finally {
+      setBulkArchiving(false);
+    }
+  };
 
   const displayedOrders = useMemo(() => {
+    if (showArchived) {
+      const archList = [...archivedOrders].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      if (tableFilter !== "all") {
+        const num = parseInt(tableFilter, 10);
+        return archList.filter((o) => o.table_number === num);
+      }
+      return archList;
+    }
+
     let list: Order[];
     switch (filter) {
       case "active":
@@ -5008,7 +5735,7 @@ function OrdersPage({
       default:
         list = [
           ...activeOrders,
-          ...orders.filter((o) => !["pending", "accepted", "preparing", "ready", "served"].includes(o.status)),
+          ...nonArchivedOrders.filter((o) => !["pending", "accepted", "preparing", "ready", "served"].includes(o.status)),
         ];
         break;
     }
@@ -5018,7 +5745,7 @@ function OrdersPage({
       return list.filter((o) => o.table_number === num);
     }
     return list;
-  }, [filter, tableFilter, activeOrders, completedOrders, cancelledOrders, orders]);
+  }, [showArchived, archivedOrders, filter, tableFilter, activeOrders, completedOrders, cancelledOrders, nonArchivedOrders]);
 
   const handleSimpleDone = async (orderId: string) => {
     await updateOrderStatus(orderId, "completed");
@@ -5077,6 +5804,106 @@ function OrdersPage({
         </div>
       </div>
 
+      {hasTableOrdering && isManualPauseActive && (
+        <div className="paused-orders-banner" role="alert">
+          <div className="paused-orders-content">
+            <strong>Ordering is PAUSED</strong>
+            <span>
+              {pauseCfg?.paused_until
+                ? `Auto-resumes at ${formatAutoResumeTime(pauseCfg.paused_until)}.`
+                : "Paused until you resume."}
+              {pauseCfg?.message ? ` Message shown to customers: "${pauseCfg.message}"` : ""}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="paused-resume-btn"
+            disabled={resumingOrdering}
+            onClick={handleResumeClick}
+          >
+            {resumingOrdering ? "Resuming..." : "Resume"}
+          </button>
+        </div>
+      )}
+
+      {hasTableOrdering && orderingStatus && (
+        <div
+          className={`effective-status-bar ${
+            orderingStatus.accepting ? "open" : "closed"
+          }`}
+        >
+          <span>
+            {orderingStatus.accepting
+              ? `Customer status: Accepting orders${
+                  typeof orderingStatus.wait_minutes === "number" &&
+                  orderingStatus.wait_minutes > 0
+                    ? ` · About ${orderingStatus.wait_minutes} min wait`
+                    : ""
+                }`
+              : `Customer status: Not accepting orders — ${
+                  orderingStatus.reason || "Ordering unavailable"
+                }`}
+          </span>
+          {onOpenSettings && (
+            <button
+              type="button"
+              className="status-settings-link"
+              onClick={onOpenSettings}
+            >
+              Ordering Settings ›
+            </button>
+          )}
+        </div>
+      )}
+
+      {actionError && (
+        <div className="orders-action-error" role="alert">
+          <span>{actionError}</span>
+          <button type="button" onClick={() => setActionError("")} aria-label="Dismiss error">
+            ✕
+          </button>
+        </div>
+      )}
+
+      <div className="orders-workspace-tabs">
+        <button type="button" className="ws-tab active">
+          Orders ({activeOrders.length})
+        </button>
+        {onOpenRequests && (
+          <button
+            type="button"
+            className="ws-tab"
+            onClick={onOpenRequests}
+          >
+            Requests
+            {openRequestsCount > 0 && (
+              <span className="ws-tab-badge">{openRequestsCount}</span>
+            )}
+          </button>
+        )}
+      </div>
+
+      <div className="orders-money-strip">
+        <div className="money-pill">
+          <span>Today&apos;s order value (not cancelled)</span>
+          <strong>{formatCurrency(todayRevenue)}</strong>
+        </div>
+        <div className="money-pill paid">
+          <span>Paid today</span>
+          <strong>
+            {formatCurrency(paidTodayTotal)}{" "}
+            <small>({paidTodayCount})</small>
+          </strong>
+        </div>
+        <div className="money-pill unpaid">
+          <span>Unpaid</span>
+          <strong>
+            {formatCurrency(unpaidTodayTotal)}{" "}
+            <small>({unpaidTodayCount})</small>
+          </strong>
+        </div>
+      </div>
+
       <div className="order-stats">
         <MiniStat
           label="Active (Kitchen)"
@@ -5097,32 +5924,67 @@ function OrdersPage({
       <div className="order-filters-bar">
         <button
           type="button"
-          className={`filter-pill ${filter === "active" ? "active" : ""}`}
-          onClick={() => setFilter("active")}
+          className={`filter-pill ${!showArchived && filter === "active" ? "active" : ""}`}
+          onClick={() => {
+            setShowArchived(false);
+            setFilter("active");
+          }}
         >
           Active ({activeOrders.length})
         </button>
         <button
           type="button"
-          className={`filter-pill ${filter === "completed" ? "active" : ""}`}
-          onClick={() => setFilter("completed")}
+          className={`filter-pill ${!showArchived && filter === "completed" ? "active" : ""}`}
+          onClick={() => {
+            setShowArchived(false);
+            setFilter("completed");
+          }}
         >
           Completed ({completedOrders.length})
         </button>
         <button
           type="button"
-          className={`filter-pill ${filter === "cancelled" ? "active" : ""}`}
-          onClick={() => setFilter("cancelled")}
+          className={`filter-pill ${!showArchived && filter === "cancelled" ? "active" : ""}`}
+          onClick={() => {
+            setShowArchived(false);
+            setFilter("cancelled");
+          }}
         >
           Cancelled ({cancelledOrders.length})
         </button>
         <button
           type="button"
-          className={`filter-pill ${filter === "all" ? "active" : ""}`}
-          onClick={() => setFilter("all")}
+          className={`filter-pill ${!showArchived && filter === "all" ? "active" : ""}`}
+          onClick={() => {
+            setShowArchived(false);
+            setFilter("all");
+          }}
         >
-          All ({orders.length})
+          All ({nonArchivedOrders.length})
         </button>
+
+        <button
+          type="button"
+          className={`filter-pill ${showArchived ? "active" : ""}`}
+          onClick={handleToggleShowArchived}
+        >
+          {showArchived
+            ? `Showing archived (${archivedOrders.length})`
+            : "Show archived"}
+        </button>
+
+        {!showArchived && cancelledOrders.length > 0 && onArchiveOrders && (
+          <button
+            type="button"
+            className="filter-pill archive-all-btn"
+            disabled={bulkArchiving}
+            onClick={handleArchiveAllCancelled}
+          >
+            {bulkArchiving
+              ? "Archiving..."
+              : `Archive all cancelled (${cancelledOrders.length})`}
+          </button>
+        )}
 
         {availableTables.length > 0 && (
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px" }}>
@@ -5152,12 +6014,22 @@ function OrdersPage({
         )}
       </div>
 
-      {displayedOrders.length === 0 ? (
+      {showArchived && archivedLoading ? (
+        <div className="orders-empty">
+          <h3>Loading archived orders...</h3>
+        </div>
+      ) : displayedOrders.length === 0 ? (
         <div className="orders-empty">
           <div>🍽️</div>
-          <h3>No {filter !== "all" ? filter : ""} orders</h3>
+          <h3>
+            {showArchived
+              ? "No archived orders"
+              : `No ${filter !== "all" ? filter : ""} orders`}
+          </h3>
           <p>
-            Customer orders from tables will appear here in real time.
+            {showArchived
+              ? "Archived orders are hidden from your live and revenue views and can be unarchived anytime."
+              : "Customer orders from tables will appear here in real time."}
           </p>
         </div>
       ) : (
@@ -5206,16 +6078,27 @@ function OrdersPage({
                       {order.table_number ? `Table ${order.table_number}` : "No Table"}
                     </div>
                     <div className="card-order-num">
-                      #{formatOrderNumber(order)}
+                      {formatOrderLabel(order, { showDayIfNotToday: true })}
                     </div>
                   </div>
 
                   <div className="card-badges">
                     <StatusBadge status={order.status} />
-                    {isActive && isLateAlert && (
+                    {order.archived_at ? (
+                      <span className="archived-pill">Archived</span>
+                    ) : order.status !== "cancelled" ? (
+                      order.payment_status === "paid" ? (
+                        <span className="pay-pill paid">
+                          Paid · {formatPaymentMethodLabel(order.payment_method) || "Paid"}
+                        </span>
+                      ) : (
+                        <span className="pay-pill unpaid">Unpaid</span>
+                      )
+                    ) : null}
+                    {!order.archived_at && isActive && isLateAlert && (
                       <span className="late-pill alert">🔴 {elapsedMinutes}m late</span>
                     )}
-                    {isActive && isLateWarn && (
+                    {!order.archived_at && isActive && isLateWarn && (
                       <span className="late-pill warn">🟠 {elapsedMinutes}m late</span>
                     )}
                   </div>
@@ -5280,55 +6163,144 @@ function OrdersPage({
 
                 {/* ACTION BUTTONS (TAP-FRIENDLY) */}
                 <div className="card-actions" onClick={(e) => e.stopPropagation()}>
-                  {isActive && (
+                  {order.archived_at ? (
+                    onArchiveOrders && (
+                      <button
+                        type="button"
+                        className="btn-action-secondary"
+                        disabled={Boolean(archivingIds[order.id])}
+                        onClick={() => handleUnarchiveSingle(order.id)}
+                      >
+                        {archivingIds[order.id] ? "Unarchiving..." : "Unarchive"}
+                      </button>
+                    )
+                  ) : (
                     <>
-                      {orderFlow === "simple" ? (
-                        <button
-                          type="button"
-                          className="btn-action-primary done-btn"
-                          disabled={isUpdating}
-                          onClick={() => handleSimpleDone(order.id)}
-                        >
-                          {isUpdating ? "Updating..." : "✓ Done"}
-                        </button>
-                      ) : (
-                        nextInfo && (
+                      {isActive && (
+                        <>
+                          {orderFlow === "simple" ? (
+                            <button
+                              type="button"
+                              className="btn-action-primary done-btn"
+                              disabled={isUpdating}
+                              onClick={() => handleSimpleDone(order.id)}
+                            >
+                              {isUpdating ? "Updating..." : "✓ Done"}
+                            </button>
+                          ) : (
+                            nextInfo && (
+                              <button
+                                type="button"
+                                className="btn-action-primary step-btn"
+                                disabled={isUpdating}
+                                onClick={() => updateOrderStatus(order.id, nextInfo.nextStatus)}
+                              >
+                                {isUpdating ? "Updating..." : nextInfo.label}
+                              </button>
+                            )
+                          )}
+
                           <button
                             type="button"
-                            className="btn-action-primary step-btn"
+                            className="btn-action-cancel"
                             disabled={isUpdating}
-                            onClick={() => updateOrderStatus(order.id, nextInfo.nextStatus)}
+                            onClick={() => handleCancel(order.id)}
                           >
-                            {isUpdating ? "Updating..." : nextInfo.label}
+                            Cancel
+                          </button>
+                        </>
+                      )}
+
+                      {order.status !== "cancelled" && onSetOrderPayment && (
+                        order.payment_status === "paid" ? (
+                          <button
+                            type="button"
+                            className="btn-action-secondary"
+                            disabled={paymentUpdatingId === order.id}
+                            onClick={() => handlePaymentAction(order.id, "unpaid", null)}
+                          >
+                            {paymentUpdatingId === order.id ? "Saving..." : "Mark unpaid"}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn-action-pay"
+                            disabled={paymentUpdatingId === order.id}
+                            onClick={() =>
+                              setOpenPaymentPickerId((prev) =>
+                                prev === order.id ? null : order.id
+                              )
+                            }
+                          >
+                            {paymentUpdatingId === order.id ? "Saving..." : "Mark paid"}
                           </button>
                         )
                       )}
 
-                      <button
-                        type="button"
-                        className="btn-action-cancel"
+                      {["pending", "cancelled"].includes(order.status) && onArchiveOrders && (
+                        <button
+                          type="button"
+                          className="btn-action-secondary"
+                          disabled={Boolean(archivingIds[order.id])}
+                          onClick={() => handleArchiveSingle(order.id)}
+                        >
+                          {archivingIds[order.id] ? "Archiving..." : "Archive"}
+                        </button>
+                      )}
+
+                      <select
+                        className="status-select-inline"
+                        value={order.status}
                         disabled={isUpdating}
-                        onClick={() => handleCancel(order.id)}
+                        onChange={(e) => updateOrderStatus(order.id, e.target.value)}
+                        aria-label="Change status manually"
                       >
-                        Cancel
-                      </button>
+                        {ORDER_STATUSES.map((status) => (
+                          <option value={status} key={status}>
+                            {prettyName(status)}
+                          </option>
+                        ))}
+                      </select>
                     </>
                   )}
-
-                  <select
-                    className="status-select-inline"
-                    value={order.status}
-                    disabled={isUpdating}
-                    onChange={(e) => updateOrderStatus(order.id, e.target.value)}
-                    aria-label="Change status manually"
-                  >
-                    {ORDER_STATUSES.map((status) => (
-                      <option value={status} key={status}>
-                        {prettyName(status)}
-                      </option>
-                    ))}
-                  </select>
                 </div>
+
+                {!order.archived_at &&
+                  order.status !== "cancelled" &&
+                  order.payment_status !== "paid" &&
+                  openPaymentPickerId === order.id && (
+                    <div
+                      className="pay-method-chooser"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <span>Payment method:</span>
+                      {(
+                        [
+                          { key: "cash", label: "Cash" },
+                          { key: "upi", label: "UPI" },
+                          { key: "card", label: "Card" },
+                        ] as const
+                      ).map((m) => (
+                        <button
+                          key={m.key}
+                          type="button"
+                          className="pay-method-btn"
+                          disabled={paymentUpdatingId === order.id}
+                          onClick={() => handlePaymentAction(order.id, "paid", m.key)}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className="pay-method-close"
+                        onClick={() => setOpenPaymentPickerId(null)}
+                        aria-label="Close payment chooser"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  )}
               </div>
             );
           })}
@@ -5355,7 +6327,7 @@ function OrdersPage({
                 </div>
 
                 <h2>
-                  Order #{formatOrderNumber(selectedOrder)}
+                  Order {formatOrderLabel(selectedOrder, { showDayIfNotToday: true })}
                 </h2>
               </div>
 
@@ -6133,6 +7105,316 @@ function OrdersPage({
           outline: none;
         }
 
+        .paused-orders-banner {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 14px;
+          background: #fef2f2;
+          border: 2px solid #ef4444;
+          border-radius: 14px;
+          padding: 14px 18px;
+          margin-bottom: 14px;
+          color: #991b1b;
+          flex-wrap: wrap;
+        }
+
+        .paused-orders-content {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+          font-size: 13px;
+        }
+
+        .paused-orders-content strong {
+          font-size: 15px;
+          color: #b91c1c;
+        }
+
+        .paused-resume-btn {
+          background: #dc2626;
+          color: #ffffff;
+          border: none;
+          border-radius: 10px;
+          padding: 9px 18px;
+          font-size: 13px;
+          font-weight: 800;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .paused-resume-btn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .effective-status-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 9px 14px;
+          border-radius: 10px;
+          font-size: 12.5px;
+          font-weight: 600;
+          margin-bottom: 14px;
+          flex-wrap: wrap;
+        }
+
+        .effective-status-bar.open {
+          background: #f0fdf4;
+          border: 1px solid #bbf7d0;
+          color: #166534;
+        }
+
+        .effective-status-bar.closed {
+          background: #fffbeb;
+          border: 1px solid #fde68a;
+          color: #92400e;
+        }
+
+        .status-settings-link {
+          background: none;
+          border: none;
+          color: inherit;
+          font-weight: 800;
+          font-size: 12px;
+          text-decoration: underline;
+          cursor: pointer;
+          font-family: inherit;
+          padding: 0;
+        }
+
+        .orders-action-error {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          background: #fef2f2;
+          border: 1px solid #fecaca;
+          color: #b91c1c;
+          border-radius: 10px;
+          padding: 10px 14px;
+          font-size: 13px;
+          font-weight: 600;
+          margin-bottom: 14px;
+        }
+
+        .orders-action-error button {
+          background: none;
+          border: none;
+          color: #b91c1c;
+          font-size: 16px;
+          cursor: pointer;
+          padding: 0 4px;
+        }
+
+        .orders-workspace-tabs {
+          display: inline-flex;
+          background: #f1f5f9;
+          padding: 4px;
+          border-radius: 12px;
+          gap: 4px;
+          margin-bottom: 16px;
+        }
+
+        .ws-tab {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          border: none;
+          background: transparent;
+          color: #475569;
+          padding: 8px 16px;
+          border-radius: 9px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .ws-tab.active {
+          background: #ffffff;
+          color: #0f172a;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        }
+
+        .ws-tab-badge {
+          background: #ef4444;
+          color: #ffffff;
+          font-size: 11px;
+          font-weight: 800;
+          padding: 1px 7px;
+          border-radius: 999px;
+        }
+
+        .orders-money-strip {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 12px;
+          margin-bottom: 14px;
+        }
+
+        .money-pill {
+          background: #ffffff;
+          border: 1px solid #e5e8ec;
+          border-radius: 14px;
+          padding: 12px 15px;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .money-pill span {
+          font-size: 11px;
+          font-weight: 700;
+          color: #64748b;
+        }
+
+        .money-pill strong {
+          font-size: 18px;
+          font-weight: 800;
+          color: #0f172a;
+        }
+
+        .money-pill strong small {
+          font-size: 12px;
+          font-weight: 600;
+          color: #64748b;
+        }
+
+        .money-pill.paid {
+          background: #f0fdf4;
+          border-color: #bbf7d0;
+        }
+
+        .money-pill.paid strong {
+          color: #15803d;
+        }
+
+        .money-pill.unpaid {
+          background: #fffbeb;
+          border-color: #fde68a;
+        }
+
+        .money-pill.unpaid strong {
+          color: #b45309;
+        }
+
+        .archive-all-btn {
+          border-color: #fecaca !important;
+          color: #b91c1c !important;
+          background: #fef2f2 !important;
+        }
+
+        .pay-pill {
+          padding: 3px 9px;
+          border-radius: 12px;
+          font-size: 11px;
+          font-weight: 700;
+        }
+
+        .pay-pill.paid {
+          background: #dcfce7;
+          color: #166534;
+          border: 1px solid #86efac;
+        }
+
+        .pay-pill.unpaid {
+          background: #f1f5f9;
+          color: #475569;
+          border: 1px solid #cbd5e1;
+        }
+
+        .archived-pill {
+          padding: 3px 9px;
+          border-radius: 12px;
+          font-size: 11px;
+          font-weight: 700;
+          background: #f3f4f6;
+          color: #374151;
+          border: 1px solid #d1d5db;
+        }
+
+        .btn-action-pay {
+          padding: 9px 12px;
+          background: #ecfdf5;
+          color: #047857;
+          border: 1px solid #a7f3d0;
+          border-radius: 10px;
+          font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .btn-action-secondary {
+          padding: 9px 12px;
+          background: #f8fafc;
+          color: #334155;
+          border: 1px solid #cbd5e1;
+          border-radius: 10px;
+          font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .btn-action-pay:disabled,
+        .btn-action-secondary:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+
+        .pay-method-chooser {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: 8px 10px;
+        }
+
+        .pay-method-chooser span {
+          font-size: 11px;
+          font-weight: 700;
+          color: #475569;
+          margin-right: 2px;
+        }
+
+        .pay-method-btn {
+          border: 1px solid #16a34a;
+          background: #ffffff;
+          color: #15803d;
+          border-radius: 8px;
+          padding: 5px 11px;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .pay-method-btn:hover {
+          background: #dcfce7;
+        }
+
+        .pay-method-btn:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+
+        .pay-method-close {
+          margin-left: auto;
+          background: none;
+          border: none;
+          color: #64748b;
+          cursor: pointer;
+          font-size: 13px;
+          padding: 2px 6px;
+        }
+
         @media (max-width: 700px) {
           .page-intro {
             align-items: flex-start;
@@ -6141,6 +7423,10 @@ function OrdersPage({
 
           h1 {
             font-size: 28px;
+          }
+
+          .orders-money-strip {
+            grid-template-columns: 1fr;
           }
 
           .order-stats {
@@ -6154,6 +7440,412 @@ function OrdersPage({
           .customer-summary {
             grid-template-columns: 1fr;
           }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function StaffRequestsPage({
+  requests,
+  onUpdateStatus,
+  hasOrders = true,
+  onOpenOrders,
+}: {
+  requests: StaffRequest[];
+  onUpdateStatus: (requestId: string, status: "open" | "done") => Promise<void>;
+  hasOrders?: boolean;
+  onOpenOrders?: () => void;
+}) {
+  const [showDoneToday, setShowDoneToday] = useState(false);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [reqError, setReqError] = useState("");
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const openRequests = useMemo(() => {
+    return requests
+      .filter((r) => r.status === "open")
+      .sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+  }, [requests]);
+
+  const doneTodayRequests = useMemo(() => {
+    const todayStr = getISTDateStr();
+    return requests
+      .filter((r) => {
+        if (r.status !== "done") return false;
+        return getISTDateStr(r.handled_at || r.created_at) === todayStr;
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.handled_at || b.created_at).getTime() -
+          new Date(a.handled_at || a.created_at).getTime()
+      );
+  }, [requests]);
+
+  const handleMarkStatus = async (requestId: string, nextStatus: "open" | "done") => {
+    setReqError("");
+    setUpdatingId(requestId);
+    try {
+      await onUpdateStatus(requestId, nextStatus);
+    } catch (err: any) {
+      setReqError(err?.message || "Unable to update request status.");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  return (
+    <div className="requests-page">
+      <div className="page-intro">
+        <div>
+          <div className="eyebrow">TABLE ASSISTANCE</div>
+          <h1>Requests</h1>
+          <p>Quick customer table requests (Water, Bill, Call staff), newest first.</p>
+        </div>
+
+        <label className="done-today-toggle">
+          <input
+            type="checkbox"
+            checked={showDoneToday}
+            onChange={(e) => setShowDoneToday(e.target.checked)}
+          />
+          <span>Show done today ({doneTodayRequests.length})</span>
+        </label>
+      </div>
+
+      <div className="ws-tabs">
+        {hasOrders && onOpenOrders && (
+          <button type="button" className="ws-tab" onClick={onOpenOrders}>
+            Orders
+          </button>
+        )}
+        <button type="button" className="ws-tab active">
+          Requests
+          {openRequests.length > 0 && (
+            <span className="ws-tab-badge">{openRequests.length}</span>
+          )}
+        </button>
+      </div>
+
+      {reqError && (
+        <div className="req-error-banner" role="alert">
+          <span>{reqError}</span>
+          <button type="button" onClick={() => setReqError("")} aria-label="Dismiss error">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {openRequests.length === 0 ? (
+        <div className="req-empty">
+          <div>🔔</div>
+          <h3>No open requests</h3>
+          <p>Customer taps on Water, Bill, or Call staff appear here in real time.</p>
+        </div>
+      ) : (
+        <div className="req-list">
+          {openRequests.map((req) => (
+            <div key={req.id} className="req-card open">
+              <div className="req-card-left">
+                <div className="req-table-title">
+                  Table {req.table_number ?? "—"}
+                </div>
+                <div className="req-meta-row">
+                  <span className="req-type-pill">
+                    {prettyRequestType(req.request_type)}
+                  </span>
+                  <span className="req-elapsed">
+                    {formatTimeAgoLabel(req.created_at)}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="req-done-btn"
+                disabled={updatingId === req.id}
+                onClick={() => handleMarkStatus(req.id, "done")}
+              >
+                {updatingId === req.id ? "Updating..." : "✓ Done"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showDoneToday && (
+        <div className="done-today-section">
+          <h2>Done today ({doneTodayRequests.length})</h2>
+          {doneTodayRequests.length === 0 ? (
+            <div className="done-empty">No completed requests today yet.</div>
+          ) : (
+            <div className="req-list">
+              {doneTodayRequests.map((req) => (
+                <div key={req.id} className="req-card done">
+                  <div className="req-card-left">
+                    <div className="req-table-title">
+                      Table {req.table_number ?? "—"}
+                    </div>
+                    <div className="req-meta-row">
+                      <span className="req-type-pill">
+                        {prettyRequestType(req.request_type)}
+                      </span>
+                      <span className="req-elapsed">
+                        {formatTimeAgoLabel(req.handled_at || req.created_at)}
+                      </span>
+                      <span className="req-done-tag">Done</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <style jsx>{`
+        .requests-page {
+          max-width: 900px;
+          margin: 0 auto;
+        }
+
+        .page-intro {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 16px;
+          margin-bottom: 18px;
+          flex-wrap: wrap;
+        }
+
+        .eyebrow {
+          color: #98a1ad;
+          font-size: 9px;
+          font-weight: 850;
+          letter-spacing: 0.18em;
+          margin-bottom: 8px;
+        }
+
+        h1 {
+          margin: 0;
+          font-size: 32px;
+          letter-spacing: -0.04em;
+        }
+
+        .page-intro p {
+          margin: 6px 0 0;
+          font-size: 13px;
+          color: #8d96a2;
+        }
+
+        .done-today-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: 8px 12px;
+          font-size: 13px;
+          font-weight: 600;
+          color: #334155;
+          cursor: pointer;
+        }
+
+        .ws-tabs {
+          display: inline-flex;
+          background: #f1f5f9;
+          padding: 4px;
+          border-radius: 12px;
+          gap: 4px;
+          margin-bottom: 18px;
+        }
+
+        .ws-tab {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          border: none;
+          background: transparent;
+          color: #475569;
+          padding: 8px 16px;
+          border-radius: 9px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .ws-tab.active {
+          background: #ffffff;
+          color: #0f172a;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        }
+
+        .ws-tab-badge {
+          background: #ef4444;
+          color: #ffffff;
+          font-size: 11px;
+          font-weight: 800;
+          padding: 1px 7px;
+          border-radius: 999px;
+        }
+
+        .req-error-banner {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: #fef2f2;
+          border: 1px solid #fecaca;
+          color: #b91c1c;
+          border-radius: 10px;
+          padding: 10px 14px;
+          font-size: 13px;
+          font-weight: 600;
+          margin-bottom: 14px;
+        }
+
+        .req-error-banner button {
+          background: none;
+          border: none;
+          color: #b91c1c;
+          cursor: pointer;
+          font-size: 15px;
+        }
+
+        .req-empty {
+          text-align: center;
+          padding: 56px 20px;
+          background: #ffffff;
+          border: 1px solid #e5e8ec;
+          border-radius: 18px;
+        }
+
+        .req-empty > div {
+          font-size: 28px;
+          margin-bottom: 10px;
+        }
+
+        .req-empty h3 {
+          margin: 0;
+          font-size: 17px;
+        }
+
+        .req-empty p {
+          margin: 6px auto 0;
+          max-width: 380px;
+          font-size: 13px;
+          color: #94a3b8;
+        }
+
+        .req-list {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .req-card {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 14px;
+          background: #ffffff;
+          border: 1px solid #e5e8ec;
+          border-radius: 14px;
+          padding: 14px 18px;
+        }
+
+        .req-card.open {
+          border-color: #fcd34d;
+          background: #fffdf5;
+        }
+
+        .req-card.done {
+          opacity: 0.78;
+        }
+
+        .req-card-left {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .req-table-title {
+          font-size: 17px;
+          font-weight: 800;
+          color: #0f172a;
+        }
+
+        .req-meta-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .req-type-pill {
+          background: #eef2ff;
+          color: #3730a3;
+          font-size: 12px;
+          font-weight: 700;
+          padding: 3px 10px;
+          border-radius: 999px;
+        }
+
+        .req-elapsed {
+          font-size: 12px;
+          color: #64748b;
+          font-weight: 600;
+        }
+
+        .req-done-tag {
+          font-size: 11px;
+          font-weight: 700;
+          background: #dcfce7;
+          color: #166534;
+          padding: 2px 8px;
+          border-radius: 999px;
+        }
+
+        .req-done-btn {
+          background: #16a34a;
+          color: #ffffff;
+          border: none;
+          border-radius: 10px;
+          padding: 10px 18px;
+          font-size: 13px;
+          font-weight: 750;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .req-done-btn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+
+        .done-today-section {
+          margin-top: 28px;
+        }
+
+        .done-today-section h2 {
+          font-size: 15px;
+          font-weight: 800;
+          color: #334155;
+          margin: 0 0 10px;
+        }
+
+        .done-empty {
+          font-size: 13px;
+          color: #94a3b8;
         }
       `}</style>
     </div>
@@ -6474,6 +8166,9 @@ function SettingsPage({
   email,
   hasOnlineOrdering,
   hasDiningMenu,
+  hasTableOrdering = false,
+  tableOrderingConfig,
+  onSaveOrderingControls,
   moduleConfigs,
   features,
   onUpdateBusiness,
@@ -6484,6 +8179,17 @@ function SettingsPage({
   email: string;
   hasOnlineOrdering?: boolean;
   hasDiningMenu?: boolean;
+  hasTableOrdering?: boolean;
+  tableOrderingConfig?: Record<string, any> | null;
+  onSaveOrderingControls?: (controls: {
+    paused: boolean;
+    pauseMinutes: number | null;
+    message: string | null;
+    waitMinutes: number | null;
+    hoursEnabled: boolean;
+    open: string | null;
+    close: string | null;
+  }) => Promise<void>;
   moduleConfigs?: ModuleConfig[];
   features?: Feature[];
   onUpdateBusiness?: (updated: Business) => void;
@@ -6511,6 +8217,142 @@ function SettingsPage({
   const [saving, setSaving] = useState(false);
   const [savedBanner, setSavedBanner] = useState(false);
   const [errorBanner, setErrorBanner] = useState("");
+
+  // Ordering controls state (Pause ordering, Typical wait time, Opening hours)
+  const [ctrlPaused, setCtrlPaused] = useState(false);
+  const [ctrlPauseMode, setCtrlPauseMode] = useState<
+    "until_resume" | "15" | "30" | "60" | "120" | "keep_remaining"
+  >("until_resume");
+  const [ctrlPausedUntil, setCtrlPausedUntil] = useState<string | null>(null);
+  const [ctrlMessage, setCtrlMessage] = useState("");
+  const [ctrlWaitMinutes, setCtrlWaitMinutes] = useState("");
+  const [ctrlHoursEnabled, setCtrlHoursEnabled] = useState(false);
+  const [ctrlOpenTime, setCtrlOpenTime] = useState("09:00");
+  const [ctrlCloseTime, setCtrlCloseTime] = useState("22:00");
+  const [savingControls, setSavingControls] = useState(false);
+  const [controlsSavedNote, setControlsSavedNote] = useState("");
+  const [controlsErrorNote, setControlsErrorNote] = useState("");
+
+  useEffect(() => {
+    const cfg = (tableOrderingConfig || {}) as Record<string, any>;
+    const pauseObj = (cfg.pause || {}) as {
+      paused?: boolean;
+      paused_until?: string | null;
+      message?: string | null;
+    };
+    const pausedUntil = pauseObj.paused_until ? String(pauseObj.paused_until) : null;
+    const isStillPaused = Boolean(
+      pauseObj.paused &&
+        (!pausedUntil || new Date(pausedUntil).getTime() > Date.now())
+    );
+    setCtrlPaused(isStillPaused);
+    setCtrlPausedUntil(isStillPaused ? pausedUntil : null);
+    if (isStillPaused && pausedUntil && new Date(pausedUntil).getTime() > Date.now()) {
+      setCtrlPauseMode("keep_remaining");
+    } else {
+      setCtrlPauseMode("until_resume");
+    }
+    setCtrlMessage(pauseObj.message ? String(pauseObj.message) : "");
+    setCtrlWaitMinutes(
+      cfg.wait_minutes !== undefined && cfg.wait_minutes !== null
+        ? String(cfg.wait_minutes)
+        : ""
+    );
+    const hoursObj = (cfg.hours || {}) as {
+      enabled?: boolean;
+      open?: string | null;
+      close?: string | null;
+    };
+    setCtrlHoursEnabled(Boolean(hoursObj.enabled));
+    setCtrlOpenTime(hoursObj.open ? String(hoursObj.open) : "09:00");
+    setCtrlCloseTime(hoursObj.close ? String(hoursObj.close) : "22:00");
+  }, [tableOrderingConfig]);
+
+  const handleSaveOrderingControlsClick = async () => {
+    if (!onSaveOrderingControls) return;
+    setControlsSavedNote("");
+    setControlsErrorNote("");
+
+    // Validate typical wait time (empty -> null; otherwise integer 0..240)
+    let parsedWait: number | null = null;
+    const waitRaw = ctrlWaitMinutes.trim();
+    if (waitRaw !== "") {
+      if (!/^\d+$/.test(waitRaw)) {
+        setControlsErrorNote("Typical wait time must be a whole number of minutes (0 to 240).");
+        return;
+      }
+      const n = parseInt(waitRaw, 10);
+      if (isNaN(n) || n < 0 || n > 240) {
+        setControlsErrorNote("Typical wait time must be between 0 and 240 minutes.");
+        return;
+      }
+      parsedWait = n;
+    }
+
+    // Validate opening hours when enabled
+    let openVal: string | null = null;
+    let closeVal: string | null = null;
+    if (ctrlHoursEnabled) {
+      const timeRegex = /^\d{2}:\d{2}$/;
+      if (!timeRegex.test(ctrlOpenTime) || !timeRegex.test(ctrlCloseTime)) {
+        setControlsErrorNote("Please enter both open and close times (HH:MM).");
+        return;
+      }
+      if (ctrlOpenTime === ctrlCloseTime) {
+        setControlsErrorNote("Opening and closing times must be different.");
+        return;
+      }
+      openVal = ctrlOpenTime;
+      closeVal = ctrlCloseTime;
+    }
+
+    setSavingControls(true);
+    try {
+      // Re-read current table_ordering config first so unchanged subfields stay intact
+      const { data: freshRow } = await supabase
+        .from("business_module_configs")
+        .select("config")
+        .eq("business_id", business.id)
+        .eq("module_key", "table_ordering")
+        .maybeSingle();
+      const freshCfg = (freshRow?.config || tableOrderingConfig || {}) as Record<string, any>;
+
+      let pauseMinutesPayload: number | null = null;
+      if (ctrlPaused) {
+        if (ctrlPauseMode === "until_resume") {
+          pauseMinutesPayload = null;
+        } else if (ctrlPauseMode === "keep_remaining") {
+          const untilIso = freshCfg.pause?.paused_until || ctrlPausedUntil;
+          if (untilIso && new Date(untilIso).getTime() > Date.now()) {
+            pauseMinutesPayload = Math.max(
+              1,
+              Math.min(720, Math.ceil((new Date(untilIso).getTime() - Date.now()) / 60000))
+            );
+          } else {
+            pauseMinutesPayload = null;
+          }
+        } else {
+          pauseMinutesPayload = parseInt(ctrlPauseMode, 10);
+        }
+      }
+
+      await onSaveOrderingControls({
+        paused: ctrlPaused,
+        pauseMinutes: pauseMinutesPayload,
+        message: ctrlMessage.trim() ? ctrlMessage.trim() : null,
+        waitMinutes: parsedWait,
+        hoursEnabled: ctrlHoursEnabled,
+        open: openVal,
+        close: closeVal,
+      });
+
+      setControlsSavedNote("Ordering controls saved and refreshed.");
+    } catch (err: any) {
+      setControlsErrorNote(err?.message || "Unable to save ordering controls.");
+    } finally {
+      setSavingControls(false);
+    }
+  };
 
   useEffect(() => {
     setName(business.name || "");
@@ -7288,6 +9130,192 @@ function SettingsPage({
                   Multi-stage buttons: Accept → Start prep → Mark ready → Served. Ideal for full-service dine-in restaurants.
                 </p>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* PANEL 7: TABLE ORDERING AVAILABILITY CONTROLS (only when table_ordering module is on) */}
+        {hasTableOrdering && (
+          <div className="settings-panel" style={{ gridColumn: "1 / -1" }}>
+            <div className="settings-heading">
+              <div>
+                <h3>Pause ordering, wait time &amp; opening hours</h3>
+                <p style={{ margin: "4px 0 0", fontSize: "12px", color: "#64748b" }}>
+                  Control when customers can submit orders, share expected kitchen wait time, and set daily opening hours.
+                </p>
+              </div>
+              <span>ORDERING CONTROLS</span>
+            </div>
+
+            {controlsSavedNote && (
+              <div className="banner success-banner" style={{ marginTop: "8px", marginBottom: "14px" }}>
+                ✓ {controlsSavedNote}
+              </div>
+            )}
+
+            {controlsErrorNote && (
+              <div className="banner error-banner" style={{ marginTop: "8px", marginBottom: "14px" }}>
+                {controlsErrorNote}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "18px", marginTop: "10px" }}>
+              {/* PAUSE ORDERING */}
+              <div style={{ padding: "14px", borderRadius: "12px", border: `1px solid ${ctrlPaused ? "#fca5a5" : "#e2e8f0"}`, background: ctrlPaused ? "#fef2f2" : "#f8fafc" }}>
+                <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", fontWeight: 700, fontSize: "14px", color: ctrlPaused ? "#b91c1c" : "#0f172a" }}>
+                  <span>Pause ordering</span>
+                  <input
+                    type="checkbox"
+                    checked={ctrlPaused}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      setCtrlPaused(next);
+                      if (next && ctrlPauseMode === "keep_remaining") {
+                        setCtrlPauseMode("until_resume");
+                      }
+                    }}
+                    style={{ width: "18px", height: "18px", cursor: "pointer" }}
+                  />
+                </label>
+
+                {ctrlPaused && (
+                  <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                      {ctrlPausedUntil && ctrlPauseMode === "keep_remaining" && (
+                        <button
+                          type="button"
+                          onClick={() => setCtrlPauseMode("keep_remaining")}
+                          style={{
+                            padding: "6px 10px",
+                            borderRadius: "8px",
+                            border: "2px solid #dc2626",
+                            background: "#ffffff",
+                            color: "#b91c1c",
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Keep until {formatAutoResumeTime(ctrlPausedUntil)}
+                        </button>
+                      )}
+                      {[
+                        { key: "until_resume", label: "Until I resume" },
+                        { key: "15", label: "15 min" },
+                        { key: "30", label: "30 min" },
+                        { key: "60", label: "60 min" },
+                        { key: "120", label: "120 min" },
+                      ].map((opt) => (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => setCtrlPauseMode(opt.key as any)}
+                          style={{
+                            padding: "6px 10px",
+                            borderRadius: "8px",
+                            border: ctrlPauseMode === opt.key ? "2px solid #dc2626" : "1px solid #cbd5e1",
+                            background: ctrlPauseMode === opt.key ? "#ffffff" : "#f8fafc",
+                            color: ctrlPauseMode === opt.key ? "#b91c1c" : "#475569",
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>
+                        Pause message (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={ctrlMessage}
+                        onChange={(e) => setCtrlMessage(e.target.value)}
+                        placeholder="Back in 30 minutes!"
+                        maxLength={200}
+                        style={{ width: "100%", padding: "9px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13px", background: "#ffffff", boxSizing: "border-box" }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* TYPICAL WAIT TIME */}
+              <div style={{ padding: "14px", borderRadius: "12px", border: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                <label style={{ display: "block", fontSize: "14px", fontWeight: 700, color: "#0f172a", marginBottom: "6px" }}>
+                  Typical wait time (minutes)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={240}
+                  value={ctrlWaitMinutes}
+                  onChange={(e) => setCtrlWaitMinutes(e.target.value)}
+                  placeholder="Leave empty to hide"
+                  style={{ width: "100%", padding: "9px 10px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13px", background: "#ffffff", boxSizing: "border-box" }}
+                />
+                <p style={{ margin: "6px 0 0", fontSize: "11.5px", color: "#64748b", lineHeight: 1.4 }}>
+                  Shown on customer menu, cart and order confirmation when set (0–240 min). Leave empty to hide.
+                </p>
+              </div>
+
+              {/* OPENING HOURS */}
+              <div style={{ padding: "14px", borderRadius: "12px", border: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", fontWeight: 700, fontSize: "14px", color: "#0f172a" }}>
+                  <span>Opening hours</span>
+                  <input
+                    type="checkbox"
+                    checked={ctrlHoursEnabled}
+                    onChange={(e) => setCtrlHoursEnabled(e.target.checked)}
+                    style={{ width: "18px", height: "18px", cursor: "pointer" }}
+                  />
+                </label>
+
+                {ctrlHoursEnabled ? (
+                  <div style={{ marginTop: "12px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: "11.5px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>
+                        Open (24h)
+                      </label>
+                      <input
+                        type="time"
+                        value={ctrlOpenTime}
+                        onChange={(e) => setCtrlOpenTime(e.target.value)}
+                        style={{ width: "100%", padding: "8px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13px", background: "#ffffff", boxSizing: "border-box" }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: "11.5px", fontWeight: 700, color: "#475569", marginBottom: "4px" }}>
+                        Close (24h)
+                      </label>
+                      <input
+                        type="time"
+                        value={ctrlCloseTime}
+                        onChange={(e) => setCtrlCloseTime(e.target.value)}
+                        style={{ width: "100%", padding: "8px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13px", background: "#ffffff", boxSizing: "border-box" }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <p style={{ margin: "8px 0 0", fontSize: "11.5px", color: "#64748b", lineHeight: 1.4 }}>
+                    When enabled, table ordering automatically rejects submissions outside open–close hours.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div style={{ marginTop: "14px", display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                disabled={savingControls}
+                onClick={handleSaveOrderingControlsClick}
+                className="save-btn"
+              >
+                {savingControls ? "Saving Controls..." : "Save Ordering Controls"}
+              </button>
             </div>
           </div>
         )}

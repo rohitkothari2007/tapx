@@ -38,6 +38,11 @@ export interface AnalyticsOrder {
   id: string;
   business_id: string;
   order_number?: number | null;
+  order_day?: string | null;
+  payment_status?: string | null;
+  payment_method?: string | null;
+  paid_at?: string | null;
+  archived_at?: string | null;
   status: string;
   total_amount?: number | null;
   created_at: string;
