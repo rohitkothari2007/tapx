@@ -34,6 +34,12 @@ import {
 import BillDocument, {
   toBillDocumentDataFromDashboard,
 } from "../../components/billing/BillDocument";
+import {
+  downloadPdfBlob,
+  generateBillPdfBlob,
+  getBillPdfFileName,
+  sharePdfOnWhatsApp,
+} from "../../lib/billPdf";
 
 type ExtraLine = {
   key: string;
@@ -233,6 +239,9 @@ export default function BillFromOrders({
   const [doneError, setDoneError] = useState("");
   const [whatsappMessage, setWhatsappMessage] = useState("");
   const [copiedMessage, setCopiedMessage] = useState(false);
+  const [donePdfBlob, setDonePdfBlob] = useState<Blob | null>(null);
+  const [donePdfGenerating, setDonePdfGenerating] = useState(false);
+  const [donePdfInstruction, setDonePdfInstruction] = useState("");
   const messageEditedRef = useRef(false);
 
   // Fetch fresh billing settings (service_charge_pct, etc.) and digital_menu items on mount
@@ -747,6 +756,38 @@ export default function BillFromOrders({
     ]);
   };
 
+  // Pre-generate vector PDF Blob in background when issued bill is loaded
+  useEffect(() => {
+    if (!issuedBill) {
+      setDonePdfBlob(null);
+      return;
+    }
+    let active = true;
+    setDonePdfGenerating(true);
+    const docData = toBillDocumentDataFromDashboard(
+      issuedBill,
+      issuedItems,
+      business,
+      activeSettings
+    );
+    generateBillPdfBlob(docData, { mode: "dashboard" })
+      .then((blob) => {
+        if (active) {
+          setDonePdfBlob(blob);
+          setDonePdfGenerating(false);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to generate bill PDF in background:", err);
+        if (active) {
+          setDonePdfGenerating(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [issuedBill, issuedItems, business, activeSettings]);
+
   // ======================== STEP 2: DONE SCREEN ========================
   if (step === "done") {
     const normalizedPhone = normalizeWhatsAppPhone(
@@ -765,6 +806,69 @@ export default function BillFromOrders({
       } catch {
         // Ignore clipboard errors silently
       }
+    };
+
+    const handleDoneDownloadPdf = async () => {
+      if (!issuedBill) return;
+      const fileName = getBillPdfFileName(issuedBill.bill_no_text);
+      if (donePdfBlob) {
+        downloadPdfBlob(donePdfBlob, fileName);
+        return;
+      }
+      setDonePdfGenerating(true);
+      try {
+        const docData = toBillDocumentDataFromDashboard(
+          issuedBill,
+          issuedItems,
+          business,
+          activeSettings
+        );
+        const blob = await generateBillPdfBlob(docData, { mode: "dashboard" });
+        setDonePdfBlob(blob);
+        downloadPdfBlob(blob, fileName);
+      } catch (err: any) {
+        setDoneError(err?.message || "Could not generate PDF.");
+      } finally {
+        setDonePdfGenerating(false);
+      }
+    };
+
+    const handleDoneSendPdfWhatsApp = async () => {
+      if (!issuedBill) return;
+      const fileName = getBillPdfFileName(issuedBill.bill_no_text);
+      let blob = donePdfBlob;
+      if (!blob) {
+        setDonePdfGenerating(true);
+        try {
+          const docData = toBillDocumentDataFromDashboard(
+            issuedBill,
+            issuedItems,
+            business,
+            activeSettings
+          );
+          blob = await generateBillPdfBlob(docData, { mode: "dashboard" });
+          setDonePdfBlob(blob);
+        } catch (err: any) {
+          setDoneError(err?.message || "Could not generate PDF.");
+          setDonePdfGenerating(false);
+          return;
+        } finally {
+          setDonePdfGenerating(false);
+        }
+      }
+      if (!blob) return;
+
+      await sharePdfOnWhatsApp({
+        blob,
+        fileName,
+        messageText: whatsappMessage,
+        customerPhone: issuedBill.customer_phone ?? customerPhone,
+        onInstructionNeeded: (name) => {
+          setDonePdfInstruction(
+            `PDF downloaded. In WhatsApp, tap the paperclip → Document and choose ${name}.`
+          );
+        },
+      });
     };
 
     return (
@@ -855,10 +959,27 @@ export default function BillFromOrders({
               <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
                 <button
                   type="button"
-                  onClick={() => void handleCopyMessage()}
-                  style={btnSecondaryStyle}
+                  disabled={donePdfGenerating}
+                  onClick={() => void handleDoneDownloadPdf()}
+                  style={{
+                    ...btnSecondaryStyle,
+                    cursor: donePdfGenerating ? "wait" : "pointer",
+                  }}
+                  title="Download vector PDF"
                 >
-                  {copiedMessage ? "✓ Copied message" : "Copy message"}
+                  {donePdfGenerating ? "⏳ Preparing PDF…" : "📥 Download PDF"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDoneSendPdfWhatsApp()}
+                  style={{
+                    ...btnWhatsAppStyle,
+                    background: "#047857",
+                    cursor: "pointer",
+                  }}
+                  title="Send PDF file on WhatsApp"
+                >
+                  📄 Send PDF on WhatsApp
                 </button>
                 <a
                   href={waHref}
@@ -872,10 +993,52 @@ export default function BillFromOrders({
                     gap: "6px",
                   }}
                 >
-                  Send on WhatsApp
+                  💬 Send link on WhatsApp
                 </a>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyMessage()}
+                  style={btnSecondaryStyle}
+                >
+                  {copiedMessage ? "✓ Copied message" : "Copy message"}
+                </button>
               </div>
             </div>
+
+            {donePdfInstruction && (
+              <div
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: "8px",
+                  background: "#eff6ff",
+                  border: "1px solid #bfdbfe",
+                  fontSize: "12.5px",
+                  color: "#1e40af",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                }}
+              >
+                <span>ℹ️ {donePdfInstruction}</span>
+                <button
+                  type="button"
+                  onClick={() => setDonePdfInstruction("")}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "#1e40af",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    padding: "2px 4px",
+                  }}
+                  aria-label="Dismiss message"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             <textarea
               rows={4}

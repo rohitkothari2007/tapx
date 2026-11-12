@@ -20,6 +20,12 @@ import {
   formatQuantity,
   formatSignedMoney,
 } from "../../lib/billing";
+import {
+  downloadPdfBlob,
+  generateBillPdfBlob,
+  getBillPdfFileName,
+  sharePdfOnWhatsApp,
+} from "../../lib/billPdf";
 
 export type BillDocumentData = {
   id?: string;
@@ -29,6 +35,7 @@ export type BillDocumentData = {
   bill_day: string;
   table_number: number | null;
   customer_name: string | null;
+  customer_phone?: string | null;
   subtotal: number;
   discount_amount: number;
   discount_note: string | null;
@@ -74,6 +81,7 @@ export function toBillDocumentDataFromDashboard(
     bill_day: bill.bill_day,
     table_number: bill.table_number,
     customer_name: bill.customer_name,
+    customer_phone: bill.customer_phone,
     subtotal: Number(bill.subtotal || 0),
     discount_amount: Number(bill.discount_amount || 0),
     discount_note: bill.discount_note,
@@ -120,6 +128,7 @@ export function toBillDocumentDataFromPublic(
     bill_day: payload.bill_day,
     table_number: payload.table_number,
     customer_name: payload.customer_name,
+    customer_phone: null,
     subtotal: Number(payload.subtotal || 0),
     discount_amount: Number(payload.discount_amount || 0),
     discount_note: payload.discount_note,
@@ -173,6 +182,9 @@ export default function BillDocument({
   const [voidReason, setVoidReason] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
+  const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const [pdfInstruction, setPdfInstruction] = useState("");
 
   const paper = data.settings.paper || "80mm";
   const isThermal = paper === "80mm" || paper === "58mm";
@@ -259,6 +271,76 @@ export default function BillDocument({
     } catch {
       setActionError("Could not copy the bill link automatically.");
     }
+  };
+
+  // Pre-generate vector PDF Blob in background on view open
+  useEffect(() => {
+    let active = true;
+    setPdfGenerating(true);
+    generateBillPdfBlob(data, { mode })
+      .then((blob) => {
+        if (active) {
+          setPdfBlob(blob);
+          setPdfGenerating(false);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to generate bill PDF in background:", err);
+        if (active) {
+          setPdfGenerating(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [data, mode]);
+
+  const handleDownloadPdf = async () => {
+    const fileName = getBillPdfFileName(data.bill_no_text);
+    if (pdfBlob) {
+      downloadPdfBlob(pdfBlob, fileName);
+      return;
+    }
+    setPdfGenerating(true);
+    try {
+      const blob = await generateBillPdfBlob(data, { mode });
+      setPdfBlob(blob);
+      downloadPdfBlob(blob, fileName);
+    } catch (err: any) {
+      setActionError(err?.message || "Could not generate PDF. Please try again.");
+    } finally {
+      setPdfGenerating(false);
+    }
+  };
+
+  const handleSendPdfWhatsApp = async () => {
+    const fileName = getBillPdfFileName(data.bill_no_text);
+    let blob = pdfBlob;
+    if (!blob) {
+      setPdfGenerating(true);
+      try {
+        blob = await generateBillPdfBlob(data, { mode });
+        setPdfBlob(blob);
+      } catch (err: any) {
+        setActionError(err?.message || "Could not generate PDF. Please try again.");
+        setPdfGenerating(false);
+        return;
+      } finally {
+        setPdfGenerating(false);
+      }
+    }
+    if (!blob) return;
+
+    const baseMessage = `${data.business?.name || "Business"} - Bill ${data.bill_no_text}\nTotal: ${formatMoney(data.total)}`;
+    await sharePdfOnWhatsApp({
+      blob,
+      fileName,
+      messageText: baseMessage,
+      customerPhone: data.customer_phone,
+      onInstructionNeeded: (name) => {
+        setPdfInstruction(`PDF downloaded. In WhatsApp, tap the paperclip → Document and choose ${name}.`);
+      },
+    });
   };
 
   const handleWhatsAppShare = () => {
@@ -353,6 +435,41 @@ export default function BillDocument({
           gap: "10px",
         }}
       >
+        {pdfInstruction && (
+          <div
+            style={{
+              padding: "8px 12px",
+              borderRadius: "8px",
+              background: "#eff6ff",
+              border: "1px solid #bfdbfe",
+              fontSize: "12.5px",
+              color: "#1e40af",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "8px",
+            }}
+          >
+            <span>ℹ️ {pdfInstruction}</span>
+            <button
+              type="button"
+              onClick={() => setPdfInstruction("")}
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: "#1e40af",
+                fontWeight: 700,
+                fontSize: "13px",
+                padding: "2px 4px",
+              }}
+              aria-label="Dismiss message"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         <div
           style={{
             display: "flex",
@@ -385,21 +502,47 @@ export default function BillDocument({
 
             <button
               type="button"
-              onClick={handleCopyLink}
-              style={btnSecondaryStyle}
+              disabled={pdfGenerating || Boolean(busyAction)}
+              onClick={handleDownloadPdf}
+              style={{
+                ...btnSecondaryStyle,
+                cursor: pdfGenerating ? "wait" : "pointer",
+              }}
+              title="Download vector PDF"
             >
-              {copiedLink ? "✓ Link copied" : "🔗 Copy link"}
+              {pdfGenerating ? "⏳ Preparing PDF…" : "📥 Download PDF"}
             </button>
+
+            {mode === "dashboard" && (
+              <button
+                type="button"
+                onClick={handleSendPdfWhatsApp}
+                disabled={Boolean(busyAction)}
+                style={btnSecondaryStyle}
+                title="Send PDF file on WhatsApp"
+              >
+                📄 Send PDF on WhatsApp
+              </button>
+            )}
 
             {mode === "dashboard" && (
               <button
                 type="button"
                 onClick={handleWhatsAppShare}
                 style={btnSecondaryStyle}
+                title="Send bill link on WhatsApp"
               >
-                💬 Share on WhatsApp
+                💬 Send link on WhatsApp
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              style={btnSecondaryStyle}
+            >
+              {copiedLink ? "✓ Link copied" : "🔗 Copy link"}
+            </button>
           </div>
 
           {mode === "dashboard" && data.status === "issued" && (
