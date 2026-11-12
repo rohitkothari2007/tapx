@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { formatOrderNumber } from "../lib/orderNumber";
+import { formatOrderLabel } from "../lib/orderNumber";
 
 export const LATE_ORDER_WARN_MINUTES = 10;
 export const LATE_ORDER_ALERT_MINUTES = 20;
@@ -18,6 +18,11 @@ export type LiveOrder = {
   source_device_code: string | null;
   created_at: string;
   order_number?: number | null;
+  order_day?: string | null;
+  payment_status?: string | null;
+  payment_method?: string | null;
+  paid_at?: string | null;
+  archived_at?: string | null;
   notes?: string | null;
 };
 
@@ -173,9 +178,9 @@ export default function LiveOrdersPanel({
     return () => clearInterval(timer);
   }, []);
 
-  // Filter active orders & sort OLDEST first (FIFO)
+  // Filter non-archived active orders & sort OLDEST first (FIFO)
   const activeOrders = orders
-    .filter((o) => ACTIVE_STATUSES.includes(o.status))
+    .filter((o) => !o.archived_at && ACTIVE_STATUSES.includes(o.status))
     .sort(
       (a, b) =>
         new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
@@ -378,7 +383,7 @@ export default function LiveOrdersPanel({
                         : "No Table"}
                     </div>
                     <div style={styles.orderRef}>
-                      #{formatOrderNumber(order)}
+                      {formatOrderLabel(order, { showDayIfNotToday: true })}
                     </div>
                   </div>
 

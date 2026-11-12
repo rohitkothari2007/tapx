@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 import { parseStandTableNumber, resolveSessionTableNumber } from "../lib/tableNumber";
-import { formatOrderNumber } from "../lib/orderNumber";
+import { formatOrderLabel } from "../lib/orderNumber";
 import { WhatsAppIcon } from "./BrandIcons";
 import UpiPaymentModal from "./UpiPaymentModal";
 import { MENU_TOKENS, MENU_THEME_GLOBAL_CSS, formatDisplayName } from "../lib/menuTheme";
@@ -88,7 +88,9 @@ export type CartLine = {
 
 type ActiveOrder = {
   id: string;
-  order_number?: number;
+  order_number?: number | null;
+  order_day?: string | null;
+  payment_status?: string | null;
   table_number: number;
   customer_name: string;
   customer_phone: string | null;
@@ -448,6 +450,30 @@ export default function RestaurantExperience({
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [placingOrder, setPlacingOrder] = useState(false);
+
+  // Ordering availability status (pause / wait_minutes / opening hours)
+  // Defaults fail-open so transient RPC issues never block customer ordering.
+  const [orderingStatus, setOrderingStatus] = useState<{
+    accepting: boolean;
+    reason: string | null;
+    wait_minutes: number | null;
+  }>({ accepting: true, reason: null, wait_minutes: null });
+
+  const orderingDisabled = Boolean(tableOrderingEnabled && !orderingStatus.accepting);
+  const waitMinutesValue =
+    tableOrderingEnabled &&
+    orderingStatus.accepting &&
+    typeof orderingStatus.wait_minutes === "number" &&
+    orderingStatus.wait_minutes > 0
+      ? orderingStatus.wait_minutes
+      : null;
+
+  // Quick staff request state (water / bill / staff)
+  const [staffReqSending, setStaffReqSending] = useState<"water" | "bill" | "staff" | null>(null);
+  const [staffReqCooldowns, setStaffReqCooldowns] = useState<Record<string, number>>({});
+  const [staffReqNotice, setStaffReqNotice] = useState("");
+  const [staffReqError, setStaffReqError] = useState("");
+  const [cooldownNow, setCooldownNow] = useState(() => Date.now());
   const [orderError, setOrderError] = useState("");
   const [mounted, setMounted] = useState(false);
 
@@ -501,7 +527,7 @@ export default function RestaurantExperience({
 
   // Add standard item (+1) with no special request
   const addStandardItem = (item: ItemType) => {
-    if (item.available === false) return;
+    if (item.available === false || orderingDisabled) return;
     const price = parsePrice(item.price);
     const lineId = `${item.id}::`;
     setCart((prev) => {
@@ -573,7 +599,7 @@ export default function RestaurantExperience({
 
   // Add customized item from detail sheet
   const handleAddCustomizedItem = () => {
-    if (!detailItem || detailItem.available === false) return;
+    if (!detailItem || detailItem.available === false || orderingDisabled) return;
     const price = parsePrice(detailItem.price);
     const trimmedReq = customRequest.trim().slice(0, 200);
     const lineId = `${detailItem.id}::${trimmedReq}`;
@@ -920,6 +946,104 @@ export default function RestaurantExperience({
     }
   }, [activeCategoryId]);
 
+  // Poll ordering availability status (pause / wait time / opening hours)
+  const fetchOrderingStatus = useCallback(async () => {
+    if (!tableOrderingEnabled || !business.id) return;
+    try {
+      const { data, error } = await supabase.rpc("get_tap_ordering_status", {
+        p_business_id: business.id,
+      });
+      if (error || !data || typeof data !== "object") {
+        // Fail open so transient RPC failures never block customer ordering
+        if (error) console.warn("TAPX ordering status check failed:", error.message);
+        return;
+      }
+      const statusObj = data as {
+        accepting?: boolean;
+        reason?: string | null;
+        wait_minutes?: number | null;
+      };
+      setOrderingStatus({
+        accepting: statusObj.accepting !== false,
+        reason: statusObj.reason ? String(statusObj.reason) : null,
+        wait_minutes:
+          typeof statusObj.wait_minutes === "number" ? statusObj.wait_minutes : null,
+      });
+    } catch (err) {
+      console.warn("TAPX ordering status warning:", err);
+    }
+  }, [tableOrderingEnabled, business.id]);
+
+  useEffect(() => {
+    if (!tableOrderingEnabled || !business.id) return;
+    void fetchOrderingStatus();
+    const interval = setInterval(() => {
+      void fetchOrderingStatus();
+    }, 60000);
+    const handleVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        void fetchOrderingStatus();
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibility);
+    }
+    return () => {
+      clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibility);
+      }
+    };
+  }, [tableOrderingEnabled, business.id, fetchOrderingStatus]);
+
+  // Tick cooldown timer while any quick staff request cooldown is active
+  useEffect(() => {
+    const hasActiveCooldown = Object.values(staffReqCooldowns).some(
+      (until) => until > Date.now()
+    );
+    if (!hasActiveCooldown) return;
+    const t = setInterval(() => {
+      const now = Date.now();
+      setCooldownNow(now);
+      if (!Object.values(staffReqCooldowns).some((until) => until > now)) {
+        clearInterval(t);
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  }, [staffReqCooldowns]);
+
+  // Send quick staff request (water | bill | staff)
+  const handleSendStaffRequest = async (requestType: "water" | "bill" | "staff") => {
+    if (!tableOrderingEnabled || !isTableValid || staffReqSending) return;
+    const activeCooldownUntil = staffReqCooldowns[requestType] || 0;
+    if (activeCooldownUntil > Date.now()) return;
+
+    setStaffReqError("");
+    setStaffReqNotice("");
+    setStaffReqSending(requestType);
+    try {
+      const { error: rpcErr } = await supabase.rpc("create_tapx_staff_request", {
+        p_business_id: business.id,
+        p_table_number: parsedCurrentTable,
+        p_request_type: requestType,
+        p_source_device_code: device.device_code || null,
+      });
+
+      if (rpcErr) throw rpcErr;
+
+      const until = Date.now() + 30000;
+      setCooldownNow(Date.now());
+      setStaffReqCooldowns((prev) => ({ ...prev, [requestType]: until }));
+      setStaffReqNotice("Staff has been notified");
+    } catch (err: any) {
+      setStaffReqError(
+        err?.message || "Could not notify staff right now. Please try again."
+      );
+    } finally {
+      setStaffReqSending(null);
+    }
+  };
+
   // Load active order from storage
   const loadActiveOrder = async (orderIdOverride?: string) => {
     try {
@@ -938,7 +1062,7 @@ export default function RestaurantExperience({
         { p_order_id: savedId }
       );
 
-      if (orderErr || !orderData) {
+      if (orderErr || !orderData || (orderData as any).archived_at) {
         if (typeof window !== "undefined") window.localStorage.removeItem(storageKey);
         setCurrentOrder(null);
         setCurrentOrderItems([]);
@@ -947,7 +1071,9 @@ export default function RestaurantExperience({
 
       const typedOrder = {
         id: String(orderData.id),
-        order_number: (orderData as any).order_number || null,
+        order_number: (orderData as any).order_number ?? null,
+        order_day: (orderData as any).order_day ?? null,
+        payment_status: (orderData as any).payment_status ?? null,
         table_number: orderData.table_number,
         customer_name: "",
         customer_phone: "",
@@ -1027,10 +1153,12 @@ export default function RestaurantExperience({
 
       setCart({});
       setShowCheckoutSheet(false);
+      await loadActiveOrder(newOrderId || undefined);
       setActiveTab("orders");
     } catch (err: any) {
       console.error("Error creating table order:", err);
       setOrderError(err.message || "Failed to place order. Please check your table number.");
+      void fetchOrderingStatus();
     } finally {
       setPlacingOrder(false);
     }
@@ -1103,6 +1231,91 @@ export default function RestaurantExperience({
     }
   };
 
+  const renderPauseBanner = () => {
+    if (!orderingDisabled) return null;
+    return (
+      <div style={styles.pauseNoticeBanner} role="alert">
+        <span style={styles.pauseNoticeIcon}>⏸️</span>
+        <div style={styles.pauseNoticeText}>
+          <strong>Ordering temporarily unavailable</strong>
+          <div>
+            {orderingStatus.reason ||
+              "Ordering is currently paused. You can still browse the menu."}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderWaitChip = () => {
+    if (!waitMinutesValue) return null;
+    return (
+      <div style={styles.waitTimeLine}>
+        ⏱️ Current wait: about {waitMinutesValue} min
+      </div>
+    );
+  };
+
+  const renderStaffRequestBar = () => {
+    if (!tableOrderingEnabled || !isTableValid) return null;
+    const buttons: Array<{
+      type: "water" | "bill" | "staff";
+      label: string;
+      icon: string;
+    }> = [
+      { type: "water", label: "Water", icon: "💧" },
+      { type: "bill", label: "Bill", icon: "🧾" },
+      { type: "staff", label: "Call staff", icon: "🙋" },
+    ];
+
+    return (
+      <div style={styles.staffReqCard}>
+        <div style={styles.staffReqHeader}>
+          <span style={styles.staffReqTitle}>Need something?</span>
+          <span style={styles.staffReqTableBadge}>Table {parsedCurrentTable}</span>
+        </div>
+        <div style={styles.staffReqRow}>
+          {buttons.map((b) => {
+            const until = staffReqCooldowns[b.type] || 0;
+            const remainingSec = Math.max(0, Math.ceil((until - cooldownNow) / 1000));
+            const isCooling = remainingSec > 0;
+            const isSending = staffReqSending === b.type;
+            const disabled = Boolean(staffReqSending) || isCooling;
+            return (
+              <button
+                key={b.type}
+                type="button"
+                disabled={disabled}
+                onClick={() => void handleSendStaffRequest(b.type)}
+                className="menu-tap-press"
+                style={{
+                  ...styles.staffReqBtn,
+                  opacity: disabled ? 0.55 : 1,
+                  cursor: disabled ? "not-allowed" : "pointer",
+                }}
+              >
+                <span>{b.icon}</span>
+                <span>
+                  {isSending
+                    ? "Sending..."
+                    : isCooling
+                    ? `${b.label} (${remainingSec}s)`
+                    : b.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {staffReqNotice && (
+          <div style={styles.staffReqSuccess}>{staffReqNotice}</div>
+        )}
+        {staffReqError && (
+          <div style={styles.staffReqError}>{staffReqError}</div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div ref={rootRef} className={menuFontClassNames} style={styles.container}>
       {/* Inject Design System CSS Keyframes, CSS variables, and overrides */}
@@ -1139,6 +1352,11 @@ export default function RestaurantExperience({
                   Choose Table ›
                 </button>
               )
+            )}
+            {waitMinutesValue && (
+              <div style={styles.headerWaitSub}>
+                Current wait: about {waitMinutesValue} min
+              </div>
             )}
           </div>
         </div>
@@ -1201,6 +1419,13 @@ export default function RestaurantExperience({
               )}
             </div>
           </div>
+
+          {orderingDisabled && (
+            <div style={styles.topStripWrap}>{renderPauseBanner()}</div>
+          )}
+          {tableOrderingEnabled && isTableValid && (
+            <div style={styles.topStripWrap}>{renderStaffRequestBar()}</div>
+          )}
 
           {/* HORIZONTAL CHIPS NAV (Preserved behind MENU_CATEGORY_NAV === 'chips') */}
           {MENU_CATEGORY_NAV === "chips" && (
@@ -1415,9 +1640,14 @@ export default function RestaurantExperience({
                                       <div style={styles.gridStepperBox}>
                                         <button
                                           type="button"
+                                          disabled={orderingDisabled}
                                           onClick={() => removeStandardItem(dish.id)}
                                           className="menu-tap-press"
-                                          style={styles.gridStepperBtn}
+                                          style={{
+                                            ...styles.gridStepperBtn,
+                                            opacity: orderingDisabled ? 0.45 : 1,
+                                            cursor: orderingDisabled ? "not-allowed" : "pointer",
+                                          }}
                                           aria-label={`Remove one ${dish.name}`}
                                         >
                                           −
@@ -1425,9 +1655,14 @@ export default function RestaurantExperience({
                                         <span style={styles.gridStepperQty}>{stdQty}</span>
                                         <button
                                           type="button"
+                                          disabled={orderingDisabled}
                                           onClick={() => addStandardItem(dish)}
                                           className="menu-tap-press"
-                                          style={styles.gridStepperBtn}
+                                          style={{
+                                            ...styles.gridStepperBtn,
+                                            opacity: orderingDisabled ? 0.45 : 1,
+                                            cursor: orderingDisabled ? "not-allowed" : "pointer",
+                                          }}
                                           aria-label={`Add one ${dish.name}`}
                                         >
                                           +
@@ -1436,9 +1671,14 @@ export default function RestaurantExperience({
                                     ) : (
                                       <button
                                         type="button"
+                                        disabled={orderingDisabled}
                                         onClick={() => addStandardItem(dish)}
                                         className="menu-tap-press"
-                                        style={styles.gridAddBtn}
+                                        style={{
+                                          ...styles.gridAddBtn,
+                                          opacity: orderingDisabled ? 0.45 : 1,
+                                          cursor: orderingDisabled ? "not-allowed" : "pointer",
+                                        }}
                                       >
                                         + ADD
                                       </button>
@@ -1535,9 +1775,14 @@ export default function RestaurantExperience({
                                       <div style={styles.stepperBox}>
                                         <button
                                           type="button"
+                                          disabled={orderingDisabled}
                                           onClick={() => removeStandardItem(dish.id)}
                                           className="menu-tap-press"
-                                          style={styles.stepperActionBtn}
+                                          style={{
+                                            ...styles.stepperActionBtn,
+                                            opacity: orderingDisabled ? 0.45 : 1,
+                                            cursor: orderingDisabled ? "not-allowed" : "pointer",
+                                          }}
                                           aria-label={`Remove one ${dish.name}`}
                                         >
                                           −
@@ -1545,9 +1790,14 @@ export default function RestaurantExperience({
                                         <span style={styles.stepperValue}>{stdQty}</span>
                                         <button
                                           type="button"
+                                          disabled={orderingDisabled}
                                           onClick={() => addStandardItem(dish)}
                                           className="menu-tap-press"
-                                          style={styles.stepperActionBtn}
+                                          style={{
+                                            ...styles.stepperActionBtn,
+                                            opacity: orderingDisabled ? 0.45 : 1,
+                                            cursor: orderingDisabled ? "not-allowed" : "pointer",
+                                          }}
                                           aria-label={`Add one ${dish.name}`}
                                         >
                                           +
@@ -1556,9 +1806,14 @@ export default function RestaurantExperience({
                                     ) : (
                                       <button
                                         type="button"
+                                        disabled={orderingDisabled}
                                         onClick={() => addStandardItem(dish)}
                                         className="menu-tap-press"
-                                        style={styles.addBtn}
+                                        style={{
+                                          ...styles.addBtn,
+                                          opacity: orderingDisabled ? 0.45 : 1,
+                                          cursor: orderingDisabled ? "not-allowed" : "pointer",
+                                        }}
                                       >
                                         + ADD
                                       </button>
@@ -1623,7 +1878,10 @@ export default function RestaurantExperience({
             <p style={styles.ordersPageSub}>
               Live status updates for your dine-in table order
             </p>
+            {renderWaitChip()}
           </div>
+
+          {renderStaffRequestBar()}
 
           {currentOrder ? (
             <div style={styles.orderCard}>
@@ -1631,7 +1889,7 @@ export default function RestaurantExperience({
               <div style={styles.orderTopMetaRow}>
                 <div>
                   <div style={styles.orderIdText}>
-                    Order #{formatOrderNumber(currentOrder)}
+                    Order {formatOrderLabel(currentOrder, { showDayIfNotToday: true })}
                   </div>
                   <div style={styles.orderTimeText}>
                     Placed at {formatOrderTime(currentOrder.created_at) || "Just now"}
@@ -1958,11 +2216,19 @@ export default function RestaurantExperience({
             {/* Footer */}
             {tableOrderingEnabled && detailItem.available !== false && (
               <div style={styles.modalFooter}>
+                {orderingDisabled ? (
+                  renderPauseBanner()
+                ) : null}
                 <button
                   type="button"
+                  disabled={orderingDisabled}
                   onClick={handleAddCustomizedItem}
                   className="menu-tap-press"
-                  style={styles.confirmAddBtn}
+                  style={{
+                    ...styles.confirmAddBtn,
+                    opacity: orderingDisabled ? 0.45 : 1,
+                    cursor: orderingDisabled ? "not-allowed" : "pointer",
+                  }}
                 >
                   Add to order • ₹{(parsePrice(detailItem.price) * customQty).toFixed(0)}
                 </button>
@@ -2068,6 +2334,7 @@ export default function RestaurantExperience({
                   <span>Total Payable:</span>
                   <span>₹{cartTotal.toFixed(0)}</span>
                 </div>
+                {renderWaitChip()}
               </div>
 
               {/* Customer Inputs */}
@@ -2155,6 +2422,8 @@ export default function RestaurantExperience({
                   <div style={styles.inputHint}>for offers and loyalty</div>
                 </div>
 
+                {orderingDisabled && renderPauseBanner()}
+
                 {orderError && (
                   <div style={styles.orderErrorAlert}>
                     ⚠️ {orderError}
@@ -2166,13 +2435,13 @@ export default function RestaurantExperience({
             <div style={styles.checkoutFooter}>
               <button
                 type="button"
-                disabled={placingOrder || !isTableValid || cartLinesList.length === 0}
+                disabled={placingOrder || !isTableValid || cartLinesList.length === 0 || orderingDisabled}
                 onClick={handlePlaceOrder}
                 className="menu-tap-press"
                 style={{
                   ...styles.placeOrderBtn,
-                  opacity: placingOrder || !isTableValid || cartLinesList.length === 0 ? 0.5 : 1,
-                  cursor: placingOrder || !isTableValid || cartLinesList.length === 0 ? "not-allowed" : "pointer",
+                  opacity: placingOrder || !isTableValid || cartLinesList.length === 0 || orderingDisabled ? 0.5 : 1,
+                  cursor: placingOrder || !isTableValid || cartLinesList.length === 0 || orderingDisabled ? "not-allowed" : "pointer",
                 }}
               >
                 {placingOrder ? "Placing Order..." : `Place Order (₹${cartTotal.toFixed(0)})`}
@@ -3823,5 +4092,104 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 700,
     cursor: "pointer",
     boxSizing: "border-box",
+  },
+  headerWaitSub: {
+    fontSize: "11px",
+    fontWeight: 600,
+    color: MENU_TOKENS.colors.light.muted,
+    marginTop: "2px",
+  },
+  topStripWrap: {
+    padding: "8px 14px 0 14px",
+  },
+  pauseNoticeBanner: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "10px",
+    backgroundColor: "#FEF2F2",
+    border: "1px solid #FECACA",
+    borderRadius: "12px",
+    padding: "10px 12px",
+    color: "#991B1B",
+    fontSize: "12.5px",
+    lineHeight: 1.4,
+    marginBottom: "8px",
+  },
+  pauseNoticeIcon: {
+    fontSize: "15px",
+    flexShrink: 0,
+    lineHeight: 1.3,
+  },
+  pauseNoticeText: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+  },
+  waitTimeLine: {
+    marginTop: "6px",
+    fontSize: "12px",
+    fontWeight: 600,
+    color: MENU_TOKENS.colors.light.accentInk,
+    backgroundColor: MENU_TOKENS.colors.light.accentLight,
+    border: `1px solid ${MENU_TOKENS.colors.light.accentBorder}`,
+    borderRadius: "8px",
+    padding: "4px 10px",
+    display: "inline-block",
+  },
+  staffReqCard: {
+    backgroundColor: "#FFFFFF",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    borderRadius: "12px",
+    padding: "10px 12px",
+    marginBottom: "10px",
+    boxShadow: MENU_TOKENS.shadows.card,
+  },
+  staffReqHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: "8px",
+  },
+  staffReqTitle: {
+    fontSize: "12px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.ink,
+  },
+  staffReqTableBadge: {
+    fontSize: "11px",
+    fontWeight: 700,
+    color: MENU_TOKENS.colors.light.muted,
+  },
+  staffReqRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    gap: "8px",
+  },
+  staffReqBtn: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "5px",
+    minHeight: "36px",
+    padding: "6px 8px",
+    borderRadius: "10px",
+    border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+    backgroundColor: "#FBF8F3",
+    color: MENU_TOKENS.colors.light.ink,
+    fontSize: "12px",
+    fontWeight: 700,
+    fontFamily: "inherit",
+  },
+  staffReqSuccess: {
+    marginTop: "8px",
+    fontSize: "12px",
+    fontWeight: 700,
+    color: "#15803D",
+  },
+  staffReqError: {
+    marginTop: "8px",
+    fontSize: "12px",
+    fontWeight: 600,
+    color: "#B91C1C",
   },
 };

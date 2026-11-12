@@ -32,6 +32,8 @@ export type TablesBoardProps = {
   onUpdatePrimaryDeviceCode?: (code: string) => Promise<void> | void;
   origin?: string;
   onGoToSettings?: () => void;
+  openRequestTables?: number[];
+  activeOrderTables?: number[];
 };
 
 function drawRoundedRect(
@@ -77,6 +79,8 @@ export default function TablesBoard({
   onUpdatePrimaryDeviceCode,
   origin,
   onGoToSettings,
+  openRequestTables = [],
+  activeOrderTables = [],
 }: TablesBoardProps) {
   const effectiveOrigin = useMemo(() => {
     return getPublicSiteUrl(origin);
@@ -848,19 +852,47 @@ export default function TablesBoard({
           {tablesData.map((table) => {
             const isAssigned = Boolean(table.assigned);
             const isDup = table.isDuplicate;
+            const hasOpenRequest = openRequestTables.includes(table.tableNum);
+            const hasActiveOrder = activeOrderTables.includes(table.tableNum);
 
             return (
               <div
                 key={table.tableNum}
                 style={{
                   ...styles.card,
-                  borderColor: isDup ? "#fca5a5" : isAssigned ? "#cbd5e1" : "#e2e8f0",
-                  backgroundColor: isDup ? "#fffafb" : "#ffffff",
+                  borderColor: isDup
+                    ? "#fca5a5"
+                    : hasOpenRequest
+                    ? "#f59e0b"
+                    : isAssigned
+                    ? "#cbd5e1"
+                    : "#e2e8f0",
+                  backgroundColor: isDup ? "#fffafb" : hasOpenRequest ? "#fffbeb" : "#ffffff",
                 }}
               >
                 {/* Card Top / Table Title */}
                 <div style={styles.cardHeader}>
-                  <div style={styles.cardTitle}>Table {table.tableNum}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                    <div style={styles.cardTitle}>Table {table.tableNum}</div>
+                    {hasOpenRequest && (
+                      <span
+                        style={styles.badgeAmber}
+                        title="Open staff request on this table"
+                        aria-label="Open staff request"
+                      >
+                        🔔 Request
+                      </span>
+                    )}
+                    {hasActiveOrder && (
+                      <span
+                        style={styles.badgeTeal}
+                        title="Active table order"
+                        aria-label="Active order"
+                      >
+                        ● Order
+                      </span>
+                    )}
+                  </div>
 
                   {isDup ? (
                     <span style={styles.badgeRed} title="Multiple stands assigned with same table number">
@@ -1398,6 +1430,24 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "11px",
     fontWeight: 700,
     padding: "2px 8px",
+    borderRadius: "12px",
+  },
+  badgeAmber: {
+    background: "#fef3c7",
+    color: "#b45309",
+    border: "1px solid #fcd34d",
+    fontSize: "11px",
+    fontWeight: 800,
+    padding: "2px 7px",
+    borderRadius: "12px",
+  },
+  badgeTeal: {
+    background: "#f0fdfa",
+    color: "#0f766e",
+    border: "1px solid #99f6e4",
+    fontSize: "10px",
+    fontWeight: 700,
+    padding: "2px 6px",
     borderRadius: "12px",
   },
   standInfo: {

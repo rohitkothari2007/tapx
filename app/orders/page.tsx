@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { formatOrderNumber } from "../lib/orderNumber";
+import { formatOrderLabel } from "../lib/orderNumber";
 
 type Order = {
   id: string;
@@ -15,6 +15,12 @@ type Order = {
   subtotal: number;
   total: number;
   created_at: string;
+  order_number?: number | null;
+  order_day?: string | null;
+  payment_status?: string | null;
+  payment_method?: string | null;
+  paid_at?: string | null;
+  archived_at?: string | null;
   businesses?: {
     name: string;
   } | null;
@@ -198,7 +204,8 @@ export default function OrdersPage() {
       ] = await Promise.all([
         supabase
           .from("tapx_orders")
-          .select("*, businesses(name)")
+          .select("*, order_number, order_day, payment_status, payment_method, paid_at, archived_at, businesses(name)")
+          .is("archived_at", null)
           .order("created_at", {
             ascending: false,
           }),
@@ -658,7 +665,7 @@ export default function OrdersPage() {
                           styles.orderId
                         }
                       >
-                        ORDER #{formatOrderNumber(order)}
+                        ORDER {formatOrderLabel(order, { showDayIfNotToday: true })}
                       </div>
 
                       <h2
@@ -858,7 +865,7 @@ export default function OrdersPage() {
                       styles.eyebrow
                     }
                   >
-                    ORDER #{formatOrderNumber(selected)}
+                    ORDER {formatOrderLabel(selected, { showDayIfNotToday: true })}
                   </div>
 
                   <h2

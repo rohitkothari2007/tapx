@@ -22,6 +22,7 @@ import {
   parseLoyaltyRules,
   getNextMilestone,
 } from "../../lib/loyaltyMilestones";
+import { formatOrderLabel } from "../../lib/orderNumber";
 
 function ShoppingBagIcon({ size = 24 }: { size?: number }) {
   return (
@@ -2826,6 +2827,9 @@ function TableOrderingSection({
 }) {
   type ActiveOrder = {
     id: string;
+    order_number?: number | null;
+    order_day?: string | null;
+    payment_status?: string | null;
     table_number: number;
     customer_name: string;
     customer_phone: string | null;
@@ -2927,6 +2931,9 @@ function TableOrderingSection({
 
       const typedOrder = {
         id: String(orderData.id),
+        order_number: (orderData as any).order_number ?? null,
+        order_day: (orderData as any).order_day ?? null,
+        payment_status: (orderData as any).payment_status ?? null,
         table_number: orderData.table_number,
         customer_name: "",
         customer_phone: "",
@@ -3196,7 +3203,7 @@ function TableOrderingSection({
                   color: "#171717",
                 }}
               >
-                #{currentOrder.id.slice(0, 8).toUpperCase()}
+                {formatOrderLabel(currentOrder, { showDayIfNotToday: true })}
               </strong>
               <div
                 style={{
@@ -5941,6 +5948,9 @@ function RoomServiceSection({
 }) {
   type ActiveOrder = {
     id: string;
+    order_number?: number | null;
+    order_day?: string | null;
+    payment_status?: string | null;
     table_number: number;
     customer_name: string;
     customer_phone: string | null;
@@ -6018,6 +6028,9 @@ function RoomServiceSection({
 
       const typedOrder = {
         id: String(orderData.id),
+        order_number: (orderData as any).order_number ?? null,
+        order_day: (orderData as any).order_day ?? null,
+        payment_status: (orderData as any).payment_status ?? null,
         table_number: orderData.table_number,
         customer_name: "",
         customer_phone: "",
