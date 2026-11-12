@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { formatOrderLabel } from "../lib/orderNumber";
+import type { LiveOrderBillLinkMap } from "../lib/billing";
 
 export const LATE_ORDER_WARN_MINUTES = 10;
 export const LATE_ORDER_ALERT_MINUTES = 20;
@@ -45,6 +46,9 @@ type Props = {
   updatingOrderId: string | null;
   orderFlow?: "simple" | "steps";
   onToggleOrderFlow?: (mode: "simple" | "steps") => Promise<void> | void;
+  liveBillLinks?: LiveOrderBillLinkMap;
+  onBillOrder?: (order: LiveOrder) => void;
+  onOpenBill?: (billId: string) => void;
 };
 
 const ACTIVE_STATUSES = ["pending", "accepted", "preparing", "ready", "served"];
@@ -140,6 +144,9 @@ export default function LiveOrdersPanel({
   updatingOrderId,
   orderFlow = "simple",
   onToggleOrderFlow,
+  liveBillLinks,
+  onBillOrder,
+  onOpenBill,
 }: Props) {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [highlightedIds, setHighlightedIds] = useState<Record<string, boolean>>({});
@@ -528,6 +535,29 @@ export default function LiveOrdersPanel({
                   >
                     Cancel
                   </button>
+
+                  {!order.archived_at &&
+                    order.status !== "cancelled" &&
+                    (onBillOrder || onOpenBill) &&
+                    (liveBillLinks?.[order.id] ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenBill?.(liveBillLinks[order.id].billId)}
+                        style={styles.billedBadgeButton}
+                        title="Open this bill in Bills"
+                      >
+                        Billed · {liveBillLinks[order.id].billNoText}
+                      </button>
+                    ) : onBillOrder ? (
+                      <button
+                        type="button"
+                        onClick={() => onBillOrder(order)}
+                        style={styles.billButton}
+                        title="Create bill from this order"
+                      >
+                        Bill
+                      </button>
+                    ) : null)}
                 </div>
               </div>
             );
@@ -888,8 +918,31 @@ const styles: Record<string, CSSProperties> = {
   },
   actionsRow: {
     display: "flex",
+    flexWrap: "wrap",
     gap: "8px",
     marginTop: "2px",
+  },
+  billButton: {
+    padding: "11px 14px",
+    background: "#0f172a",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "10px",
+    fontSize: "13px",
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  billedBadgeButton: {
+    padding: "10px 12px",
+    background: "#ecfdf5",
+    color: "#047857",
+    border: "1px solid #a7f3d0",
+    borderRadius: "10px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
   },
   primaryActionButton: {
     flex: 1,

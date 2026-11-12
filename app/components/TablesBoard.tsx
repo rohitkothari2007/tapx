@@ -6,6 +6,12 @@ import JSZip from "jszip";
 import { supabase } from "../lib/supabase";
 import { parseStandTableNumber } from "../lib/tableNumber";
 import { getPublicSiteUrl } from "../lib/siteUrl";
+import { formatMoney } from "../lib/billing";
+
+export type TableUnbilledSummary = {
+  count: number;
+  total: number;
+};
 
 export type TablesBoardDevice = {
   id: string;
@@ -34,6 +40,8 @@ export type TablesBoardProps = {
   onGoToSettings?: () => void;
   openRequestTables?: number[];
   activeOrderTables?: number[];
+  unbilledByTable?: Record<number, TableUnbilledSummary>;
+  onBillTable?: (tableNumber: number) => void;
 };
 
 function drawRoundedRect(
@@ -81,6 +89,8 @@ export default function TablesBoard({
   onGoToSettings,
   openRequestTables = [],
   activeOrderTables = [],
+  unbilledByTable,
+  onBillTable,
 }: TablesBoardProps) {
   const effectiveOrigin = useMemo(() => {
     return getPublicSiteUrl(origin);
@@ -854,6 +864,7 @@ export default function TablesBoard({
             const isDup = table.isDuplicate;
             const hasOpenRequest = openRequestTables.includes(table.tableNum);
             const hasActiveOrder = activeOrderTables.includes(table.tableNum);
+            const unbilledInfo = !isAdmin ? unbilledByTable?.[table.tableNum] : undefined;
 
             return (
               <div
@@ -986,6 +997,21 @@ export default function TablesBoard({
                     </button>
                   )}
                 </div>
+
+                {!isAdmin && onBillTable && unbilledInfo && unbilledInfo.count > 0 && (
+                  <div style={styles.unbilledRow}>
+                    <span style={styles.unbilledText}>
+                      {formatMoney(unbilledInfo.total)} · {unbilledInfo.count} unbilled
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onBillTable(table.tableNum)}
+                      style={styles.billTableBtn}
+                    >
+                      Bill table
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1636,6 +1662,33 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #fecaca",
     borderRadius: "4px",
     fontSize: "11px",
+    cursor: "pointer",
+  },
+  unbilledRow: {
+    marginTop: "8px",
+    padding: "8px 10px",
+    borderRadius: "8px",
+    background: "#eff6ff",
+    border: "1px solid #bfdbfe",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    flexWrap: "wrap",
+  },
+  unbilledText: {
+    fontSize: "12px",
+    fontWeight: 700,
+    color: "#1e40af",
+  },
+  billTableBtn: {
+    padding: "6px 11px",
+    background: "#2563eb",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "7px",
+    fontSize: "12px",
+    fontWeight: 700,
     cursor: "pointer",
   },
 };
