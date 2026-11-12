@@ -20,6 +20,7 @@ export default function AdminGuard({ children }: { children: React.ReactNode }) 
     pathname.startsWith("/devices") ||
     pathname.startsWith("/client") ||
     pathname.startsWith("/tap") ||
+    pathname.startsWith("/bill/") ||
     pathname.startsWith("/t/") ||
     pathname.startsWith("/t") ||
     pathname.startsWith("/_next") ||

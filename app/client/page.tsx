@@ -29,6 +29,8 @@ import LoyaltyWhatsAppModal, { ChatIcon } from "./LoyaltyWhatsAppModal";
 import LoyaltyMemberLists from "./LoyaltyMemberLists";
 import LoyaltyMilestoneRulesEditor from "./LoyaltyMilestoneRulesEditor";
 import RemindersPage, { useRemindersData } from "./RemindersPage";
+import BillingSettingsCard from "./billing/BillingSettingsCard";
+import BillsPage from "./billing/BillsPage";
 import { type LoyaltyMilestoneRule, parseLoyaltyRules } from "../lib/loyaltyMilestones";
 import {
   type OnlineOrderingLink,
@@ -242,6 +244,7 @@ type PageKey =
   | "hotel_requests"
   | "orders"
   | "requests"
+  | "bills"
   | "appointments"
   | "menu"
   | "offers"
@@ -1389,6 +1392,8 @@ export default function ClientPortalPage() {
     "order online"
   );
 
+  const hasBilling = hasModule("billing");
+
   const tableOrderingConfigRow = useMemo(() => {
     return (moduleConfigs || []).find(
       (m: any) => normalizeKey(m.module_key) === "table_ordering"
@@ -2104,6 +2109,12 @@ export default function ClientPortalPage() {
           : undefined,
     },
     {
+      key: "bills" as PageKey,
+      label: "Bills",
+      icon: "🧾",
+      show: hasBilling,
+    },
+    {
       key: "appointments" as PageKey,
       label: "Appointments",
       icon: "◷",
@@ -2733,6 +2744,14 @@ export default function ClientPortalPage() {
             />
           )}
 
+          {activePage === "bills" && hasBilling && business && (
+            <BillsPage
+              business={business}
+              moduleConfigs={moduleConfigs}
+              onOpenSettings={() => navigate("settings")}
+            />
+          )}
+
           {activePage === "appointments" &&
             hasModule(
               "appointment_booking",
@@ -2822,8 +2841,10 @@ export default function ClientPortalPage() {
               hasOnlineOrdering={hasOnlineOrdering}
               hasDiningMenu={hasMenu || hasOrders}
               hasTableOrdering={hasTableOrdering}
+              hasBilling={hasBilling}
               tableOrderingConfig={tableOrderingConfigRow?.config}
               onSaveOrderingControls={handleSaveOrderingControls}
+              onBillingSettingsSaved={loadPortal}
               moduleConfigs={moduleConfigs}
               features={features}
               onUpdateBusiness={(updated) => setBusiness(updated)}
@@ -8197,8 +8218,10 @@ function SettingsPage({
   hasOnlineOrdering,
   hasDiningMenu,
   hasTableOrdering = false,
+  hasBilling = false,
   tableOrderingConfig,
   onSaveOrderingControls,
+  onBillingSettingsSaved,
   moduleConfigs,
   features,
   onUpdateBusiness,
@@ -8210,6 +8233,7 @@ function SettingsPage({
   hasOnlineOrdering?: boolean;
   hasDiningMenu?: boolean;
   hasTableOrdering?: boolean;
+  hasBilling?: boolean;
   tableOrderingConfig?: Record<string, any> | null;
   onSaveOrderingControls?: (controls: {
     paused: boolean;
@@ -8220,6 +8244,7 @@ function SettingsPage({
     open: string | null;
     close: string | null;
   }) => Promise<void>;
+  onBillingSettingsSaved?: () => Promise<void> | void;
   moduleConfigs?: ModuleConfig[];
   features?: Feature[];
   onUpdateBusiness?: (updated: Business) => void;
@@ -9348,6 +9373,15 @@ function SettingsPage({
               </button>
             </div>
           </div>
+        )}
+
+        {hasBilling && (
+          <BillingSettingsCard
+            businessId={business.id}
+            upiId={upiId}
+            moduleConfigs={moduleConfigs}
+            onSaved={onBillingSettingsSaved}
+          />
         )}
       </div>
 
