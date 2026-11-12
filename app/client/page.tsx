@@ -3069,6 +3069,7 @@ export default function ClientPortalPage() {
           color: white;
           display: flex;
           flex-direction: column;
+          overflow: hidden;
           padding: 25px 14px 16px;
           z-index: 50;
         }
@@ -3078,6 +3079,7 @@ export default function ClientPortalPage() {
           align-items: center;
           gap: 12px;
           padding: 0 10px;
+          flex-shrink: 0;
         }
 
         .brand-logo {
@@ -3114,6 +3116,7 @@ export default function ClientPortalPage() {
           display: flex;
           gap: 11px;
           align-items: center;
+          flex-shrink: 0;
         }
 
         .business-avatar {
@@ -3162,12 +3165,37 @@ export default function ClientPortalPage() {
           font-size: 9px;
           font-weight: 800;
           letter-spacing: 0.18em;
+          flex-shrink: 0;
         }
 
         .nav {
           display: flex;
           flex-direction: column;
           gap: 5px;
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow-y: auto;
+          overflow-x: hidden;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+        }
+
+        .nav::-webkit-scrollbar {
+          width: 4px;
+        }
+
+        .nav::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .nav::-webkit-scrollbar-thumb {
+          background: rgba(255, 255, 255, 0.18);
+          border-radius: 99px;
+        }
+
+        .nav::-webkit-scrollbar-thumb:hover {
+          background: rgba(255, 255, 255, 0.3);
         }
 
         .nav-item {
@@ -3177,6 +3205,7 @@ export default function ClientPortalPage() {
           color: #aab3bf;
           border-radius: 11px;
           min-height: 46px;
+          flex-shrink: 0;
           padding: 0 13px;
           display: flex;
           align-items: center;
@@ -3225,6 +3254,7 @@ export default function ClientPortalPage() {
 
         .sidebar-bottom {
           margin-top: auto;
+          flex-shrink: 0;
         }
 
         .support-card {
