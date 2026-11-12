@@ -3,16 +3,23 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import {
+  BillableOrderItemLike,
+  BillableOrderLike,
   BillingBusinessProfile,
   BillingSettings,
+  LiveOrderBillLinkMap,
   PaymentMethod,
   TapxBill,
   TapxBillItem,
   TapxBillSummary,
+  UnbilledTableGroup,
   daysBetweenIST,
   formatBillDayLabel,
   formatBillTimeShort,
   formatMoney,
+  formatQuantity,
+  formatRelativeAgeShort,
+  groupBillableOrdersByTable,
   parseBillingSettings,
   shiftISTDate,
 } from "../../lib/billing";
@@ -22,10 +29,10 @@ import BillDocument, {
 } from "../../components/billing/BillDocument";
 import QuickBill from "./QuickBill";
 
-const BILL_SELECT_COLUMNS =
+export const BILL_SELECT_COLUMNS =
   "id, business_id, financial_year, bill_number, bill_no_text, bill_day, status, source, customer_name, customer_phone, table_number, subtotal, discount_amount, discount_note, service_charge_pct, service_charge, tax_mode, tax_total, round_off, total, payment_status, payment_method, paid_at, void_reason, voided_at, notes, share_token, created_at";
 
-const BILL_ITEM_SELECT_COLUMNS =
+export const BILL_ITEM_SELECT_COLUMNS =
   "id, bill_id, line_no, item_name, unit_price, quantity, line_total";
 
 type DatePreset = "today" | "yesterday" | "last7" | "custom";
@@ -34,12 +41,30 @@ type Props = {
   business: BillingBusinessProfile & { id: string };
   moduleConfigs?: Array<{ module_key: string; config: Record<string, any> | null }>;
   onOpenSettings?: () => void;
+  orderBasedMode?: boolean;
+  orders?: BillableOrderLike[];
+  orderItems?: BillableOrderItemLike[];
+  liveBillLinks?: LiveOrderBillLinkMap;
+  onBillTable?: (tableNumber: number) => void;
+  onBillOrderWithoutTable?: (order: BillableOrderLike) => void;
+  initialBillId?: string | null;
+  onConsumedInitialBillId?: () => void;
+  onBillsChanged?: () => Promise<void> | void;
 };
 
 export default function BillsPage({
   business,
   moduleConfigs,
   onOpenSettings,
+  orderBasedMode = false,
+  orders = [],
+  orderItems = [],
+  liveBillLinks = {},
+  onBillTable,
+  onBillOrderWithoutTable,
+  initialBillId,
+  onConsumedInitialBillId,
+  onBillsChanged,
 }: Props) {
   const billingSettings: BillingSettings = useMemo(() => {
     const row = (moduleConfigs || []).find(
@@ -64,6 +89,29 @@ export default function BillsPage({
   const [selectedBill, setSelectedBill] = useState<TapxBill | null>(null);
   const [selectedItems, setSelectedItems] = useState<TapxBillItem[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [showInProgress, setShowInProgress] = useState(false);
+
+  const { readyTableGroups, inProgressTableGroups, inProgressOrderCount } = useMemo(() => {
+    if (!orderBasedMode) {
+      return {
+        readyTableGroups: [],
+        inProgressTableGroups: [],
+        inProgressOrderCount: 0,
+      };
+    }
+    const ready = groupBillableOrdersByTable(orders, orderItems, liveBillLinks, {
+      statuses: ["served", "completed"],
+    });
+    const inProg = groupBillableOrdersByTable(orders, orderItems, liveBillLinks, {
+      statuses: ["pending", "accepted", "preparing", "ready"],
+    });
+    const progCount = inProg.reduce((sum, g) => sum + g.orderCount, 0);
+    return {
+      readyTableGroups: ready,
+      inProgressTableGroups: inProg,
+      inProgressOrderCount: progCount,
+    };
+  }, [orderBasedMode, orders, orderItems, liveBillLinks]);
 
   const activeRange = useMemo(() => {
     const nowToday = getISTDateStr();
@@ -188,8 +236,19 @@ export default function BillsPage({
     [business?.id]
   );
 
+  useEffect(() => {
+    if (initialBillId && business?.id) {
+      void openBillById(initialBillId);
+      onConsumedInitialBillId?.();
+    }
+  }, [initialBillId, business?.id, openBillById, onConsumedInitialBillId]);
+
   const handleBillIssued = async (newBillId: string) => {
-    await Promise.all([openBillById(newBillId), loadBillsAndSummary()]);
+    await Promise.all([
+      openBillById(newBillId),
+      loadBillsAndSummary(),
+      onBillsChanged ? onBillsChanged() : Promise.resolve(),
+    ]);
   };
 
   const handleMarkPaid = async (method: PaymentMethod) => {
@@ -200,7 +259,11 @@ export default function BillsPage({
       p_method: method,
     });
     if (rpcErr) throw new Error(rpcErr.message || "Could not update payment status.");
-    await Promise.all([openBillById(selectedBill.id), loadBillsAndSummary()]);
+    await Promise.all([
+      openBillById(selectedBill.id),
+      loadBillsAndSummary(),
+      onBillsChanged ? onBillsChanged() : Promise.resolve(),
+    ]);
   };
 
   const handleMarkUnpaid = async () => {
@@ -211,7 +274,11 @@ export default function BillsPage({
       p_method: null,
     });
     if (rpcErr) throw new Error(rpcErr.message || "Could not mark bill unpaid.");
-    await Promise.all([openBillById(selectedBill.id), loadBillsAndSummary()]);
+    await Promise.all([
+      openBillById(selectedBill.id),
+      loadBillsAndSummary(),
+      onBillsChanged ? onBillsChanged() : Promise.resolve(),
+    ]);
   };
 
   const handleVoidBill = async (reason: string) => {
@@ -221,7 +288,11 @@ export default function BillsPage({
       p_reason: reason,
     });
     if (rpcErr) throw new Error(rpcErr.message || "Could not void bill.");
-    await Promise.all([openBillById(selectedBill.id), loadBillsAndSummary()]);
+    await Promise.all([
+      openBillById(selectedBill.id),
+      loadBillsAndSummary(),
+      onBillsChanged ? onBillsChanged() : Promise.resolve(),
+    ]);
   };
 
   const filteredBills = useMemo(() => {
@@ -312,7 +383,12 @@ export default function BillsPage({
           <button
             type="button"
             disabled={loading}
-            onClick={() => void loadBillsAndSummary()}
+            onClick={() => {
+              void loadBillsAndSummary();
+              if (orderBasedMode && onBillsChanged) {
+                void onBillsChanged();
+              }
+            }}
             style={btnSecondaryStyle}
           >
             {loading ? "Refreshing..." : "↻ Refresh"}
@@ -320,9 +396,9 @@ export default function BillsPage({
           <button
             type="button"
             onClick={() => setView("quick")}
-            style={btnPrimaryStyle}
+            style={orderBasedMode ? btnSecondaryStyle : btnPrimaryStyle}
           >
-            + New bill
+            {orderBasedMode ? "Counter sale (no order)" : "+ New bill"}
           </button>
         </div>
       </div>
@@ -340,6 +416,129 @@ export default function BillsPage({
           }}
         >
           ⚠️ {errorMsg}
+        </div>
+      )}
+
+      {/* PART E: ORDER-BASED MODE "READY TO BILL" SECTION ABOVE SUMMARY STRIP */}
+      {orderBasedMode && (
+        <div
+          style={{
+            background: "#ffffff",
+            border: "1px solid #e2e8f0",
+            borderRadius: "14px",
+            padding: "16px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "12px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "8px",
+            }}
+          >
+            <div>
+              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 800, color: "#0f172a" }}>
+                Ready to bill
+              </h3>
+              <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
+                Unbilled table orders grouped by table. Served and completed orders appear first.
+              </p>
+            </div>
+          </div>
+
+          {readyTableGroups.length === 0 && inProgressTableGroups.length === 0 ? (
+            <div
+              style={{
+                padding: "18px 14px",
+                borderRadius: "10px",
+                background: "#f8fafc",
+                border: "1px dashed #cbd5e1",
+                textAlign: "center",
+                fontSize: "13px",
+                fontWeight: 600,
+                color: "#64748b",
+              }}
+            >
+              No orders waiting to be billed.
+            </div>
+          ) : (
+            <>
+              {readyTableGroups.length === 0 ? (
+                <div
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: "10px",
+                    background: "#f8fafc",
+                    fontSize: "12.5px",
+                    color: "#64748b",
+                  }}
+                >
+                  No served or completed orders waiting yet.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {readyTableGroups.map((g) => (
+                    <UnbilledTableRow
+                      key={`ready-${g.tableNumber ?? "none"}`}
+                      group={g}
+                      variant="ready"
+                      onBillTable={onBillTable}
+                      onBillOrderWithoutTable={onBillOrderWithoutTable}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {inProgressTableGroups.length > 0 && (
+                <div
+                  style={{
+                    borderTop: "1px solid #f1f5f9",
+                    paddingTop: "10px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "8px",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setShowInProgress((prev) => !prev)}
+                    style={{
+                      alignSelf: "flex-start",
+                      border: "1px solid #e2e8f0",
+                      background: "#f8fafc",
+                      color: "#475569",
+                      borderRadius: "8px",
+                      padding: "6px 12px",
+                      fontSize: "12.5px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {showInProgress ? "▾" : "▸"} Still in progress ({inProgressOrderCount})
+                  </button>
+
+                  {showInProgress && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {inProgressTableGroups.map((g) => (
+                        <UnbilledTableRow
+                          key={`prog-${g.tableNumber ?? "none"}`}
+                          group={g}
+                          variant="progress"
+                          onBillTable={onBillTable}
+                          onBillOrderWithoutTable={onBillOrderWithoutTable}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -500,9 +699,12 @@ export default function BillsPage({
             <button
               type="button"
               onClick={() => setView("quick")}
-              style={{ ...btnPrimaryStyle, marginTop: "14px" }}
+              style={{
+                ...(orderBasedMode ? btnSecondaryStyle : btnPrimaryStyle),
+                marginTop: "14px",
+              }}
             >
-              + New bill
+              {orderBasedMode ? "Counter sale (no order)" : "+ New bill"}
             </button>
           </div>
         ) : filteredBills.length === 0 ? (
@@ -708,3 +910,89 @@ const btnSecondaryStyle: React.CSSProperties = {
   fontWeight: 700,
   cursor: "pointer",
 };
+
+const readyRowStyle: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "12px",
+  padding: "12px 14px",
+  borderRadius: "12px",
+  border: "1px solid #e2e8f0",
+  background: "#f8fafc",
+};
+
+function UnbilledTableRow({
+  group,
+  variant,
+  onBillTable,
+  onBillOrderWithoutTable,
+}: {
+  group: UnbilledTableGroup<BillableOrderLike>;
+  variant: "ready" | "progress";
+  onBillTable?: (tableNumber: number) => void;
+  onBillOrderWithoutTable?: (order: BillableOrderLike) => void;
+}) {
+  const tableLabel =
+    group.tableNumber !== null ? `Table ${group.tableNumber}` : "No table";
+  const ageLabel = formatRelativeAgeShort(group.oldestCreatedAt);
+
+  return (
+    <div
+      style={{
+        ...readyRowStyle,
+        background: variant === "progress" ? "#fafafa" : "#f8fafc",
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <strong style={{ fontSize: "15px", color: "#0f172a" }}>{tableLabel}</strong>
+          <span style={{ fontSize: "12.5px", color: "#475569", fontWeight: 600 }}>
+            {group.orderCount} {group.orderCount === 1 ? "order" : "orders"} ·{" "}
+            {formatQuantity(group.itemsCount)}{" "}
+            {group.itemsCount === 1 ? "item" : "items"}
+          </span>
+          {ageLabel && (
+            <span style={{ fontSize: "12px", color: "#64748b" }}>
+              · Oldest {ageLabel}
+            </span>
+          )}
+        </div>
+        <div
+          style={{
+            fontSize: "13.5px",
+            fontWeight: 800,
+            color: variant === "progress" ? "#334155" : "#0f172a",
+          }}
+        >
+          {formatMoney(group.unbilledTotal)}{" "}
+          {variant === "progress" ? "in progress" : "unbilled"}
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => {
+          if (group.tableNumber !== null) {
+            onBillTable?.(group.tableNumber);
+          } else if (onBillOrderWithoutTable && group.orders[0]) {
+            onBillOrderWithoutTable(group.orders[0]);
+          }
+        }}
+        style={
+          variant === "ready"
+            ? { ...btnPrimaryStyle, padding: "10px 18px", fontSize: "13.5px" }
+            : {
+                ...btnSecondaryStyle,
+                padding: "9px 15px",
+                borderColor: "#2563eb",
+                color: "#1d4ed8",
+              }
+        }
+      >
+        Bill table
+      </button>
+    </div>
+  );
+}

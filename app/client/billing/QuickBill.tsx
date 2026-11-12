@@ -5,15 +5,11 @@ import { supabase } from "../../lib/supabase";
 import {
   BillingSettings,
   PaymentMethod,
+  SavedMenuItem,
   formatMoney,
   hasAtMostDecimals,
+  parseSavedItemsFromConfig,
 } from "../../lib/billing";
-
-type SavedMenuItem = {
-  id: string;
-  name: string;
-  price: number;
-};
 
 type DraftLine = {
   key: string;
@@ -38,29 +34,6 @@ function createBlankLine(): DraftLine {
     priceInput: "",
     qtyInput: "1",
   };
-}
-
-function parseSavedItemsFromConfig(config: Record<string, any> | null | undefined): SavedMenuItem[] {
-  const rawItems = Array.isArray(config?.items) ? config.items : [];
-  const parsed: SavedMenuItem[] = [];
-  for (const raw of rawItems) {
-    if (!raw || typeof raw !== "object") continue;
-    if (raw.available === false) continue;
-    const name = typeof raw.name === "string" ? raw.name.trim() : "";
-    if (!name) continue;
-    const priceRaw = String(raw.price ?? "").replace(/[^0-9.]/g, "");
-    const priceNum = priceRaw === "" ? 0 : Number(priceRaw);
-    const unitPrice =
-      Number.isFinite(priceNum) && priceNum >= 0
-        ? Math.round(priceNum * 100) / 100
-        : 0;
-    parsed.push({
-      id: typeof raw.id === "string" ? raw.id : name,
-      name: name.slice(0, 120),
-      price: unitPrice,
-    });
-  }
-  return parsed;
 }
 
 export default function QuickBill({

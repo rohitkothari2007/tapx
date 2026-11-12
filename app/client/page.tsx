@@ -31,6 +31,13 @@ import LoyaltyMilestoneRulesEditor from "./LoyaltyMilestoneRulesEditor";
 import RemindersPage, { useRemindersData } from "./RemindersPage";
 import BillingSettingsCard from "./billing/BillingSettingsCard";
 import BillsPage from "./billing/BillsPage";
+import BillFromOrders from "./billing/BillFromOrders";
+import UnbilledOrdersWarning from "./billing/UnbilledOrdersWarning";
+import {
+  type LiveOrderBillLinkMap,
+  isOrderBillable,
+  parseBillingSettings,
+} from "../lib/billing";
 import { type LoyaltyMilestoneRule, parseLoyaltyRules } from "../lib/loyaltyMilestones";
 import {
   type OnlineOrderingLink,
@@ -42,7 +49,7 @@ import {
   validateOnlineOrderingConfig,
   sanitizeOnlineOrderingLinks,
 } from "../lib/onlineOrdering";
-import TablesBoard from "../components/TablesBoard";
+import TablesBoard, { type TableUnbilledSummary } from "../components/TablesBoard";
 
 function playDashboardChime() {
   try {
@@ -611,6 +618,70 @@ export default function ClientPortalPage() {
   const [currentUserId, setCurrentUserId] =
     useState("");
 
+  const [liveBillLinks, setLiveBillLinks] =
+    useState<LiveOrderBillLinkMap>({});
+  const [billReviewTarget, setBillReviewTarget] = useState<{
+    tableNumber: number | null;
+    preselectOrderIds?: string[];
+    returnPage: PageKey;
+  } | null>(null);
+  const [pendingOpenBillId, setPendingOpenBillId] =
+    useState<string | null>(null);
+
+  const loadLiveBillLinks = useCallback(
+    async (bId: string, loadedOrders: Order[]) => {
+      const visibleIds = loadedOrders.map((o) => o.id).filter(Boolean);
+      if (!bId || visibleIds.length === 0) {
+        setLiveBillLinks({});
+        return;
+      }
+      try {
+        const { data: linkRows, error: linkErr } = await supabase
+          .from("tapx_bill_orders")
+          .select("bill_id, order_id")
+          .eq("business_id", bId)
+          .eq("is_active", true)
+          .in("order_id", visibleIds);
+
+        if (linkErr || !linkRows || linkRows.length === 0) {
+          setLiveBillLinks({});
+          return;
+        }
+
+        const uniqueBillIds = Array.from(
+          new Set(linkRows.map((r: any) => String(r.bill_id)).filter(Boolean))
+        );
+        const billNoMap: Record<string, string> = {};
+        if (uniqueBillIds.length > 0) {
+          const { data: billRows } = await supabase
+            .from("tapx_bills")
+            .select("id, bill_no_text")
+            .eq("business_id", bId)
+            .in("id", uniqueBillIds);
+          (billRows || []).forEach((b: any) => {
+            if (b?.id && b?.bill_no_text) {
+              billNoMap[String(b.id)] = String(b.bill_no_text);
+            }
+          });
+        }
+
+        const nextLinks: LiveOrderBillLinkMap = {};
+        linkRows.forEach((r: any) => {
+          if (r?.order_id && r?.bill_id) {
+            nextLinks[String(r.order_id)] = {
+              billId: String(r.bill_id),
+              billNoText: billNoMap[String(r.bill_id)] || "Bill",
+            };
+          }
+        });
+        setLiveBillLinks(nextLinks);
+      } catch {
+        // Preserve existing map on transient error
+      }
+    },
+    []
+  );
+
 
 
   const loadPortal = useCallback(async () => {
@@ -1011,8 +1082,29 @@ export default function ClientPortalPage() {
         }
 
         setOrderItems((items || []) as OrderItem[]);
+
+        const loadedKeys = new Set<string>();
+        const loadedFeatures = (featuresResult.data || []) as Feature[];
+        const loadedBf = (businessFeaturesResult.data || []) as BusinessFeature[];
+        loadedFeatures.forEach((feature) => {
+          const bf = loadedBf.find((item) => item.feature_id === feature.id);
+          if (bf?.enabled && normalizeKey(bf.status) !== "inactive") {
+            loadedKeys.add(normalizeKey(feature.feature_key));
+            loadedKeys.add(normalizeKey(feature.name));
+          }
+        });
+        const billingOn = loadedKeys.has(normalizeKey("billing"));
+        const tableOrdOn = ["table_ordering", "table-ordering", "table ordering"].some(
+          (k) => loadedKeys.has(normalizeKey(k))
+        );
+        if (billingOn && tableOrdOn) {
+          await loadLiveBillLinks(businessId, loadedOrders);
+        } else {
+          setLiveBillLinks({});
+        }
       } else {
         setOrderItems([]);
+        setLiveBillLinks({});
       }
     } catch (err: any) {
       console.error(err);
@@ -1024,7 +1116,7 @@ export default function ClientPortalPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [router]);
+  }, [router, loadLiveBillLinks]);
 
   const [highlightedWidgets, setHighlightedWidgets] = useState<Record<string, boolean>>({});
 
@@ -1493,6 +1585,60 @@ export default function ClientPortalPage() {
     "table-ordering",
     "table ordering"
   );
+
+  // Order-based billing mode requires BOTH billing and table_ordering modules enabled (never category-based)
+  const isOrderBasedBilling = hasBilling && hasTableOrdering;
+
+  const billingSettings = useMemo(() => {
+    const row = (moduleConfigs || []).find(
+      (m: any) => normalizeKey(m.module_key) === "billing"
+    );
+    return parseBillingSettings(row?.config);
+  }, [moduleConfigs]);
+
+  const unbilledByTable = useMemo<Record<number, TableUnbilledSummary>>(() => {
+    if (!isOrderBasedBilling) return {};
+    const map: Record<number, TableUnbilledSummary> = {};
+    for (const o of orders) {
+      if (!isOrderBillable(o, liveBillLinks)) continue;
+      if (typeof o.table_number !== "number" || o.table_number <= 0) continue;
+      const cur = map[o.table_number] || { count: 0, total: 0 };
+      cur.count += 1;
+      cur.total = Math.round((cur.total + Number(o.total ?? o.subtotal ?? 0)) * 100) / 100;
+      map[o.table_number] = cur;
+    }
+    return map;
+  }, [isOrderBasedBilling, orders, liveBillLinks]);
+
+  const openReviewForTable = useCallback(
+    (tableNumber: number, returnPage: PageKey) => {
+      setBillReviewTarget({ tableNumber, returnPage });
+      setMobileMenuOpen(false);
+    },
+    []
+  );
+
+  const openReviewForOrder = useCallback(
+    (order: { id: string; table_number: number | null }, returnPage: PageKey) => {
+      setBillReviewTarget({
+        tableNumber:
+          typeof order.table_number === "number" && Number.isFinite(order.table_number)
+            ? order.table_number
+            : null,
+        preselectOrderIds: [order.id],
+        returnPage,
+      });
+      setMobileMenuOpen(false);
+    },
+    []
+  );
+
+  const openBillInBillsView = useCallback((billId: string) => {
+    setBillReviewTarget(null);
+    setPendingOpenBillId(billId);
+    setActivePage("bills");
+    setMobileMenuOpen(false);
+  }, []);
 
   const tableCount = useMemo(() => {
     const raw = (tableOrderingConfigRow?.config as Record<string, any>)?.table_count;
@@ -2055,6 +2201,7 @@ export default function ClientPortalPage() {
   };
 
   const navigate = (page: PageKey) => {
+    setBillReviewTarget(null);
     setActivePage(page);
     setMobileMenuOpen(false);
   };
@@ -2617,6 +2764,44 @@ export default function ClientPortalPage() {
         )}
 
         <div className="content">
+          {billReviewTarget && isOrderBasedBilling && business ? (
+            <div className="client-dashboard-page" style={{ padding: "24px" }}>
+              <BillFromOrders
+                business={business}
+                tableNumber={billReviewTarget.tableNumber}
+                preselectOrderIds={billReviewTarget.preselectOrderIds}
+                orders={nonArchivedOrders}
+                orderItems={orderItems}
+                liveBillLinks={liveBillLinks}
+                billingSettings={billingSettings}
+                moduleConfigs={moduleConfigs}
+                returnLabel={
+                  billReviewTarget.returnPage === "tables"
+                    ? "Back to tables"
+                    : billReviewTarget.returnPage === "bills"
+                    ? "Back to bills"
+                    : billReviewTarget.returnPage === "overview"
+                    ? "Back to overview"
+                    : "Back to orders"
+                }
+                onCancel={() => setBillReviewTarget(null)}
+                onDoneBack={async () => {
+                  const targetPage = billReviewTarget.returnPage;
+                  await loadPortal();
+                  setBillReviewTarget(null);
+                  setActivePage(targetPage);
+                }}
+                onViewInBills={async (billId) => {
+                  await loadPortal();
+                  openBillInBillsView(billId);
+                }}
+                onBillMutated={async () => {
+                  await loadPortal();
+                }}
+              />
+            </div>
+          ) : (
+            <>
           {activePage === "overview" && (
             <Overview
               business={business}
@@ -2653,6 +2838,11 @@ export default function ClientPortalPage() {
               hasTableOrdering={hasOrders}
               orderFlow={orderFlow}
               onToggleOrderFlow={handleSaveOrderFlow}
+              billingOrderMode={isOrderBasedBilling}
+              liveBillLinks={liveBillLinks}
+              onBillOrder={(ord) => openReviewForOrder(ord, "overview")}
+              onBillTable={(tbl) => openReviewForTable(tbl, "overview")}
+              onOpenBill={openBillInBillsView}
             />
           )}
 
@@ -2688,6 +2878,12 @@ export default function ClientPortalPage() {
                 onGoToSettings={() => navigate("settings")}
                 openRequestTables={openRequestTableNumbers}
                 activeOrderTables={activeOrderTableNumbers}
+                unbilledByTable={isOrderBasedBilling ? unbilledByTable : undefined}
+                onBillTable={
+                  isOrderBasedBilling
+                    ? (tbl) => openReviewForTable(tbl, "tables")
+                    : undefined
+                }
               />
             </div>
           )}
@@ -2732,6 +2928,11 @@ export default function ClientPortalPage() {
               openRequestsCount={openStaffRequests.length}
               onOpenRequests={() => navigate("requests")}
               onOpenSettings={() => navigate("settings")}
+              billingOrderMode={isOrderBasedBilling}
+              liveBillLinks={liveBillLinks}
+              onBillOrder={(ord) => openReviewForOrder(ord, "orders")}
+              onBillTable={(tbl) => openReviewForTable(tbl, "orders")}
+              onOpenBill={openBillInBillsView}
             />
           )}
 
@@ -2749,6 +2950,15 @@ export default function ClientPortalPage() {
               business={business}
               moduleConfigs={moduleConfigs}
               onOpenSettings={() => navigate("settings")}
+              orderBasedMode={isOrderBasedBilling}
+              orders={nonArchivedOrders}
+              orderItems={orderItems}
+              liveBillLinks={liveBillLinks}
+              onBillTable={(tbl) => openReviewForTable(tbl, "bills")}
+              onBillOrderWithoutTable={(ord) => openReviewForOrder(ord, "bills")}
+              initialBillId={pendingOpenBillId}
+              onConsumedInitialBillId={() => setPendingOpenBillId(null)}
+              onBillsChanged={loadPortal}
             />
           )}
 
@@ -2851,6 +3061,8 @@ export default function ClientPortalPage() {
               orderFlow={orderFlow}
               onSaveOrderFlow={handleSaveOrderFlow}
             />
+          )}
+            </>
           )}
         </div>
 
@@ -3767,6 +3979,11 @@ function Overview({
   pendingAppointments,
   orderFlow = "simple",
   onToggleOrderFlow,
+  billingOrderMode = false,
+  liveBillLinks = {},
+  onBillOrder,
+  onBillTable,
+  onOpenBill,
 }: {
   business: Business;
   todayRevenue: number;
@@ -3795,6 +4012,11 @@ function Overview({
   pendingAppointments: Appointment[];
   orderFlow?: "simple" | "steps";
   onToggleOrderFlow?: (mode: "simple" | "steps") => Promise<void> | void;
+  billingOrderMode?: boolean;
+  liveBillLinks?: LiveOrderBillLinkMap;
+  onBillOrder?: (order: Order) => void;
+  onBillTable?: (tableNumber: number) => void;
+  onOpenBill?: (billId: string) => void;
 }) {
   const services = [
     hasTableOrdering && {
@@ -3902,6 +4124,23 @@ function Overview({
           updatingOrderId={updatingOrderId}
           orderFlow={orderFlow}
           onToggleOrderFlow={onToggleOrderFlow}
+          liveBillLinks={billingOrderMode ? liveBillLinks : undefined}
+          onBillOrder={
+            billingOrderMode && onBillOrder
+              ? (liveOrd) => onBillOrder(liveOrd as Order)
+              : undefined
+          }
+          onOpenBill={billingOrderMode ? onOpenBill : undefined}
+        />
+      )}
+
+      {billingOrderMode && onBillTable && (
+        <UnbilledOrdersWarning
+          orders={orders}
+          orderItems={orderItems}
+          liveBillLinks={liveBillLinks}
+          onBillTable={onBillTable}
+          onBillOrderWithoutTable={onBillOrder}
         />
       )}
 
@@ -5561,6 +5800,11 @@ function OrdersPage({
   openRequestsCount = 0,
   onOpenRequests,
   onOpenSettings,
+  billingOrderMode = false,
+  liveBillLinks = {},
+  onBillOrder,
+  onBillTable,
+  onOpenBill,
 }: {
   orders: Order[];
   archivedOrders?: Order[];
@@ -5596,6 +5840,11 @@ function OrdersPage({
   openRequestsCount?: number;
   onOpenRequests?: () => void;
   onOpenSettings?: () => void;
+  billingOrderMode?: boolean;
+  liveBillLinks?: LiveOrderBillLinkMap;
+  onBillOrder?: (order: Order) => void;
+  onBillTable?: (tableNumber: number) => void;
+  onOpenBill?: (billId: string) => void;
 }) {
   const [filter, setFilter] = useState<"active" | "all" | "completed" | "cancelled">("active");
   const [tableFilter, setTableFilter] = useState<string>("all");
@@ -5914,6 +6163,16 @@ function OrdersPage({
             ✕
           </button>
         </div>
+      )}
+
+      {billingOrderMode && onBillTable && (
+        <UnbilledOrdersWarning
+          orders={orders}
+          orderItems={orderItems}
+          liveBillLinks={liveBillLinks}
+          onBillTable={onBillTable}
+          onBillOrderWithoutTable={onBillOrder}
+        />
       )}
 
       <div className="orders-workspace-tabs">
@@ -6299,6 +6558,28 @@ function OrdersPage({
                         </button>
                       )}
 
+                      {billingOrderMode && order.status !== "cancelled" && (
+                        liveBillLinks[order.id] ? (
+                          <button
+                            type="button"
+                            className="btn-action-billed"
+                            onClick={() => onOpenBill?.(liveBillLinks[order.id].billId)}
+                            title="Open this bill in Bills"
+                          >
+                            Billed · {liveBillLinks[order.id].billNoText}
+                          </button>
+                        ) : onBillOrder ? (
+                          <button
+                            type="button"
+                            className="btn-action-bill"
+                            onClick={() => onBillOrder(order)}
+                            title="Create bill from this order"
+                          >
+                            Bill
+                          </button>
+                        ) : null
+                      )}
+
                       <select
                         className="status-select-inline"
                         value={order.status}
@@ -6500,6 +6781,38 @@ function OrdersPage({
                 )}
               </select>
             </div>
+
+            {billingOrderMode &&
+              !selectedOrder.archived_at &&
+              selectedOrder.status !== "cancelled" && (
+                <div style={{ marginTop: "12px", display: "flex", justifyContent: "flex-end" }}>
+                  {liveBillLinks[selectedOrder.id] ? (
+                    <button
+                      type="button"
+                      className="btn-action-billed"
+                      onClick={() => {
+                        const targetBillId = liveBillLinks[selectedOrder.id].billId;
+                        setSelectedOrder(null);
+                        onOpenBill?.(targetBillId);
+                      }}
+                    >
+                      Billed · {liveBillLinks[selectedOrder.id].billNoText}
+                    </button>
+                  ) : onBillOrder ? (
+                    <button
+                      type="button"
+                      className="btn-action-bill"
+                      onClick={() => {
+                        const targetOrder = selectedOrder;
+                        setSelectedOrder(null);
+                        onBillOrder(targetOrder);
+                      }}
+                    >
+                      Bill
+                    </button>
+                  ) : null}
+                </div>
+              )}
           </div>
         </div>
       )}
@@ -7406,6 +7719,30 @@ function OrdersPage({
           border: 1px solid #cbd5e1;
           border-radius: 10px;
           font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .btn-action-bill {
+          padding: 9px 13px;
+          background: #0f172a;
+          color: #ffffff;
+          border: none;
+          border-radius: 10px;
+          font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+          font-family: inherit;
+        }
+
+        .btn-action-billed {
+          padding: 8px 12px;
+          background: #ecfdf5;
+          color: #047857;
+          border: 1px solid #a7f3d0;
+          border-radius: 10px;
+          font-size: 12px;
           font-weight: 700;
           cursor: pointer;
           font-family: inherit;
