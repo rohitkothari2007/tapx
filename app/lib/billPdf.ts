@@ -1,4 +1,4 @@
-import { jsPDF } from "jspdf";
+import type { jsPDF } from "jspdf";
 import QRCode from "qrcode";
 import {
   BillingBusinessProfile,
@@ -153,6 +153,7 @@ export async function generateBillPdfBlob(
   data: BillPdfData,
   options?: GenerateBillPdfOptions
 ): Promise<Blob> {
+  const { jsPDF } = await import("jspdf");
   const mode = options?.mode || "dashboard";
   let regB64 = options?.fontRegularBase64 || cachedRegularB64;
   let boldB64 = options?.fontBoldBase64 || cachedBoldB64;
