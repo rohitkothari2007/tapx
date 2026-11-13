@@ -2120,6 +2120,9 @@ export default function RestaurantExperience({
                     loading="lazy"
                     decoding="async"
                     style={styles.modalImg}
+                    onError={(e) => {
+                      (e.currentTarget.parentElement || e.currentTarget).style.display = "none";
+                    }}
                   />
                 </div>
               )}

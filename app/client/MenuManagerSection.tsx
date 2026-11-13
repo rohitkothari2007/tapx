@@ -277,6 +277,7 @@ export default function MenuManagerSection({
         config={config}
         onChange={(next) => setConfig(next)}
         isOwnerMode={true}
+        businessId={businessId}
         onPreviewCustomerMenu={handleOpenCustomerMenu}
       />
 

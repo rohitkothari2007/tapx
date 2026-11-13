@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState, useRef, type CSSProperties } from "react";
 import { MENU_TOKENS, formatDisplayName } from "../lib/menuTheme";
 import { menuFontClassNames } from "../lib/menuFonts";
+import { uploadMenuImage } from "../lib/menuImages";
 
 export type MenuCategory = {
   id: string;
@@ -55,6 +56,7 @@ export type DigitalMenuEditorProps = {
   onChange: (nextConfig: DigitalMenuConfig) => void;
   isOwnerMode?: boolean;
   onPreviewCustomerMenu?: () => void;
+  businessId?: string;
 };
 
 export default function DigitalMenuEditor({
@@ -62,6 +64,7 @@ export default function DigitalMenuEditor({
   onChange,
   isOwnerMode = false,
   onPreviewCustomerMenu,
+  businessId,
 }: DigitalMenuEditorProps) {
   const storedCategories: MenuCategory[] = Array.isArray(config.categories)
     ? config.categories
@@ -125,6 +128,7 @@ export default function DigitalMenuEditor({
   const [editItemImageUrl, setEditItemImageUrl] = useState("");
   const [editItemPopular, setEditItemPopular] = useState(false);
   const [editItemError, setEditItemError] = useState("");
+  const [editItemPhotoBusy, setEditItemPhotoBusy] = useState(false);
 
   // New Category draft
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -141,6 +145,7 @@ export default function DigitalMenuEditor({
   const [newItemImageUrl, setNewItemImageUrl] = useState("");
   const [newItemDietary, setNewItemDietary] = useState<"veg" | "non_veg" | "egg" | "none">("veg");
   const [newItemPopular, setNewItemPopular] = useState(false);
+  const [newItemPhotoBusy, setNewItemPhotoBusy] = useState(false);
   const [itemError, setItemError] = useState("");
 
   // Quick Request management draft
@@ -980,16 +985,12 @@ export default function DigitalMenuEditor({
                   />
                 </div>
 
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <label style={styles.inputLabel}>Image URL (optional)</label>
-                  <input
-                    type="url"
-                    placeholder="https://images.example.com/dish.jpg"
-                    value={newItemImageUrl}
-                    onChange={(e) => setNewItemImageUrl(e.target.value)}
-                    style={styles.input}
-                  />
-                </div>
+                <ItemPhotoField
+                  value={newItemImageUrl}
+                  onChange={setNewItemImageUrl}
+                  businessId={businessId}
+                  onBusyChange={setNewItemPhotoBusy}
+                />
               </div>
 
               <div style={styles.checkboxRow}>
@@ -1006,10 +1007,14 @@ export default function DigitalMenuEditor({
                 <button
                   type="button"
                   onClick={handleAddItem}
-                  disabled={items.length >= MAX_ITEMS || !newItemName.trim()}
-                  style={styles.primaryButton}
+                  disabled={items.length >= MAX_ITEMS || !newItemName.trim() || newItemPhotoBusy}
+                  style={{
+                    ...styles.primaryButton,
+                    opacity: items.length >= MAX_ITEMS || !newItemName.trim() || newItemPhotoBusy ? 0.6 : 1,
+                    cursor: items.length >= MAX_ITEMS || !newItemName.trim() || newItemPhotoBusy ? "not-allowed" : "pointer",
+                  }}
                 >
-                  + Add Item to Menu
+                  {newItemPhotoBusy ? "Uploading photo…" : "+ Add Item to Menu"}
                 </button>
               </div>
 
@@ -1171,15 +1176,12 @@ export default function DigitalMenuEditor({
                             />
                           </div>
 
-                          <div style={{ gridColumn: "1 / -1" }}>
-                            <label style={styles.inputLabel}>Image URL</label>
-                            <input
-                              type="url"
-                              value={editItemImageUrl}
-                              onChange={(e) => setEditItemImageUrl(e.target.value)}
-                              style={styles.input}
-                            />
-                          </div>
+                          <ItemPhotoField
+                            value={editItemImageUrl}
+                            onChange={setEditItemImageUrl}
+                            businessId={businessId}
+                            onBusyChange={setEditItemPhotoBusy}
+                          />
                         </div>
 
                         <div style={styles.checkboxRow}>
@@ -1196,9 +1198,14 @@ export default function DigitalMenuEditor({
                           <button
                             type="button"
                             onClick={handleSaveEditItem}
-                            style={styles.primaryButton}
+                            disabled={editItemPhotoBusy}
+                            style={{
+                              ...styles.primaryButton,
+                              opacity: editItemPhotoBusy ? 0.6 : 1,
+                              cursor: editItemPhotoBusy ? "not-allowed" : "pointer",
+                            }}
                           >
-                            Save Changes
+                            {editItemPhotoBusy ? "Uploading photo…" : "Save Changes"}
                           </button>
                         </div>
 
@@ -2268,3 +2275,231 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 700,
   },
 };
+
+type ItemPhotoFieldProps = {
+  value: string;
+  onChange: (url: string) => void;
+  businessId?: string;
+  onBusyChange?: (busy: boolean) => void;
+};
+
+function ItemPhotoField({
+  value,
+  onChange,
+  businessId,
+  onBusyChange,
+}: ItemPhotoFieldProps) {
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [showUrlInput, setShowUrlInput] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // When businessId is missing (e.g. creating a new client in ModuleConfigurator):
+  // show ONLY the old URL input exactly as today.
+  if (!businessId) {
+    return (
+      <div style={{ gridColumn: "1 / -1" }}>
+        <label style={styles.inputLabel}>Image URL (optional)</label>
+        <input
+          type="url"
+          placeholder="https://images.example.com/dish.jpg"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={styles.input}
+        />
+      </div>
+    );
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset file input value after each pick so the same file can be chosen again
+    e.target.value = "";
+    if (!file) return;
+
+    setUploadError("");
+    setUploading(true);
+    onBusyChange?.(true);
+
+    try {
+      const publicUrl = await uploadMenuImage(file, businessId);
+      onChange(publicUrl);
+    } catch (err: any) {
+      setUploadError(err?.message || "Could not upload the photo. Check your internet and try again.");
+    } finally {
+      setUploading(false);
+      onBusyChange?.(false);
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    setUploadError("");
+    onChange("");
+  };
+
+  const hasPhoto = Boolean(value.trim());
+
+  return (
+    <div style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: "8px" }}>
+      <label style={styles.inputLabel}>Item Photo (optional)</label>
+
+      {/* Hidden file input without capture so phones offer both camera and gallery */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={handleFileChange}
+      />
+
+      <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+        {/* Square preview (about 96x96, rounded, object-fit cover) or dashed empty box */}
+        {hasPhoto ? (
+          <div
+            style={{
+              width: "96px",
+              height: "96px",
+              borderRadius: "12px",
+              overflow: "hidden",
+              border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+              backgroundColor: "#f8fafc",
+              flexShrink: 0,
+              boxSizing: "border-box",
+            }}
+          >
+            <img
+              src={value}
+              alt="Dish photo preview"
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                display: "block",
+              }}
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.opacity = "0.3";
+              }}
+            />
+          </div>
+        ) : (
+          <div
+            onClick={() => !uploading && fileInputRef.current?.click()}
+            style={{
+              width: "96px",
+              height: "96px",
+              borderRadius: "12px",
+              border: "2px dashed #cbd5e1",
+              backgroundColor: "#f8fafc",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "4px",
+              color: "#64748b",
+              cursor: uploading ? "not-allowed" : "pointer",
+              userSelect: "none",
+              flexShrink: 0,
+              boxSizing: "border-box",
+            }}
+            title="Click to choose a photo"
+          >
+            <span style={{ fontSize: "24px", lineHeight: 1 }}>📷</span>
+            <span style={{ fontSize: "11px", fontWeight: 600 }}>+ Add photo</span>
+          </div>
+        )}
+
+        {/* Action buttons with large tap targets (min height 40px) */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px", justifyContent: "center" }}>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                minHeight: "40px",
+                padding: "0 16px",
+                background: "#ffffff",
+                color: MENU_TOKENS.colors.light.ink,
+                border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+                borderRadius: "8px",
+                fontSize: "13px",
+                fontWeight: 600,
+                cursor: uploading ? "not-allowed" : "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                fontFamily: MENU_TOKENS.fonts.sans,
+                opacity: uploading ? 0.7 : 1,
+              }}
+            >
+              {uploading ? "Uploading…" : hasPhoto ? "Change photo" : "Upload photo"}
+            </button>
+
+            {hasPhoto && !uploading && (
+              <button
+                type="button"
+                onClick={handleRemovePhoto}
+                style={{
+                  minHeight: "40px",
+                  padding: "0 14px",
+                  background: "#ffffff",
+                  color: "#dc2626",
+                  border: "1px solid #fecaca",
+                  borderRadius: "8px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  fontFamily: MENU_TOKENS.fonts.sans,
+                }}
+              >
+                Remove photo
+              </button>
+            )}
+          </div>
+
+          {uploadError && (
+            <div style={{ ...styles.fieldError, marginTop: "2px" }}>{uploadError}</div>
+          )}
+        </div>
+      </div>
+
+      {/* Toggle link for URL input */}
+      <div>
+        <button
+          type="button"
+          onClick={() => setShowUrlInput((prev) => !prev)}
+          style={{
+            background: "transparent",
+            border: "none",
+            padding: "4px 0",
+            fontSize: "12px",
+            fontWeight: 600,
+            color: MENU_TOKENS.colors.light.muted,
+            textDecoration: "underline",
+            cursor: "pointer",
+            textAlign: "left",
+            fontFamily: MENU_TOKENS.fonts.sans,
+          }}
+        >
+          {showUrlInput ? "Hide image link" : "Use an image link instead"}
+        </button>
+      </div>
+
+      {/* Collapsible URL text input */}
+      {showUrlInput && (
+        <div style={{ marginTop: "2px" }}>
+          <label style={styles.inputLabel}>Image URL</label>
+          <input
+            type="url"
+            placeholder="https://images.example.com/dish.jpg"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            style={styles.input}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
