@@ -625,8 +625,14 @@ export async function sharePdfOnWhatsApp(params: {
   const { blob, fileName, messageText, customerPhone, onInstructionNeeded } = params;
   const cleanMessage = stripLinkFromBillMessage(messageText);
 
-  // Check Web Share API with files support (common on mobile browsers)
-  if (typeof navigator !== "undefined" && typeof (navigator as any).canShare === "function") {
+  const isTouch = Boolean(
+    typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(pointer: coarse)").matches
+  );
+
+  // Check Web Share API with files support on touch devices only (mobile browsers)
+  if (isTouch && typeof navigator !== "undefined" && typeof (navigator as any).canShare === "function") {
     try {
       const file = new File([blob], fileName, { type: "application/pdf" });
       if ((navigator as any).canShare({ files: [file] })) {

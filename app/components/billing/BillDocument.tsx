@@ -12,19 +12,20 @@ import {
   PublicBillPayload,
   TapxBill,
   TapxBillItem,
+  buildCustomerBillMessage,
   buildUpiPayUri,
-  buildWhatsAppShareUrl,
   formatBillDateTime,
   formatBillPaymentLabel,
   formatMoney,
   formatQuantity,
   formatSignedMoney,
+  normalizeWhatsAppPhone,
 } from "../../lib/billing";
 import {
   downloadPdfBlob,
   generateBillPdfBlob,
   getBillPdfFileName,
-  sharePdfOnWhatsApp,
+  stripLinkFromBillMessage,
 } from "../../lib/billPdf";
 
 export type BillDocumentData = {
@@ -187,6 +188,28 @@ export default function BillDocument({
   const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
   const [pdfGenerating, setPdfGenerating] = useState(false);
   const [pdfInstruction, setPdfInstruction] = useState("");
+  const [phoneInput, setPhoneInput] = useState(data.customer_phone || "");
+  const [canShareFileSheet, setCanShareFileSheet] = useState(false);
+
+  useEffect(() => {
+    setPhoneInput(data.customer_phone || "");
+  }, [data.id, data.customer_phone]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const isTouch = Boolean(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+    if (!isTouch) return;
+    if (typeof navigator !== "undefined" && typeof (navigator as any).canShare === "function") {
+      try {
+        const testFile = new File([""], "test.pdf", { type: "application/pdf" });
+        if ((navigator as any).canShare({ files: [testFile] })) {
+          setCanShareFileSheet(true);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
 
   const paper = data.settings.paper || "80mm";
   const isThermal = paper === "80mm" || paper === "58mm";
@@ -204,6 +227,16 @@ export default function BillDocument({
         ? `${window.location.origin}/bill/${data.share_token}`
         : window.location.href
       : "";
+
+  const normalizedPhone = normalizeWhatsAppPhone(phoneInput);
+
+  const billMessage = buildCustomerBillMessage({
+    customerName: data.customer_name,
+    businessName: data.business?.name || "Business",
+    billNoText: data.bill_no_text,
+    total: data.total,
+    publicUrl,
+  });
 
   const addressParts = [
     data.business?.address?.trim(),
@@ -315,7 +348,22 @@ export default function BillDocument({
     }
   };
 
-  const handleSendPdfWhatsApp = async () => {
+  const handleSendWhatsApp = () => {
+    if (!normalizedPhone) return;
+    const fileName = getBillPdfFileName(data.bill_no_text);
+    if (pdfBlob) {
+      downloadPdfBlob(pdfBlob, fileName);
+      setPdfInstruction(
+        `PDF downloaded. In WhatsApp, tap the paperclip → Document and choose ${fileName}.`
+      );
+    }
+    const waUrl = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(billMessage)}`;
+    if (typeof window !== "undefined") {
+      window.open(waUrl, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleSharePdfSheet = async () => {
     const fileName = getBillPdfFileName(data.bill_no_text);
     let blob = pdfBlob;
     if (!blob) {
@@ -325,7 +373,6 @@ export default function BillDocument({
         setPdfBlob(blob);
       } catch (err: any) {
         setActionError(err?.message || "Could not generate PDF. Please try again.");
-        setPdfGenerating(false);
         return;
       } finally {
         setPdfGenerating(false);
@@ -333,27 +380,20 @@ export default function BillDocument({
     }
     if (!blob) return;
 
-    const baseMessage = `${data.business?.name || "Business"} - Bill ${data.bill_no_text}\nTotal: ${formatMoney(data.total)}`;
-    await sharePdfOnWhatsApp({
-      blob,
-      fileName,
-      messageText: baseMessage,
-      customerPhone: data.customer_phone,
-      onInstructionNeeded: (name) => {
-        setPdfInstruction(`PDF downloaded. In WhatsApp, tap the paperclip → Document and choose ${name}.`);
-      },
-    });
-  };
-
-  const handleWhatsAppShare = () => {
-    if (!publicUrl || typeof window === "undefined") return;
-    const url = buildWhatsAppShareUrl({
-      businessName: data.business?.name || "Business",
-      billNoText: data.bill_no_text,
-      total: data.total,
-      publicUrl,
-    });
-    window.open(url, "_blank", "noopener,noreferrer");
+    try {
+      const file = new File([blob], fileName, { type: "application/pdf" });
+      if (typeof navigator !== "undefined" && typeof (navigator as any).canShare === "function") {
+        if ((navigator as any).canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            text: stripLinkFromBillMessage(billMessage),
+          });
+        }
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      setActionError(err?.message || "Could not share PDF.");
+    }
   };
 
   const runAction = async (key: string, fn: () => Promise<void>) => {
@@ -517,29 +557,6 @@ export default function BillDocument({
               {pdfGenerating ? "⏳ Preparing PDF…" : "📥 Download PDF"}
             </button>
 
-            {mode === "dashboard" && !hideWhatsAppButtons && (
-              <button
-                type="button"
-                onClick={handleSendPdfWhatsApp}
-                disabled={Boolean(busyAction)}
-                style={btnSecondaryStyle}
-                title="Send PDF file on WhatsApp"
-              >
-                📄 Send PDF on WhatsApp
-              </button>
-            )}
-
-            {mode === "dashboard" && !hideWhatsAppButtons && (
-              <button
-                type="button"
-                onClick={handleWhatsAppShare}
-                style={btnSecondaryStyle}
-                title="Send bill link on WhatsApp"
-              >
-                💬 Send link on WhatsApp
-              </button>
-            )}
-
             {mode === "dashboard" && (
               <button
                 type="button"
@@ -596,6 +613,131 @@ export default function BillDocument({
             </div>
           )}
         </div>
+
+        {/* DIRECT WHATSAPP SEND SECTION */}
+        {mode === "dashboard" && !hideWhatsAppButtons && (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "flex-end",
+              gap: "10px",
+              padding: "10px 12px",
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: "10px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "3px",
+                minWidth: "220px",
+                maxWidth: "340px",
+                flex: "1 1 240px",
+              }}
+            >
+              <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                Customer WhatsApp number
+              </label>
+              <input
+                type="tel"
+                inputMode="numeric"
+                placeholder="10-digit mobile number"
+                value={phoneInput}
+                onChange={(e) => setPhoneInput(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px 10px",
+                  borderRadius: "8px",
+                  border: "1px solid #cbd5e1",
+                  fontSize: "13px",
+                  boxSizing: "border-box",
+                  background: "#ffffff",
+                  color: "#0f172a",
+                }}
+              />
+              <div
+                style={{
+                  fontSize: "11.5px",
+                  color: normalizedPhone ? "#15803d" : "#64748b",
+                  fontWeight: normalizedPhone ? 600 : 400,
+                }}
+              >
+                {normalizedPhone
+                  ? `Will send to +${normalizedPhone}`
+                  : "Enter the customer's 10-digit mobile number to send the bill on WhatsApp"}
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "8px",
+                paddingBottom: "2px",
+              }}
+            >
+              {normalizedPhone ? (
+                <button
+                  type="button"
+                  onClick={handleSendWhatsApp}
+                  style={btnWhatsAppStyle}
+                  title="Send bill link directly to customer on WhatsApp"
+                >
+                  💬 Send on WhatsApp
+                </button>
+              ) : (
+                <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    disabled={true}
+                    style={{
+                      ...btnWhatsAppStyle,
+                      background: "#94a3b8",
+                      cursor: "not-allowed",
+                      opacity: 0.65,
+                    }}
+                    title="Enter a valid 10-digit phone number to send directly"
+                  >
+                    💬 Enter number to send
+                  </button>
+                  <a
+                    href={`https://wa.me/?text=${encodeURIComponent(billMessage)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      color: "#059669",
+                      textDecoration: "underline",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Choose chat in WhatsApp instead
+                  </a>
+                </div>
+              )}
+
+              {canShareFileSheet && (
+                <button
+                  type="button"
+                  onClick={() => void handleSharePdfSheet()}
+                  style={{
+                    ...btnSecondaryStyle,
+                    fontSize: "12px",
+                    padding: "8px 12px",
+                  }}
+                  title="Share PDF file using device share sheet"
+                >
+                  📤 Share PDF...
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {mode === "dashboard" && (
           <div style={{ fontSize: "11.5px", color: "#64748b" }}>
@@ -1052,6 +1194,12 @@ const btnSecondaryStyle: React.CSSProperties = {
 const btnSuccessStyle: React.CSSProperties = {
   ...btnBaseStyle,
   background: "#15803d",
+  color: "#ffffff",
+};
+
+const btnWhatsAppStyle: React.CSSProperties = {
+  ...btnBaseStyle,
+  background: "#059669",
   color: "#ffffff",
 };
 
