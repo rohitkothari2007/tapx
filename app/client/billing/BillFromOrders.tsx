@@ -251,7 +251,6 @@ export default function BillFromOrders({
   const [copiedMessage, setCopiedMessage] = useState(false);
   const [donePdfBlob, setDonePdfBlob] = useState<Blob | null>(null);
   const [donePdfGenerating, setDonePdfGenerating] = useState(false);
-  const [donePdfInstruction, setDonePdfInstruction] = useState("");
   const messageEditedRef = useRef(false);
 
   // Editable customer phone on Done screen (B2)
@@ -868,13 +867,6 @@ export default function BillFromOrders({
 
     const handleDoneSendWhatsApp = () => {
       if (!issuedBill || !normalizedDonePhone) return;
-      const fileName = getBillPdfFileName(issuedBill.bill_no_text);
-      if (donePdfBlob) {
-        downloadPdfBlob(donePdfBlob, fileName);
-        setDonePdfInstruction(
-          `PDF downloaded. In WhatsApp, tap the paperclip → Document and choose ${fileName}.`
-        );
-      }
       const waUrl = `https://wa.me/${normalizedDonePhone}?text=${encodeURIComponent(whatsappMessage)}`;
       if (typeof window !== "undefined") {
         window.open(waUrl, "_blank", "noopener,noreferrer");
@@ -1106,41 +1098,6 @@ export default function BillFromOrders({
                 {copiedMessage ? "✓ Copied message" : "Copy message"}
               </button>
             </div>
-
-            {donePdfInstruction && (
-              <div
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: "8px",
-                  background: "#eff6ff",
-                  border: "1px solid #bfdbfe",
-                  fontSize: "12.5px",
-                  color: "#1e40af",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "8px",
-                }}
-              >
-                <span>ℹ️ {donePdfInstruction}</span>
-                <button
-                  type="button"
-                  onClick={() => setDonePdfInstruction("")}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    color: "#1e40af",
-                    fontWeight: 700,
-                    fontSize: "13px",
-                    padding: "2px 4px",
-                  }}
-                  aria-label="Dismiss message"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
 
             <textarea
               rows={4}
