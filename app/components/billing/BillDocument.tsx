@@ -187,7 +187,6 @@ export default function BillDocument({
   const [actionError, setActionError] = useState("");
   const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
   const [pdfGenerating, setPdfGenerating] = useState(false);
-  const [pdfInstruction, setPdfInstruction] = useState("");
   const [phoneInput, setPhoneInput] = useState(data.customer_phone || "");
   const [canShareFileSheet, setCanShareFileSheet] = useState(false);
 
@@ -350,13 +349,6 @@ export default function BillDocument({
 
   const handleSendWhatsApp = () => {
     if (!normalizedPhone) return;
-    const fileName = getBillPdfFileName(data.bill_no_text);
-    if (pdfBlob) {
-      downloadPdfBlob(pdfBlob, fileName);
-      setPdfInstruction(
-        `PDF downloaded. In WhatsApp, tap the paperclip → Document and choose ${fileName}.`
-      );
-    }
     const waUrl = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(billMessage)}`;
     if (typeof window !== "undefined") {
       window.open(waUrl, "_blank", "noopener,noreferrer");
@@ -477,41 +469,6 @@ export default function BillDocument({
           gap: "10px",
         }}
       >
-        {pdfInstruction && (
-          <div
-            style={{
-              padding: "8px 12px",
-              borderRadius: "8px",
-              background: "#eff6ff",
-              border: "1px solid #bfdbfe",
-              fontSize: "12.5px",
-              color: "#1e40af",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: "8px",
-            }}
-          >
-            <span>ℹ️ {pdfInstruction}</span>
-            <button
-              type="button"
-              onClick={() => setPdfInstruction("")}
-              style={{
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                color: "#1e40af",
-                fontWeight: 700,
-                fontSize: "13px",
-                padding: "2px 4px",
-              }}
-              aria-label="Dismiss message"
-            >
-              ✕
-            </button>
-          </div>
-        )}
-
         <div
           style={{
             display: "flex",
