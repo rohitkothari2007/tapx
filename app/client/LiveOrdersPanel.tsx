@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { formatOrderLabel } from "../lib/orderNumber";
-import type { LiveOrderBillLinkMap } from "../lib/billing";
+import { isAutoTableName, type LiveOrderBillLinkMap } from "../lib/billing";
 
 export const LATE_ORDER_WARN_MINUTES = 10;
 export const LATE_ORDER_ALERT_MINUTES = 20;
@@ -49,6 +49,8 @@ type Props = {
   liveBillLinks?: LiveOrderBillLinkMap;
   onBillOrder?: (order: LiveOrder) => void;
   onOpenBill?: (billId: string) => void;
+  billingOrderMode?: boolean;
+  onBillTable?: (tableNumber: number) => void;
 };
 
 const ACTIVE_STATUSES = ["pending", "accepted", "preparing", "ready", "served"];
@@ -63,6 +65,21 @@ function formatTimeAgo(isoString: string): string {
     const elapsedHours = Math.floor(elapsedMin / 60);
     if (elapsedHours < 24) return `${elapsedHours}h ago`;
     return `${Math.floor(elapsedHours / 24)}d ago`;
+  } catch {
+    return "";
+  }
+}
+
+function formatServedTimeAgo(isoString: string): string {
+  try {
+    const elapsedMs = Date.now() - new Date(isoString).getTime();
+    const elapsedSec = Math.floor(elapsedMs / 1000);
+    if (elapsedSec < 45) return "served just now";
+    const elapsedMin = Math.floor(elapsedSec / 60);
+    if (elapsedMin < 60) return `served ${elapsedMin} min ago`;
+    const elapsedHours = Math.floor(elapsedMin / 60);
+    if (elapsedHours < 24) return `served ${elapsedHours}h ago`;
+    return `served ${Math.floor(elapsedHours / 24)}d ago`;
   } catch {
     return "";
   }
@@ -102,7 +119,10 @@ function playChime() {
   }
 }
 
-function getNextAction(status: string): { nextStatus: string; label: string; bg: string } | null {
+function getNextAction(
+  status: string,
+  billingOrderMode?: boolean
+): { nextStatus: string; label: string; bg: string } | null {
   switch (status) {
     case "pending":
       return { nextStatus: "accepted", label: "✓ Accept", bg: "#16a34a" };
@@ -113,6 +133,7 @@ function getNextAction(status: string): { nextStatus: string; label: string; bg:
     case "ready":
       return { nextStatus: "served", label: "🍽️ Mark served", bg: "#0891b2" };
     case "served":
+      if (billingOrderMode) return null;
       return { nextStatus: "completed", label: "✓ Complete", bg: "#475569" };
     default:
       return null;
@@ -147,6 +168,8 @@ export default function LiveOrdersPanel({
   liveBillLinks,
   onBillOrder,
   onOpenBill,
+  billingOrderMode = false,
+  onBillTable,
 }: Props) {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [highlightedIds, setHighlightedIds] = useState<Record<string, boolean>>({});
@@ -186,14 +209,113 @@ export default function LiveOrdersPanel({
   }, []);
 
   // Filter non-archived active orders & sort OLDEST first (FIFO)
-  const activeOrders = orders
-    .filter((o) => !o.archived_at && ACTIVE_STATUSES.includes(o.status))
-    .sort(
-      (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    );
+  const activeOrders = useMemo(
+    () =>
+      orders
+        .filter((o) => !o.archived_at && ACTIVE_STATUSES.includes(o.status))
+        .sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        ),
+    [orders]
+  );
+
+  // New & in-progress orders (pending, accepted, preparing, ready)
+  const newAndInProgressOrders = useMemo(
+    () =>
+      activeOrders.filter((o) =>
+        ["pending", "accepted", "preparing", "ready"].includes(o.status)
+      ),
+    [activeOrders]
+  );
+
+  // Served orders (for billing order mode)
+  // A4: Exclude orders with payment_status === "paid"
+  // A5: Stale rule: show served orders created within the last 18 hours
+  const servedOrders = useMemo(
+    () =>
+      orders
+        .filter(
+          (o) =>
+            !o.archived_at &&
+            o.status === "served" &&
+            o.payment_status !== "paid" &&
+            Date.now() - new Date(o.created_at).getTime() <= 18 * 60 * 60 * 1000
+        )
+        .sort(
+          (a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        ),
+    [orders]
+  );
+
+  // Group served orders by table
+  type ServedGroup = {
+    tableNumber: number;
+    orders: LiveOrder[];
+    total: number;
+    unbilledTotal: number;
+    unbilledOrders: LiveOrder[];
+    billedOrders: LiveOrder[];
+    oldestCreatedAt: string;
+  };
+
+  const { servedTableGroups, servedNoTableOrders } = useMemo(() => {
+    if (!billingOrderMode) {
+      return { servedTableGroups: [] as ServedGroup[], servedNoTableOrders: [] as LiveOrder[] };
+    }
+    const map = new Map<number, LiveOrder[]>();
+    const noTable: LiveOrder[] = [];
+
+    for (const ord of servedOrders) {
+      if (typeof ord.table_number === "number" && Number.isFinite(ord.table_number)) {
+        const arr = map.get(ord.table_number) || [];
+        arr.push(ord);
+        map.set(ord.table_number, arr);
+      } else {
+        noTable.push(ord);
+      }
+    }
+
+    const groups: ServedGroup[] = Array.from(map.entries())
+      .map(([tableNumber, grpOrders]) => {
+        const sorted = [...grpOrders].sort(
+          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        );
+        let total = 0;
+        let unbilledTotal = 0;
+        const unbilledOrders: LiveOrder[] = [];
+        const billedOrders: LiveOrder[] = [];
+
+        for (const o of sorted) {
+          const ordVal = Number(o.total ?? o.subtotal ?? 0);
+          total += ordVal;
+          if (liveBillLinks && liveBillLinks[o.id]) {
+            billedOrders.push(o);
+          } else {
+            unbilledOrders.push(o);
+            unbilledTotal += ordVal;
+          }
+        }
+
+        return {
+          tableNumber,
+          orders: sorted,
+          total: Math.round(total * 100) / 100,
+          unbilledTotal: Math.round(unbilledTotal * 100) / 100,
+          unbilledOrders,
+          billedOrders,
+          oldestCreatedAt: sorted[0]?.created_at || "",
+        };
+      })
+      .sort((a, b) => a.tableNumber - b.tableNumber);
+
+    return { servedTableGroups: groups, servedNoTableOrders: noTable };
+  }, [billingOrderMode, servedOrders, liveBillLinks]);
 
   // Detect newly arrived active orders for sound & highlight
+  // A7: Sound/new-order highlight logic must keep working for new pending orders only;
+  // moving an order to "served" must not trigger the new-order chime.
   const prevOrderIdsRef = useRef<Set<string>>(new Set());
   const isFirstRender = useRef(true);
 
@@ -206,21 +328,26 @@ export default function LiveOrdersPanel({
       return;
     }
 
-    const newIds: string[] = [];
-    currentActiveIds.forEach((id) => {
-      if (!prevOrderIdsRef.current.has(id)) {
-        newIds.push(id);
+    // Only alert for NEW pending orders
+    const newPendingIds: string[] = [];
+    orders.forEach((o) => {
+      if (
+        !o.archived_at &&
+        o.status === "pending" &&
+        !prevOrderIdsRef.current.has(o.id)
+      ) {
+        newPendingIds.push(o.id);
       }
     });
 
-    if (newIds.length > 0) {
+    if (newPendingIds.length > 0) {
       if (soundEnabled) {
         playChime();
       }
 
       setHighlightedIds((prev) => {
         const next = { ...prev };
-        newIds.forEach((id) => {
+        newPendingIds.forEach((id) => {
           next[id] = true;
         });
         return next;
@@ -229,7 +356,7 @@ export default function LiveOrdersPanel({
       const timer = setTimeout(() => {
         setHighlightedIds((prev) => {
           const next = { ...prev };
-          newIds.forEach((id) => {
+          newPendingIds.forEach((id) => {
             delete next[id];
           });
           return next;
@@ -241,7 +368,7 @@ export default function LiveOrdersPanel({
     }
 
     prevOrderIdsRef.current = currentActiveIds;
-  }, [activeOrders, soundEnabled]);
+  }, [orders, activeOrders, soundEnabled]);
 
   const handleCancel = async (orderId: string) => {
     if (typeof window !== "undefined" && !window.confirm("Are you sure you want to cancel this order?")) {
@@ -251,8 +378,21 @@ export default function LiveOrdersPanel({
   };
 
   const handleSimpleDone = async (orderId: string) => {
-    await updateOrderStatus(orderId, "completed");
+    await updateOrderStatus(orderId, billingOrderMode ? "served" : "completed");
   };
+
+  const handleCloseWithoutBill = async (ordersToClose: LiveOrder[]) => {
+    if (typeof window !== "undefined" && !window.confirm("Close without a bill? It will leave the board.")) {
+      return;
+    }
+    for (const ord of ordersToClose) {
+      await updateOrderStatus(ord.id, "completed");
+    }
+  };
+
+  const totalActiveCount = billingOrderMode
+    ? newAndInProgressOrders.length + servedOrders.length
+    : activeOrders.length;
 
   return (
     <section style={styles.container} aria-label="Live table orders">
@@ -263,7 +403,7 @@ export default function LiveOrdersPanel({
             <span style={styles.liveText}>LIVE ORDERS</span>
           </div>
           <h2 style={styles.title}>
-            Active Kitchen & Table Orders ({activeOrders.length})
+            Active Kitchen & Table Orders ({totalActiveCount})
           </h2>
           <p style={styles.subtitle}>
             Incoming orders from dining tables, updated in real time. Oldest orders appear first.
@@ -319,251 +459,511 @@ export default function LiveOrdersPanel({
         </div>
       </div>
 
-      {activeOrders.length === 0 ? (
-        <div style={styles.emptyCard}>
-          <div style={styles.emptyIcon}>🍽️</div>
-          <div style={styles.emptyTitle}>No active orders</div>
-          <div style={styles.emptySubtitle}>
-            When customers place orders from their tables, they will instantly appear here.
-          </div>
-        </div>
-      ) : (
-        <div style={styles.orderGrid}>
-          {activeOrders.map((order) => {
-            const nextAction = getNextAction(order.status);
-            const statusBadge = getStatusBadgeStyle(order.status);
-            const isHighlighted = Boolean(highlightedIds[order.id]);
-            const isUpdating = updatingOrderId === order.id;
+      {(() => {
+        const renderOrderCard = (order: LiveOrder) => {
+          const nextAction = getNextAction(order.status, billingOrderMode);
+          const statusBadge = getStatusBadgeStyle(order.status);
+          const isHighlighted = Boolean(highlightedIds[order.id]);
+          const isUpdating = updatingOrderId === order.id;
 
-            const items = orderItems.filter((i) => i.order_id === order.id);
-            const timeAgo = formatTimeAgo(order.created_at);
-            const orderTimeStr = formatOrderTime(order.created_at);
+          const items = orderItems.filter((i) => i.order_id === order.id);
+          const timeAgo = formatTimeAgo(order.created_at);
+          const orderTimeStr = formatOrderTime(order.created_at);
 
-            // Elapsed minutes & late alert threshold calculation
-            const elapsedMs = Math.max(0, Date.now() - new Date(order.created_at).getTime());
-            const elapsedMinutes = Math.floor(elapsedMs / 60000);
-            const isLateAlert = elapsedMinutes >= LATE_ORDER_ALERT_MINUTES;
-            const isLateWarn = !isLateAlert && elapsedMinutes >= LATE_ORDER_WARN_MINUTES;
+          // Elapsed minutes & late alert threshold calculation
+          const elapsedMs = Math.max(0, Date.now() - new Date(order.created_at).getTime());
+          const elapsedMinutes = Math.floor(elapsedMs / 60000);
+          const isLateAlert = elapsedMinutes >= LATE_ORDER_ALERT_MINUTES;
+          const isLateWarn = !isLateAlert && elapsedMinutes >= LATE_ORDER_WARN_MINUTES;
 
-            const cleanPhone = (order.customer_phone || "").replace(/\D/g, "");
-            const whatsappUrl = cleanPhone
-              ? `https://wa.me/${cleanPhone}`
-              : null;
+          const cleanPhone = (order.customer_phone || "").replace(/\D/g, "");
+          const whatsappUrl = cleanPhone
+            ? `https://wa.me/${cleanPhone}`
+            : null;
 
-            // Card border & background based on late urgency or highlight
-            let cardBorder = "#e2e8f0";
-            let cardBg = "#ffffff";
-            let cardShadow = "0 2px 8px rgba(0, 0, 0, 0.04)";
+          // Card border & background based on late urgency or highlight
+          let cardBorder = "#e2e8f0";
+          let cardBg = "#ffffff";
+          let cardShadow = "0 2px 8px rgba(0, 0, 0, 0.04)";
 
-            if (isHighlighted) {
-              cardBorder = "#3b82f6";
-              cardBg = "#f8faff";
-              cardShadow = "0 0 0 2px rgba(59, 130, 246, 0.4), 0 4px 12px rgba(0,0,0,0.06)";
-            } else if (isLateAlert) {
-              cardBorder = "#ef4444";
-              cardBg = "#fef2f2";
-              cardShadow = "0 0 0 1.5px rgba(239, 68, 68, 0.4), 0 4px 12px rgba(239, 68, 68, 0.08)";
-            } else if (isLateWarn) {
-              cardBorder = "#f59e0b";
-              cardBg = "#fffbeb";
-              cardShadow = "0 0 0 1.5px rgba(245, 158, 11, 0.35), 0 4px 12px rgba(245, 158, 11, 0.08)";
-            } else if (order.status === "pending") {
-              cardBorder = "#fbbf24";
-            }
+          if (isHighlighted) {
+            cardBorder = "#3b82f6";
+            cardBg = "#f8faff";
+            cardShadow = "0 0 0 2px rgba(59, 130, 246, 0.4), 0 4px 12px rgba(0,0,0,0.06)";
+          } else if (isLateAlert) {
+            cardBorder = "#ef4444";
+            cardBg = "#fef2f2";
+            cardShadow = "0 0 0 1.5px rgba(239, 68, 68, 0.4), 0 4px 12px rgba(239, 68, 68, 0.08)";
+          } else if (isLateWarn) {
+            cardBorder = "#f59e0b";
+            cardBg = "#fffbeb";
+            cardShadow = "0 0 0 1.5px rgba(245, 158, 11, 0.35), 0 4px 12px rgba(245, 158, 11, 0.08)";
+          } else if (order.status === "pending") {
+            cardBorder = "#fbbf24";
+          }
 
-            return (
-              <div
-                key={order.id}
-                style={{
-                  ...styles.orderCard,
-                  borderColor: cardBorder,
-                  background: cardBg,
-                  boxShadow: cardShadow,
-                }}
-              >
-                {/* CARD HEADER: TABLE & ORDER NUMBER & TIMING */}
-                <div style={styles.cardHeader}>
-                  <div style={styles.tableBadgeContainer}>
-                    <div style={styles.tableBadge}>
-                      {order.table_number
-                        ? `Table ${order.table_number}`
-                        : "No Table"}
-                    </div>
-                    <div style={styles.orderRef}>
-                      {formatOrderLabel(order, { showDayIfNotToday: true })}
-                    </div>
+          return (
+            <div
+              key={order.id}
+              style={{
+                ...styles.orderCard,
+                borderColor: cardBorder,
+                background: cardBg,
+                boxShadow: cardShadow,
+              }}
+            >
+              {/* CARD HEADER: TABLE & ORDER NUMBER & TIMING */}
+              <div style={styles.cardHeader}>
+                <div style={styles.tableBadgeContainer}>
+                  <div style={styles.tableBadge}>
+                    {order.table_number
+                      ? `Table ${order.table_number}`
+                      : "No Table"}
                   </div>
-
-                  <div style={styles.statusAndTiming}>
-                    <div style={styles.badgeRow}>
-                      <span
-                        style={{
-                          ...styles.statusBadge,
-                          background: statusBadge.bg,
-                          color: statusBadge.color,
-                        }}
-                      >
-                        {statusBadge.label}
-                      </span>
-
-                      {/* LATE WARNING BADGE */}
-                      {isLateAlert ? (
-                        <span style={styles.lateAlertBadge}>
-                          🔴 {elapsedMinutes}m late
-                        </span>
-                      ) : isLateWarn ? (
-                        <span style={styles.lateWarnBadge}>
-                          🟠 {elapsedMinutes}m late
-                        </span>
-                      ) : null}
-                    </div>
-
-                    <div style={styles.timingDetails}>
-                      {orderTimeStr && <span style={styles.orderTimeText}>{orderTimeStr}</span>}
-                      <span style={styles.timeAgoText}>{timeAgo}</span>
-                    </div>
+                  <div style={styles.orderRef}>
+                    {formatOrderLabel(order, { showDayIfNotToday: true })}
                   </div>
                 </div>
 
-                {/* CUSTOMER INFO */}
-                <div style={styles.customerRow}>
-                  <span style={styles.customerName}>
-                    👤 {order.customer_name || "Customer"}
-                  </span>
-
-                  {whatsappUrl ? (
-                    <a
-                      href={whatsappUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={styles.whatsappLink}
-                      title="Open WhatsApp with customer"
-                    >
-                      💬 {order.customer_phone}
-                    </a>
-                  ) : order.customer_phone ? (
-                    <span style={styles.customerPhone}>
-                      📞 {order.customer_phone}
-                    </span>
-                  ) : null}
-                </div>
-
-                {/* ITEMS LIST WITH QUANTITY & SPECIAL REQUEST */}
-                <div style={styles.itemsBox}>
-                  {items.length === 0 ? (
-                    <div style={styles.noItemsText}>Order items loading...</div>
-                  ) : (
-                    items.map((item) => (
-                      <div key={item.id} style={styles.itemRow}>
-                        <div style={styles.itemMain}>
-                          <div style={styles.itemTitleRow}>
-                            <span style={styles.itemQuantity}>
-                              {item.quantity}×
-                            </span>
-                            <span style={styles.itemName}>{item.item_name}</span>
-                          </div>
-                          {(item.special_request || item.notes) && (
-                            <div style={styles.itemNote}>
-                              <strong style={styles.itemNoteLabel}>Request:</strong> {item.special_request || item.notes}
-                            </div>
-                          )}
-                        </div>
-
-                        <span style={styles.itemPrice}>
-                          ₹{(item.line_total || item.unit_price * item.quantity).toFixed(0)}
-                        </span>
-                      </div>
-                    ))
-                  )}
-
-                  {order.notes && (
-                    <div style={styles.orderLevelNote}>
-                      <strong>Order Note:</strong> {order.notes}
-                    </div>
-                  )}
-                </div>
-
-                {/* TOTAL ROW */}
-                <div style={styles.totalRow}>
-                  <span style={styles.totalLabel}>Total</span>
-                  <span style={styles.totalValue}>
-                    ₹{(order.total || order.subtotal || 0).toFixed(0)}
-                  </span>
-                </div>
-
-                {/* ACTION BUTTONS (SIMPLE OR STEPS FLOW) */}
-                <div style={styles.actionsRow}>
-                  {orderFlow === "simple" ? (
-                    // SIMPLE FLOW: One big Done button + Cancel
-                    <button
-                      type="button"
-                      disabled={isUpdating}
-                      onClick={() => handleSimpleDone(order.id)}
+                <div style={styles.statusAndTiming}>
+                  <div style={styles.badgeRow}>
+                    <span
                       style={{
-                        ...styles.primaryActionButton,
-                        background: "#16a34a",
-                        opacity: isUpdating ? 0.6 : 1,
+                        ...styles.statusBadge,
+                        background: statusBadge.bg,
+                        color: statusBadge.color,
                       }}
-                      title="Complete this order"
                     >
-                      {isUpdating ? "Updating..." : "✓ Done"}
-                    </button>
-                  ) : (
-                    // STEPS FLOW: Sequential status button + Cancel
-                    nextAction && (
-                      <button
-                        type="button"
-                        disabled={isUpdating}
-                        onClick={() => updateOrderStatus(order.id, nextAction.nextStatus)}
-                        style={{
-                          ...styles.primaryActionButton,
-                          background: nextAction.bg,
-                          opacity: isUpdating ? 0.6 : 1,
-                        }}
-                      >
-                        {isUpdating ? "Updating..." : nextAction.label}
-                      </button>
-                    )
-                  )}
+                      {statusBadge.label}
+                    </span>
 
+                    {/* LATE WARNING BADGE */}
+                    {isLateAlert ? (
+                      <span style={styles.lateAlertBadge}>
+                        🔴 {elapsedMinutes}m late
+                      </span>
+                    ) : isLateWarn ? (
+                      <span style={styles.lateWarnBadge}>
+                        🟠 {elapsedMinutes}m late
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div style={styles.timingDetails}>
+                    {orderTimeStr && <span style={styles.orderTimeText}>{orderTimeStr}</span>}
+                    <span style={styles.timeAgoText}>{timeAgo}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* CUSTOMER INFO */}
+              <div style={styles.customerRow}>
+                <span style={styles.customerName}>
+                  👤 {order.customer_name || "Customer"}
+                </span>
+
+                {whatsappUrl ? (
+                  <a
+                    href={whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={styles.whatsappLink}
+                    title="Open WhatsApp with customer"
+                  >
+                    💬 {order.customer_phone}
+                  </a>
+                ) : order.customer_phone ? (
+                  <span style={styles.customerPhone}>
+                    📞 {order.customer_phone}
+                  </span>
+                ) : null}
+              </div>
+
+              {/* ITEMS LIST WITH QUANTITY & SPECIAL REQUEST */}
+              <div style={styles.itemsBox}>
+                {items.length === 0 ? (
+                  <div style={styles.noItemsText}>Order items loading...</div>
+                ) : (
+                  items.map((item) => (
+                    <div key={item.id} style={styles.itemRow}>
+                      <div style={styles.itemMain}>
+                        <div style={styles.itemTitleRow}>
+                          <span style={styles.itemQuantity}>
+                            {item.quantity}×
+                          </span>
+                          <span style={styles.itemName}>{item.item_name}</span>
+                        </div>
+                        {(item.special_request || item.notes) && (
+                          <div style={styles.itemNote}>
+                            <strong style={styles.itemNoteLabel}>Request:</strong> {item.special_request || item.notes}
+                          </div>
+                        )}
+                      </div>
+
+                      <span style={styles.itemPrice}>
+                        ₹{(item.line_total || item.unit_price * item.quantity).toFixed(0)}
+                      </span>
+                    </div>
+                  ))
+                )}
+
+                {order.notes && (
+                  <div style={styles.orderLevelNote}>
+                    <strong>Order Note:</strong> {order.notes}
+                  </div>
+                )}
+              </div>
+
+              {/* TOTAL ROW */}
+              <div style={styles.totalRow}>
+                <span style={styles.totalLabel}>Total</span>
+                <span style={styles.totalValue}>
+                  ₹{(order.total || order.subtotal || 0).toFixed(0)}
+                </span>
+              </div>
+
+              {/* ACTION BUTTONS (SIMPLE OR STEPS FLOW) */}
+              <div style={styles.actionsRow}>
+                {orderFlow === "simple" ? (
+                  // SIMPLE FLOW: In billing mode -> "✓ Served" setting 'served'; else "✓ Done" setting 'completed'
                   <button
                     type="button"
                     disabled={isUpdating}
-                    onClick={() => handleCancel(order.id)}
-                    style={styles.cancelButton}
-                    title="Cancel this order"
+                    onClick={() => handleSimpleDone(order.id)}
+                    style={{
+                      ...styles.primaryActionButton,
+                      background: "#16a34a",
+                      opacity: isUpdating ? 0.6 : 1,
+                    }}
+                    title={billingOrderMode ? "Mark order as served" : "Complete this order"}
                   >
-                    Cancel
+                    {isUpdating ? "Updating..." : billingOrderMode ? "✓ Served" : "✓ Done"}
                   </button>
+                ) : (
+                  // STEPS FLOW: Sequential status button + Cancel
+                  nextAction && (
+                    <button
+                      type="button"
+                      disabled={isUpdating}
+                      onClick={() => updateOrderStatus(order.id, nextAction.nextStatus)}
+                      style={{
+                        ...styles.primaryActionButton,
+                        background: nextAction.bg,
+                        opacity: isUpdating ? 0.6 : 1,
+                      }}
+                    >
+                      {isUpdating ? "Updating..." : nextAction.label}
+                    </button>
+                  )
+                )}
 
-                  {!order.archived_at &&
-                    order.status !== "cancelled" &&
-                    (onBillOrder || onOpenBill) &&
-                    (liveBillLinks?.[order.id] ? (
-                      <button
-                        type="button"
-                        onClick={() => onOpenBill?.(liveBillLinks[order.id].billId)}
-                        style={styles.billedBadgeButton}
-                        title="Open this bill in Bills"
-                      >
-                        Billed · {liveBillLinks[order.id].billNoText}
-                      </button>
-                    ) : onBillOrder ? (
-                      <button
-                        type="button"
-                        onClick={() => onBillOrder(order)}
-                        style={styles.billButton}
-                        title="Create bill from this order"
-                      >
-                        Bill
-                      </button>
-                    ) : null)}
+                <button
+                  type="button"
+                  disabled={isUpdating}
+                  onClick={() => handleCancel(order.id)}
+                  style={styles.cancelButton}
+                  title="Cancel this order"
+                >
+                  Cancel
+                </button>
+
+                {!order.archived_at &&
+                  order.status !== "cancelled" &&
+                  (onBillOrder || onOpenBill) &&
+                  (liveBillLinks?.[order.id] ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenBill?.(liveBillLinks[order.id].billId)}
+                      style={styles.billedBadgeButton}
+                      title="Open this bill in Bills"
+                    >
+                      Billed · {liveBillLinks[order.id].billNoText}
+                    </button>
+                  ) : onBillOrder ? (
+                    <button
+                      type="button"
+                      onClick={() => onBillOrder(order)}
+                      style={styles.billButton}
+                      title="Create bill from this order"
+                    >
+                      Bill
+                    </button>
+                  ) : null)}
+              </div>
+            </div>
+          );
+        };
+
+        if (billingOrderMode) {
+          if (newAndInProgressOrders.length === 0 && servedOrders.length === 0) {
+            return (
+              <div style={styles.emptyCard}>
+                <div style={styles.emptyIcon}>🍽️</div>
+                <div style={styles.emptyTitle}>No active orders</div>
+                <div style={styles.emptySubtitle}>
+                  When customers place orders from their tables, they will instantly appear here.
                 </div>
               </div>
             );
-          })}
-        </div>
-      )}
+          }
+
+          return (
+            <div>
+              {/* TOP: NEW & IN PROGRESS */}
+              <div>
+                <div style={styles.sectionHeaderTitle}>
+                  Kitchen — New &amp; in progress ({newAndInProgressOrders.length})
+                </div>
+                {newAndInProgressOrders.length === 0 ? (
+                  <div style={styles.kitchenClearNote}>
+                    ✓ Kitchen is clear — no pending orders. Served orders waiting for bill below.
+                  </div>
+                ) : (
+                  <div style={styles.orderGrid}>
+                    {newAndInProgressOrders.map(renderOrderCard)}
+                  </div>
+                )}
+              </div>
+
+              {/* BELOW: SERVED · WAITING FOR BILL */}
+              {(servedTableGroups.length > 0 || servedNoTableOrders.length > 0) && (
+                <div style={styles.servedSection}>
+                  <div style={styles.servedSectionHeader}>
+                    <div style={styles.servedSectionTitleRow}>
+                      <span style={styles.servedDot} />
+                      <h3 style={styles.servedSectionTitle}>
+                        Served · waiting for bill ({servedOrders.length})
+                      </h3>
+                    </div>
+                    <p style={styles.servedSectionSubtitle}>
+                      Orders served to tables. Tap Bill to review and print/share WhatsApp bill.
+                    </p>
+                  </div>
+
+                  <div style={styles.servedGrid}>
+                    {servedTableGroups.map((group) => {
+                      const isGroupUpdating = group.orders.some((o) => updatingOrderId === o.id);
+                      const ageStr = formatServedTimeAgo(group.oldestCreatedAt);
+
+                      return (
+                        <div key={`table-${group.tableNumber}`} style={styles.servedCard}>
+                          {/* CARD HEADER: Table N · X orders · ₹total */}
+                          <div style={styles.servedCardHeader}>
+                            <div style={styles.servedHeaderMain}>
+                              <span style={styles.servedTableBadge}>
+                                Table {group.tableNumber}
+                              </span>
+                              <span style={styles.servedHeaderMeta}>
+                                · {group.orders.length} {group.orders.length === 1 ? "order" : "orders"} · ₹{group.total.toFixed(0)}
+                              </span>
+                            </div>
+                            {ageStr && (
+                              <span style={styles.servedAgeBadge}>
+                                {ageStr}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* ORDERS BREAKDOWN */}
+                          <div style={styles.servedOrdersList}>
+                            {group.orders.map((order, idx) => {
+                              const items = orderItems.filter((i) => i.order_id === order.id);
+                              const billLink = liveBillLinks?.[order.id];
+                              const timeStr = formatTimeAgo(order.created_at);
+
+                              return (
+                                <div
+                                  key={order.id}
+                                  style={{
+                                    ...styles.servedOrderItem,
+                                    borderBottom:
+                                      idx === group.orders.length - 1 ? "none" : "1px dashed #e2e8f0",
+                                  }}
+                                >
+                                  <div style={styles.servedOrderRow}>
+                                    <div style={styles.servedOrderLeft}>
+                                      <span style={styles.servedOrderRef}>
+                                        {formatOrderLabel(order, { showDayIfNotToday: true })}
+                                      </span>
+                                      {order.customer_name && !isAutoTableName(order.customer_name) && (
+                                        <span style={styles.servedCustomerName}>
+                                          · {order.customer_name}
+                                        </span>
+                                      )}
+                                      {timeStr && (
+                                        <span style={styles.servedOrderTime}>
+                                          ({timeStr})
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span style={styles.servedOrderPrice}>
+                                      ₹{(order.total || order.subtotal || 0).toFixed(0)}
+                                    </span>
+                                  </div>
+
+                                  {items.length > 0 && (
+                                    <div style={styles.servedItemsSummary}>
+                                      {items.map((i) => `${i.quantity}× ${i.item_name}`).join(", ")}
+                                    </div>
+                                  )}
+
+                                  {billLink && (
+                                    <div style={styles.servedBilledTagRow}>
+                                      <button
+                                        type="button"
+                                        onClick={() => onOpenBill?.(billLink.billId)}
+                                        style={styles.billedBadgeButton}
+                                        title="Open this bill in Bills"
+                                      >
+                                        Billed · {billLink.billNoText}
+                                      </button>
+                                      <span style={styles.waitingForPaymentBadge}>
+                                        ⏳ waiting for payment
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* ACTION BUTTONS */}
+                          <div style={styles.servedActionsRow}>
+                            {group.unbilledOrders.length > 0 && onBillTable ? (
+                              <button
+                                type="button"
+                                onClick={() => onBillTable(group.tableNumber)}
+                                style={styles.primaryBillButton}
+                                title={`Create bill for Table ${group.tableNumber} (₹${group.unbilledTotal.toFixed(0)})`}
+                              >
+                                Bill ₹{group.unbilledTotal.toFixed(0)}
+                              </button>
+                            ) : (
+                              <div style={{ flex: 1 }} />
+                            )}
+
+                            <button
+                              type="button"
+                              disabled={isGroupUpdating}
+                              onClick={() => handleCloseWithoutBill(group.orders)}
+                              style={styles.closeWithoutBillButton}
+                              title="Mark as completed without billing"
+                            >
+                              Close without bill
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {servedNoTableOrders.map((order) => {
+                      const isUpdating = updatingOrderId === order.id;
+                      const items = orderItems.filter((i) => i.order_id === order.id);
+                      const billLink = liveBillLinks?.[order.id];
+                      const ageStr = formatServedTimeAgo(order.created_at);
+
+                      return (
+                        <div key={order.id} style={styles.servedCard}>
+                          {/* CARD HEADER */}
+                          <div style={styles.servedCardHeader}>
+                            <div style={styles.servedHeaderMain}>
+                              <span style={styles.servedTableBadge}>
+                                Order {formatOrderLabel(order, { showDayIfNotToday: true })}
+                              </span>
+                              <span style={styles.servedHeaderMeta}>
+                                · ₹{(order.total || order.subtotal || 0).toFixed(0)}
+                              </span>
+                            </div>
+                            {ageStr && (
+                              <span style={styles.servedAgeBadge}>
+                                {ageStr}
+                              </span>
+                            )}
+                          </div>
+
+                          {order.customer_name && !isAutoTableName(order.customer_name) && (
+                            <div style={styles.servedCustomerRow}>
+                              👤 {order.customer_name} {order.customer_phone ? `(${order.customer_phone})` : ""}
+                            </div>
+                          )}
+
+                          {/* ITEMS BREAKDOWN */}
+                          {items.length > 0 && (
+                            <div style={styles.servedItemsSummary}>
+                              {items.map((i) => `${i.quantity}× ${i.item_name}`).join(", ")}
+                            </div>
+                          )}
+
+                          {billLink && (
+                            <div style={styles.servedBilledTagRow}>
+                              <button
+                                type="button"
+                                onClick={() => onOpenBill?.(billLink.billId)}
+                                style={styles.billedBadgeButton}
+                                title="Open this bill in Bills"
+                              >
+                                Billed · {billLink.billNoText}
+                              </button>
+                              <span style={styles.waitingForPaymentBadge}>
+                                ⏳ waiting for payment
+                              </span>
+                            </div>
+                          )}
+
+                          {/* ACTION BUTTONS */}
+                          <div style={styles.servedActionsRow}>
+                            {!billLink && onBillOrder ? (
+                              <button
+                                type="button"
+                                onClick={() => onBillOrder(order)}
+                                style={styles.primaryBillButton}
+                                title={`Create bill for this order (₹${(order.total || order.subtotal || 0).toFixed(0)})`}
+                              >
+                                Bill
+                              </button>
+                            ) : (
+                              <div style={{ flex: 1 }} />
+                            )}
+
+                            <button
+                              type="button"
+                              disabled={isUpdating}
+                              onClick={() => handleCloseWithoutBill([order])}
+                              style={styles.closeWithoutBillButton}
+                              title="Mark as completed without billing"
+                            >
+                              Close without bill
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        // NON-BILLING MODE: Existing single grid behaviour
+        if (activeOrders.length === 0) {
+          return (
+            <div style={styles.emptyCard}>
+              <div style={styles.emptyIcon}>🍽️</div>
+              <div style={styles.emptyTitle}>No active orders</div>
+              <div style={styles.emptySubtitle}>
+                When customers place orders from their tables, they will instantly appear here.
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div style={styles.orderGrid}>
+            {activeOrders.map(renderOrderCard)}
+          </div>
+        );
+      })()}
     </section>
   );
 }
@@ -968,5 +1368,214 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
     fontFamily: "inherit",
     transition: "all 0.15s ease",
+  },
+  sectionHeaderTitle: {
+    margin: "0 0 12px 0",
+    fontSize: "13px",
+    fontWeight: 800,
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+  },
+  kitchenClearNote: {
+    padding: "16px 20px",
+    borderRadius: "12px",
+    background: "#f0fdf4",
+    border: "1px solid #bbf7d0",
+    color: "#166534",
+    fontSize: "13px",
+    fontWeight: 600,
+    marginBottom: "16px",
+  },
+  servedSection: {
+    marginTop: "24px",
+    paddingTop: "20px",
+    borderTop: "2px dashed #cbd5e1",
+    display: "flex",
+    flexDirection: "column",
+    gap: "14px",
+  },
+  servedSectionHeader: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  servedSectionTitleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+  },
+  servedDot: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    background: "#0d9488",
+  },
+  servedSectionTitle: {
+    margin: 0,
+    fontSize: "16px",
+    fontWeight: 800,
+    color: "#0f172a",
+    letterSpacing: "-0.01em",
+  },
+  servedSectionSubtitle: {
+    margin: 0,
+    fontSize: "12.5px",
+    color: "#64748b",
+  },
+  servedGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+    gap: "14px",
+  },
+  servedCard: {
+    borderRadius: "14px",
+    border: "1.5px solid #99f6e4",
+    background: "#ffffff",
+    boxShadow: "0 2px 8px rgba(13, 148, 136, 0.05)",
+    padding: "16px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  servedCardHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "8px",
+    paddingBottom: "8px",
+    borderBottom: "1px solid #f0fdfa",
+  },
+  servedHeaderMain: {
+    display: "flex",
+    alignItems: "baseline",
+    flexWrap: "wrap",
+    gap: "4px",
+  },
+  servedTableBadge: {
+    fontSize: "18px",
+    fontWeight: 800,
+    color: "#0f172a",
+    letterSpacing: "-0.01em",
+  },
+  servedHeaderMeta: {
+    fontSize: "13px",
+    fontWeight: 700,
+    color: "#0d9488",
+  },
+  servedAgeBadge: {
+    fontSize: "11px",
+    fontWeight: 600,
+    color: "#64748b",
+    background: "#f1f5f9",
+    padding: "3px 8px",
+    borderRadius: "10px",
+    whiteSpace: "nowrap",
+  },
+  servedCustomerRow: {
+    fontSize: "12.5px",
+    fontWeight: 600,
+    color: "#334155",
+  },
+  servedOrdersList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    background: "#f8fafc",
+    borderRadius: "10px",
+    padding: "10px 12px",
+  },
+  servedOrderItem: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    paddingBottom: "8px",
+  },
+  servedOrderRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    gap: "6px",
+  },
+  servedOrderLeft: {
+    display: "flex",
+    alignItems: "baseline",
+    flexWrap: "wrap",
+    gap: "4px",
+    fontSize: "12px",
+  },
+  servedOrderRef: {
+    fontWeight: 800,
+    fontFamily: "monospace",
+    color: "#334155",
+  },
+  servedCustomerName: {
+    fontWeight: 600,
+    color: "#475569",
+  },
+  servedOrderTime: {
+    color: "#94a3b8",
+    fontSize: "11px",
+  },
+  servedOrderPrice: {
+    fontWeight: 700,
+    color: "#0f172a",
+    fontFamily: "monospace",
+    fontSize: "12.5px",
+  },
+  servedItemsSummary: {
+    fontSize: "11.5px",
+    color: "#475569",
+    lineHeight: 1.35,
+  },
+  servedBilledTagRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    flexWrap: "wrap",
+    marginTop: "2px",
+  },
+  waitingForPaymentBadge: {
+    fontSize: "11px",
+    fontWeight: 700,
+    color: "#b45309",
+    background: "#fef3c7",
+    padding: "3px 8px",
+    borderRadius: "8px",
+    border: "1px solid #fde68a",
+  },
+  servedActionsRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "10px",
+    flexWrap: "wrap",
+    marginTop: "2px",
+  },
+  primaryBillButton: {
+    flex: 1,
+    minWidth: "120px",
+    padding: "10px 16px",
+    background: "#0f172a",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "10px",
+    fontSize: "14px",
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    textAlign: "center",
+    transition: "background 0.15s ease",
+  },
+  closeWithoutBillButton: {
+    background: "transparent",
+    color: "#64748b",
+    border: "none",
+    fontSize: "11.5px",
+    fontWeight: 600,
+    textDecoration: "underline",
+    cursor: "pointer",
+    padding: "6px 8px",
+    fontFamily: "inherit",
   },
 };

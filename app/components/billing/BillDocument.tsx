@@ -165,6 +165,7 @@ type Props = {
   onMarkPaid?: (method: PaymentMethod) => Promise<void>;
   onMarkUnpaid?: () => Promise<void>;
   onVoid?: (reason: string) => Promise<void>;
+  hideWhatsAppButtons?: boolean;
 };
 
 export default function BillDocument({
@@ -174,6 +175,7 @@ export default function BillDocument({
   onMarkPaid,
   onMarkUnpaid,
   onVoid,
+  hideWhatsAppButtons = false,
 }: Props) {
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [copiedLink, setCopiedLink] = useState(false);
@@ -491,14 +493,16 @@ export default function BillDocument({
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={handlePrint}
-              title="Choose Save as PDF to make a PDF"
-              style={btnPrimaryStyle}
-            >
-              🖨️ Print
-            </button>
+            {mode === "dashboard" && (
+              <button
+                type="button"
+                onClick={handlePrint}
+                title="Choose Save as PDF to make a PDF"
+                style={btnPrimaryStyle}
+              >
+                🖨️ Print
+              </button>
+            )}
 
             <button
               type="button"
@@ -513,7 +517,7 @@ export default function BillDocument({
               {pdfGenerating ? "⏳ Preparing PDF…" : "📥 Download PDF"}
             </button>
 
-            {mode === "dashboard" && (
+            {mode === "dashboard" && !hideWhatsAppButtons && (
               <button
                 type="button"
                 onClick={handleSendPdfWhatsApp}
@@ -525,7 +529,7 @@ export default function BillDocument({
               </button>
             )}
 
-            {mode === "dashboard" && (
+            {mode === "dashboard" && !hideWhatsAppButtons && (
               <button
                 type="button"
                 onClick={handleWhatsAppShare}
@@ -536,13 +540,15 @@ export default function BillDocument({
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={handleCopyLink}
-              style={btnSecondaryStyle}
-            >
-              {copiedLink ? "✓ Link copied" : "🔗 Copy link"}
-            </button>
+            {mode === "dashboard" && (
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                style={btnSecondaryStyle}
+              >
+                {copiedLink ? "✓ Link copied" : "🔗 Copy link"}
+              </button>
+            )}
           </div>
 
           {mode === "dashboard" && data.status === "issued" && (
@@ -591,9 +597,11 @@ export default function BillDocument({
           )}
         </div>
 
-        <div style={{ fontSize: "11.5px", color: "#64748b" }}>
-          Tip: Choose <strong>Save as PDF</strong> in the Print dialog to save a PDF copy ({paper.toUpperCase()} layout).
-        </div>
+        {mode === "dashboard" && (
+          <div style={{ fontSize: "11.5px", color: "#64748b" }}>
+            Tip: Choose <strong>Save as PDF</strong> in the Print dialog to save a PDF copy ({paper.toUpperCase()} layout).
+          </div>
+        )}
 
         {/* INLINE PAYMENT METHOD CHOOSER */}
         {mode === "dashboard" && showPayChooser && onMarkPaid && data.status === "issued" && (

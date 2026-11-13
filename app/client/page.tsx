@@ -4131,16 +4131,8 @@ function Overview({
               : undefined
           }
           onOpenBill={billingOrderMode ? onOpenBill : undefined}
-        />
-      )}
-
-      {billingOrderMode && onBillTable && (
-        <UnbilledOrdersWarning
-          orders={orders}
-          orderItems={orderItems}
-          liveBillLinks={liveBillLinks}
-          onBillTable={onBillTable}
-          onBillOrderWithoutTable={onBillOrder}
+          billingOrderMode={billingOrderMode}
+          onBillTable={billingOrderMode ? onBillTable : undefined}
         />
       )}
 

@@ -2411,7 +2411,7 @@ export default function RestaurantExperience({
                 </div>
 
                 <div style={{ marginBottom: "12px" }}>
-                  <label style={styles.inputLabel}>Mobile Number (Optional)</label>
+                  <label style={styles.inputLabel}>Mobile number (optional)</label>
                   <input
                     type="tel"
                     placeholder="10-digit mobile number"
@@ -2419,7 +2419,7 @@ export default function RestaurantExperience({
                     onChange={(e) => setCustomerPhone(e.target.value)}
                     style={styles.inputField}
                   />
-                  <div style={styles.inputHint}>for offers and loyalty</div>
+                  <div style={styles.inputHint}>Get your bill on WhatsApp. Also used for offers and loyalty.</div>
                 </div>
 
                 {orderingDisabled && renderPauseBanner()}

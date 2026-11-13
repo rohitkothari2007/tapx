@@ -39,6 +39,7 @@ import {
   generateBillPdfBlob,
   getBillPdfFileName,
   sharePdfOnWhatsApp,
+  stripLinkFromBillMessage,
 } from "../../lib/billPdf";
 
 type ExtraLine = {
@@ -197,7 +198,15 @@ export default function BillFromOrders({
   // Extra manual lines
   const [extraLines, setExtraLines] = useState<ExtraLine[]>([]);
 
-  // Customer info prefilled from first selected order (ignoring auto "Table N" placeholder names)
+  // Customer info prefilled from selected orders (phone from FIRST non-empty phone among all selected orders)
+  const getFirstNonEmptyCustomerPhone = (list: BillableOrderLike[]) => {
+    for (const ord of list) {
+      const p = (ord.customer_phone || "").trim();
+      if (p) return p;
+    }
+    return "";
+  };
+
   const selectedOrders = useMemo(() => {
     const set = new Set(selectedOrderIds);
     return eligibleOrders.filter((o) => set.has(o.id));
@@ -208,9 +217,10 @@ export default function BillFromOrders({
     const raw = (firstSelectedOrder?.customer_name || "").trim();
     return raw && !isAutoTableName(raw) ? raw : "";
   });
-  const [customerPhone, setCustomerPhone] = useState(() =>
-    (firstSelectedOrder?.customer_phone || "").trim()
-  );
+  const [customerPhone, setCustomerPhone] = useState(() => {
+    const list = selectedOrders.length > 0 ? selectedOrders : eligibleOrders;
+    return getFirstNonEmptyCustomerPhone(list);
+  });
   const customerTouchedRef = useRef(false);
 
   // Discount & Service charge %
@@ -243,6 +253,27 @@ export default function BillFromOrders({
   const [donePdfGenerating, setDonePdfGenerating] = useState(false);
   const [donePdfInstruction, setDonePdfInstruction] = useState("");
   const messageEditedRef = useRef(false);
+
+  // Editable customer phone on Done screen (B2)
+  const [donePhone, setDonePhone] = useState("");
+  const donePhoneTouchedRef = useRef(false);
+  const [canShareFileSheet, setCanShareFileSheet] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const isTouch = Boolean(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+    if (!isTouch) return;
+    if (typeof navigator !== "undefined" && typeof (navigator as any).canShare === "function") {
+      try {
+        const testFile = new File([""], "test.pdf", { type: "application/pdf" });
+        if ((navigator as any).canShare({ files: [testFile] })) {
+          setCanShareFileSheet(true);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
 
   // Fetch fresh billing settings (service_charge_pct, etc.) and digital_menu items on mount
   useEffect(() => {
@@ -291,14 +322,15 @@ export default function BillFromOrders({
     };
   }, [business?.id]);
 
-  // Keep customer fields synced with first selected order until manually edited
+  // Keep customer fields synced with selected orders until manually edited
   useEffect(() => {
     if (customerTouchedRef.current) return;
     const ord = selectedOrders[0];
     if (!ord) return;
     const raw = (ord.customer_name || "").trim();
     setCustomerName(raw && !isAutoTableName(raw) ? raw : "");
-    setCustomerPhone((ord.customer_phone || "").trim());
+    const nonBlankPhone = getFirstNonEmptyCustomerPhone(selectedOrders);
+    setCustomerPhone(nonBlankPhone);
   }, [selectedOrders]);
 
   // Detect if every selected order already has payment_status === 'paid'
@@ -644,6 +676,9 @@ export default function BillFromOrders({
         const loaded = (billRes.data || null) as TapxBill | null;
         setIssuedBill(loaded);
         setIssuedItems((itemsRes.data || []) as TapxBillItem[]);
+        if (loaded && !donePhoneTouchedRef.current) {
+          setDonePhone((loaded.customer_phone || customerPhone || "").trim());
+        }
 
         if (loaded && !messageEditedRef.current) {
           const origin =
@@ -702,6 +737,9 @@ export default function BillFromOrders({
       }
 
       setIssuedBillId(returnedId);
+      if (!donePhoneTouchedRef.current) {
+        setDonePhone(customerPhone.trim());
+      }
       setStep("done");
       await Promise.all([
         loadIssuedBillDetails(returnedId),
@@ -790,12 +828,7 @@ export default function BillFromOrders({
 
   // ======================== STEP 2: DONE SCREEN ========================
   if (step === "done") {
-    const normalizedPhone = normalizeWhatsAppPhone(
-      issuedBill?.customer_phone ?? customerPhone
-    );
-    const waHref = normalizedPhone
-      ? `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(whatsappMessage)}`
-      : `https://wa.me/?text=${encodeURIComponent(whatsappMessage)}`;
+    const normalizedDonePhone = normalizeWhatsAppPhone(donePhone);
 
     const handleCopyMessage = async () => {
       if (typeof navigator === "undefined" || !navigator.clipboard) return;
@@ -833,7 +866,22 @@ export default function BillFromOrders({
       }
     };
 
-    const handleDoneSendPdfWhatsApp = async () => {
+    const handleDoneSendWhatsApp = () => {
+      if (!issuedBill || !normalizedDonePhone) return;
+      const fileName = getBillPdfFileName(issuedBill.bill_no_text);
+      if (donePdfBlob) {
+        downloadPdfBlob(donePdfBlob, fileName);
+        setDonePdfInstruction(
+          `PDF downloaded. In WhatsApp, tap the paperclip → Document and choose ${fileName}.`
+        );
+      }
+      const waUrl = `https://wa.me/${normalizedDonePhone}?text=${encodeURIComponent(whatsappMessage)}`;
+      if (typeof window !== "undefined") {
+        window.open(waUrl, "_blank", "noopener,noreferrer");
+      }
+    };
+
+    const handleDoneSharePdfSheet = async () => {
       if (!issuedBill) return;
       const fileName = getBillPdfFileName(issuedBill.bill_no_text);
       let blob = donePdfBlob;
@@ -850,7 +898,6 @@ export default function BillFromOrders({
           setDonePdfBlob(blob);
         } catch (err: any) {
           setDoneError(err?.message || "Could not generate PDF.");
-          setDonePdfGenerating(false);
           return;
         } finally {
           setDonePdfGenerating(false);
@@ -858,17 +905,20 @@ export default function BillFromOrders({
       }
       if (!blob) return;
 
-      await sharePdfOnWhatsApp({
-        blob,
-        fileName,
-        messageText: whatsappMessage,
-        customerPhone: issuedBill.customer_phone ?? customerPhone,
-        onInstructionNeeded: (name) => {
-          setDonePdfInstruction(
-            `PDF downloaded. In WhatsApp, tap the paperclip → Document and choose ${name}.`
-          );
-        },
-      });
+      try {
+        const file = new File([blob], fileName, { type: "application/pdf" });
+        if (typeof navigator !== "undefined" && typeof (navigator as any).canShare === "function") {
+          if ((navigator as any).canShare({ files: [file] })) {
+            await navigator.share({
+              files: [file],
+              text: stripLinkFromBillMessage(whatsappMessage),
+            });
+          }
+        }
+      } catch (err: any) {
+        if (err?.name === "AbortError") return;
+        setDoneError(err?.message || "Could not share PDF.");
+      }
     };
 
     return (
@@ -934,75 +984,127 @@ export default function BillFromOrders({
               padding: "16px",
               display: "flex",
               flexDirection: "column",
-              gap: "10px",
+              gap: "12px",
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: "8px",
-              }}
-            >
-              <div>
-                <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 800, color: "#0f172a" }}>
-                  Send to customer on WhatsApp
-                </h3>
-                <p style={{ margin: "2px 0 0", fontSize: "12px", color: "#64748b" }}>
-                  {normalizedPhone
-                    ? `Sending directly to +${normalizedPhone}`
-                    : "No usable customer phone — WhatsApp will let you choose a chat"}
-                </p>
+            <div>
+              <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 800, color: "#0f172a" }}>
+                Send to customer on WhatsApp
+              </h3>
+            </div>
+
+            {/* EDITABLE PHONE INPUT (B2) */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px", maxWidth: "420px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                Customer WhatsApp number
+              </label>
+              <input
+                type="tel"
+                inputMode="numeric"
+                placeholder="10-digit mobile number"
+                value={donePhone}
+                onChange={(e) => {
+                  donePhoneTouchedRef.current = true;
+                  setDonePhone(e.target.value);
+                }}
+                style={inputStyle}
+              />
+              <div
+                style={{
+                  fontSize: "11.5px",
+                  color: normalizedDonePhone ? "#15803d" : "#64748b",
+                  fontWeight: normalizedDonePhone ? 600 : 400,
+                }}
+              >
+                {normalizedDonePhone
+                  ? `Will send to +${normalizedDonePhone}`
+                  : "Enter the customer's 10-digit mobile number to send the bill on WhatsApp (optional)"}
               </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+            </div>
+
+            {/* SEND ACTIONS (B3) */}
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" }}>
+              {normalizedDonePhone ? (
                 <button
                   type="button"
-                  disabled={donePdfGenerating}
-                  onClick={() => void handleDoneDownloadPdf()}
-                  style={{
-                    ...btnSecondaryStyle,
-                    cursor: donePdfGenerating ? "wait" : "pointer",
-                  }}
-                  title="Download vector PDF"
-                >
-                  {donePdfGenerating ? "⏳ Preparing PDF…" : "📥 Download PDF"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleDoneSendPdfWhatsApp()}
+                  onClick={handleDoneSendWhatsApp}
                   style={{
                     ...btnWhatsAppStyle,
-                    background: "#047857",
+                    background: "#059669",
                     cursor: "pointer",
                   }}
-                  title="Send PDF file on WhatsApp"
+                  title="Send bill link directly to customer on WhatsApp"
                 >
-                  📄 Send PDF on WhatsApp
+                  💬 Send on WhatsApp
                 </button>
-                <a
-                  href={waHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    ...btnWhatsAppStyle,
-                    textDecoration: "none",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
-                >
-                  💬 Send link on WhatsApp
-                </a>
+              ) : (
+                <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    disabled={true}
+                    style={{
+                      ...btnWhatsAppStyle,
+                      background: "#94a3b8",
+                      cursor: "not-allowed",
+                      opacity: 0.65,
+                    }}
+                    title="Enter a valid 10-digit phone number to send directly"
+                  >
+                    💬 Enter number to send
+                  </button>
+                  <a
+                    href={`https://wa.me/?text=${encodeURIComponent(whatsappMessage)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      color: "#059669",
+                      textDecoration: "underline",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Choose chat in WhatsApp instead
+                  </a>
+                </div>
+              )}
+
+              {canShareFileSheet && (
                 <button
                   type="button"
-                  onClick={() => void handleCopyMessage()}
-                  style={btnSecondaryStyle}
+                  onClick={() => void handleDoneSharePdfSheet()}
+                  style={{
+                    ...btnSecondaryStyle,
+                    fontSize: "12px",
+                    padding: "8px 12px",
+                    cursor: "pointer",
+                  }}
+                  title="Share PDF file using device share sheet"
                 >
-                  {copiedMessage ? "✓ Copied message" : "Copy message"}
+                  📤 Share PDF...
                 </button>
-              </div>
+              )}
+
+              <button
+                type="button"
+                disabled={donePdfGenerating}
+                onClick={() => void handleDoneDownloadPdf()}
+                style={{
+                  ...btnSecondaryStyle,
+                  cursor: donePdfGenerating ? "wait" : "pointer",
+                }}
+                title="Download vector PDF"
+              >
+                {donePdfGenerating ? "⏳ Preparing PDF…" : "📥 Download PDF"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void handleCopyMessage()}
+                style={btnSecondaryStyle}
+              >
+                {copiedMessage ? "✓ Copied message" : "Copy message"}
+              </button>
             </div>
 
             {donePdfInstruction && (
@@ -1083,6 +1185,7 @@ export default function BillFromOrders({
         ) : issuedBill ? (
           <BillDocument
             mode="dashboard"
+            hideWhatsAppButtons={true}
             data={toBillDocumentDataFromDashboard(
               issuedBill,
               issuedItems,
@@ -1562,27 +1665,50 @@ export default function BillFromOrders({
           <h3 style={{ ...sectionTitleStyle, marginBottom: "10px" }}>
             Customer details (optional)
           </h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            <input
-              type="text"
-              placeholder="Customer name"
-              value={customerName}
-              onChange={(e) => {
-                customerTouchedRef.current = true;
-                setCustomerName(e.target.value);
-              }}
-              style={inputStyle}
-            />
-            <input
-              type="tel"
-              placeholder="Customer phone (for WhatsApp)"
-              value={customerPhone}
-              onChange={(e) => {
-                customerTouchedRef.current = true;
-                setCustomerPhone(e.target.value);
-              }}
-              style={inputStyle}
-            />
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                Customer WhatsApp number
+              </label>
+              <input
+                type="tel"
+                inputMode="numeric"
+                placeholder="10-digit mobile number"
+                value={customerPhone}
+                onChange={(e) => {
+                  customerTouchedRef.current = true;
+                  setCustomerPhone(e.target.value);
+                }}
+                style={inputStyle}
+              />
+              <div
+                style={{
+                  fontSize: "11.5px",
+                  color: normalizeWhatsAppPhone(customerPhone) ? "#15803d" : "#64748b",
+                  fontWeight: normalizeWhatsAppPhone(customerPhone) ? 600 : 400,
+                }}
+              >
+                {normalizeWhatsAppPhone(customerPhone)
+                  ? `Will send to +${normalizeWhatsAppPhone(customerPhone)}`
+                  : "Enter the customer's 10-digit mobile number to send the bill on WhatsApp (optional)"}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                Customer name (optional)
+              </label>
+              <input
+                type="text"
+                placeholder="Customer name"
+                value={customerName}
+                onChange={(e) => {
+                  customerTouchedRef.current = true;
+                  setCustomerName(e.target.value);
+                }}
+                style={inputStyle}
+              />
+            </div>
           </div>
         </div>
 
