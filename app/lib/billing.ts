@@ -323,6 +323,7 @@ export type SavedMenuItem = {
   id: string;
   name: string;
   price: number;
+  sku?: string;
 };
 
 export type LiveOrderBillLink = {
@@ -386,10 +387,13 @@ export function parseSavedItemsFromConfig(
       Number.isFinite(priceNum) && priceNum >= 0
         ? Math.round(priceNum * 100) / 100
         : 0;
+    const skuRaw = typeof raw.sku === "string" ? raw.sku.trim() : "";
+    const sku = skuRaw ? skuRaw.slice(0, 40) : undefined;
     parsed.push({
       id: typeof raw.id === "string" ? raw.id : name,
       name: name.slice(0, 120),
       price: unitPrice,
+      ...(sku ? { sku } : {}),
     });
   }
   return parsed;

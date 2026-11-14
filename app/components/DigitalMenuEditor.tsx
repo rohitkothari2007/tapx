@@ -22,6 +22,7 @@ export type MenuItem = {
   dietary?: "veg" | "non_veg" | "egg" | "none";
   popular?: boolean;
   available?: boolean;
+  sku?: string;
 };
 
 export type DigitalMenuConfig = {
@@ -127,6 +128,7 @@ export default function DigitalMenuEditor({
   const [editItemDietary, setEditItemDietary] = useState<"veg" | "non_veg" | "egg" | "none">("veg");
   const [editItemImageUrl, setEditItemImageUrl] = useState("");
   const [editItemPopular, setEditItemPopular] = useState(false);
+  const [editItemSku, setEditItemSku] = useState("");
   const [editItemError, setEditItemError] = useState("");
   const [editItemPhotoBusy, setEditItemPhotoBusy] = useState(false);
 
@@ -145,6 +147,7 @@ export default function DigitalMenuEditor({
   const [newItemImageUrl, setNewItemImageUrl] = useState("");
   const [newItemDietary, setNewItemDietary] = useState<"veg" | "non_veg" | "egg" | "none">("veg");
   const [newItemPopular, setNewItemPopular] = useState(false);
+  const [newItemSku, setNewItemSku] = useState("");
   const [newItemPhotoBusy, setNewItemPhotoBusy] = useState(false);
   const [itemError, setItemError] = useState("");
 
@@ -179,7 +182,8 @@ export default function DigitalMenuEditor({
         const q = searchQuery.toLowerCase();
         const matchesName = item.name.toLowerCase().includes(q);
         const matchesDesc = (item.description || "").toLowerCase().includes(q);
-        if (!matchesName && !matchesDesc) return false;
+        const matchesSku = (item.sku || "").toLowerCase().includes(q);
+        if (!matchesName && !matchesDesc && !matchesSku) return false;
       }
       return true;
     });
@@ -397,6 +401,22 @@ export default function DigitalMenuEditor({
       }
     }
 
+    // Validate barcode / item code (optional, max 40 chars, unique)
+    const skuStr = newItemSku.trim();
+    if (skuStr) {
+      if (skuStr.length > 40) {
+        setItemError("Barcode / item code must be 40 characters or fewer.");
+        return;
+      }
+      const duplicate = items.find(
+        (i) => (i.sku || "").trim().toLowerCase() === skuStr.toLowerCase()
+      );
+      if (duplicate) {
+        setItemError(`This code is already used by ${duplicate.name}.`);
+        return;
+      }
+    }
+
     const newItem: MenuItem = {
       id: makeId(),
       categoryId: assignedCategoryId,
@@ -407,6 +427,7 @@ export default function DigitalMenuEditor({
       dietary: newItemDietary,
       popular: newItemPopular,
       available: true,
+      sku: skuStr || undefined,
     };
 
     const nextItems = [...items, newItem];
@@ -422,6 +443,7 @@ export default function DigitalMenuEditor({
     setNewItemPrice("");
     setNewItemDesc("");
     setNewItemImageUrl("");
+    setNewItemSku("");
     setNewItemPopular(false);
     setPreviewItemId(newItem.id);
   };
@@ -459,6 +481,7 @@ export default function DigitalMenuEditor({
     setEditItemDietary(item.dietary || "veg");
     setEditItemImageUrl(item.imageUrl || "");
     setEditItemPopular(Boolean(item.popular));
+    setEditItemSku(item.sku || "");
     setEditItemError("");
     setPreviewItemId(item.id);
   };
@@ -502,6 +525,24 @@ export default function DigitalMenuEditor({
       }
     }
 
+    // Validate barcode / item code (optional, max 40 chars, unique)
+    const skuStr = editItemSku.trim();
+    if (skuStr) {
+      if (skuStr.length > 40) {
+        setEditItemError("Barcode / item code must be 40 characters or fewer.");
+        return;
+      }
+      const duplicate = items.find(
+        (i) =>
+          i.id !== editingItemId &&
+          (i.sku || "").trim().toLowerCase() === skuStr.toLowerCase()
+      );
+      if (duplicate) {
+        setEditItemError(`This code is already used by ${duplicate.name}.`);
+        return;
+      }
+    }
+
     const nextItems = items.map((i) =>
       i.id === editingItemId
         ? {
@@ -513,6 +554,7 @@ export default function DigitalMenuEditor({
             dietary: editItemDietary,
             imageUrl: imgStr || undefined,
             popular: editItemPopular,
+            sku: skuStr || undefined,
           }
         : i
     );
@@ -971,6 +1013,18 @@ export default function DigitalMenuEditor({
                   </select>
                 </div>
 
+                <div>
+                  <label style={styles.inputLabel}>Barcode / item code (optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 8901234567890 or TEA-01"
+                    maxLength={40}
+                    value={newItemSku}
+                    onChange={(e) => setNewItemSku(e.target.value)}
+                    style={styles.input}
+                  />
+                </div>
+
                 <div style={{ gridColumn: "1 / -1" }}>
                   <label style={styles.inputLabel}>
                     Description (max 300 chars, {300 - newItemDesc.length} left)
@@ -1161,6 +1215,18 @@ export default function DigitalMenuEditor({
                               <option value="egg">🟡 Contains Egg</option>
                               <option value="none">⚪ Not Specified</option>
                             </select>
+                          </div>
+
+                          <div>
+                            <label style={styles.inputLabel}>Barcode / item code (optional)</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. 8901234567890 or TEA-01"
+                              maxLength={40}
+                              value={editItemSku}
+                              onChange={(e) => setEditItemSku(e.target.value)}
+                              style={styles.input}
+                            />
                           </div>
 
                           <div style={{ gridColumn: "1 / -1" }}>
