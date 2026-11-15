@@ -28,6 +28,7 @@ import BillDocument, {
   toBillDocumentDataFromDashboard,
 } from "../../components/billing/BillDocument";
 import QuickBill from "./QuickBill";
+import ShopCounter from "../shop/ShopCounter";
 
 export const BILL_SELECT_COLUMNS =
   "id, business_id, financial_year, bill_number, bill_no_text, bill_day, status, source, customer_name, customer_phone, table_number, subtotal, discount_amount, discount_note, service_charge_pct, service_charge, tax_mode, tax_total, round_off, total, payment_status, payment_method, paid_at, void_reason, voided_at, notes, share_token, created_at";
@@ -40,6 +41,7 @@ type DatePreset = "today" | "yesterday" | "last7" | "custom";
 type Props = {
   business: BillingBusinessProfile & { id: string };
   moduleConfigs?: Array<{ module_key: string; config: Record<string, any> | null }>;
+  retailCounter?: boolean;
   onOpenSettings?: () => void;
   orderBasedMode?: boolean;
   orders?: BillableOrderLike[];
@@ -55,6 +57,7 @@ type Props = {
 export default function BillsPage({
   business,
   moduleConfigs,
+  retailCounter = false,
   onOpenSettings,
   orderBasedMode = false,
   orders = [],
@@ -309,6 +312,16 @@ export default function BillsPage({
   const showDayOnRow = activeRange.from !== activeRange.to || datePreset !== "today";
 
   if (view === "quick") {
+    if (retailCounter) {
+      return (
+        <ShopCounter
+          businessId={business.id}
+          billingSettings={billingSettings}
+          onCancel={() => setView("list")}
+          onIssued={handleBillIssued}
+        />
+      );
+    }
     return (
       <QuickBill
         businessId={business.id}
