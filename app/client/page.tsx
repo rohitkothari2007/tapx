@@ -2958,6 +2958,7 @@ export default function ClientPortalPage() {
             <BillsPage
               business={business}
               moduleConfigs={moduleConfigs}
+              retailCounter={hasRetailBilling}
               onOpenSettings={() => navigate("settings")}
               orderBasedMode={isOrderBasedBilling}
               orders={nonArchivedOrders}

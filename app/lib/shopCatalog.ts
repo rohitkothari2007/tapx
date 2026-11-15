@@ -118,6 +118,16 @@ export function composeCatalogLineName(
     base = typ || cat;
   }
 
-  const full = sz ? `${base} (${sz})` : base;
-  return full.slice(0, 120);
+  if (!sz) {
+    return base.slice(0, 120);
+  }
+
+  const suffix = ` (${sz})`;
+  if (base.length + suffix.length <= 120) {
+    return `${base}${suffix}`;
+  }
+
+  const maxBaseLen = Math.max(0, 120 - suffix.length);
+  const truncatedBase = base.slice(0, maxBaseLen).trimEnd();
+  return `${truncatedBase}${suffix}`;
 }
