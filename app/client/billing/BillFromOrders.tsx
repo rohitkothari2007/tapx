@@ -332,6 +332,15 @@ export default function BillFromOrders({
     setCustomerPhone(nonBlankPhone);
   }, [selectedOrders]);
 
+  const upiQrEnabled = useMemo(() => {
+    return (
+      Boolean((business?.upi_id || "").trim()) &&
+      Boolean(activeSettings.show_upi_qr)
+    );
+  }, [business?.upi_id, activeSettings.show_upi_qr]);
+
+  const [autoOpenUpiCollect, setAutoOpenUpiCollect] = useState(false);
+
   // Detect if every selected order already has payment_status === 'paid'
   const { allOrdersMarkedPaid, preselectedOrderPayMethod } = useMemo(() => {
     if (selectedOrders.length === 0) {
@@ -708,7 +717,12 @@ export default function BillFromOrders({
     if (submittingRef.current || issuing) return;
     setErrorMsg("");
 
-    const check = validateAndBuildArgs(paymentMethod);
+    const isUpiCollect =
+      paymentMethod === "upi" &&
+      upiQrEnabled &&
+      !(allOrdersMarkedPaid && selectedPaidMethod === "upi");
+
+    const check = validateAndBuildArgs(isUpiCollect ? undefined : paymentMethod);
     if ("error" in check) {
       setErrorMsg(check.error || "Please check your entries.");
       return;
@@ -736,6 +750,7 @@ export default function BillFromOrders({
       }
 
       setIssuedBillId(returnedId);
+      setAutoOpenUpiCollect(isUpiCollect);
       if (!donePhoneTouchedRef.current) {
         setDonePhone(customerPhone.trim());
       }
@@ -1142,6 +1157,7 @@ export default function BillFromOrders({
         ) : issuedBill ? (
           <BillDocument
             mode="dashboard"
+            autoOpenUpiCollect={autoOpenUpiCollect}
             hideWhatsAppButtons={true}
             data={toBillDocumentDataFromDashboard(
               issuedBill,

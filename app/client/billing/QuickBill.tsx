@@ -23,8 +23,9 @@ type Props = {
   businessId: string;
   billingSettings: BillingSettings;
   moduleConfigs?: Array<{ module_key: string; config: Record<string, any> | null }>;
+  upiQrEnabled?: boolean;
   onCancel: () => void;
-  onIssued: (billId: string) => Promise<void> | void;
+  onIssued: (billId: string, opts?: { collectUpi?: boolean }) => Promise<void> | void;
 };
 
 function createBlankLine(): DraftLine {
@@ -40,6 +41,7 @@ export default function QuickBill({
   businessId,
   billingSettings,
   moduleConfigs,
+  upiQrEnabled = false,
   onCancel,
   onIssued,
 }: Props) {
@@ -300,7 +302,8 @@ export default function QuickBill({
     if (submittingRef.current || issuing) return;
     setErrorMsg("");
 
-    const check = validateAndBuildPayload(paymentMethod);
+    const isUpiCollect = paymentMethod === "upi" && Boolean(upiQrEnabled);
+    const check = validateAndBuildPayload(isUpiCollect ? undefined : paymentMethod);
     if ("error" in check) {
       setErrorMsg(check.error || "Please check your entries.");
       return;
@@ -325,7 +328,7 @@ export default function QuickBill({
         return;
       }
 
-      await onIssued(billId);
+      await onIssued(billId, isUpiCollect ? { collectUpi: true } : undefined);
     } catch (err: any) {
       setErrorMsg(err?.message || "Failed to issue bill.");
     } finally {
