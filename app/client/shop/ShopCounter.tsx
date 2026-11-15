@@ -22,8 +22,30 @@ type Props = {
   businessId: string;
   billingSettings: BillingSettings;
   upiQrEnabled?: boolean;
+  exchange?: {
+    billId: string;
+    billNo: string;
+    returnLines: { bill_item_id: string; quantity: number; restock: boolean }[];
+    creditValue: number;
+    customerName: string | null;
+    customerPhone: string | null;
+    creditNoteAllowed: boolean;
+    reason: string;
+  };
   onCancel: () => void;
-  onIssued: (billId: string, opts?: { collectUpi?: boolean }) => Promise<void> | void;
+  onIssued: (
+    billId: string,
+    opts?: {
+      collectUpi?: boolean;
+      creditNote?: {
+        id: string;
+        note_no_text: string;
+        amount: number;
+        balance_left: number;
+        expires_on: string | null;
+      } | null;
+    }
+  ) => Promise<void> | void;
 };
 
 interface CartLine {
@@ -57,6 +79,7 @@ export default function ShopCounter({
   businessId,
   billingSettings,
   upiQrEnabled = false,
+  exchange,
   onCancel,
   onIssued,
 }: Props) {
@@ -86,9 +109,19 @@ export default function ShopCounter({
   const [discountNote, setDiscountNote] = useState("");
 
   // Customer State
-  const [showCustomer, setShowCustomer] = useState(false);
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
+  const [showCustomer, setShowCustomer] = useState(
+    Boolean(exchange?.customerName || exchange?.customerPhone)
+  );
+  const [customerName, setCustomerName] = useState(exchange?.customerName || "");
+  const [customerPhone, setCustomerPhone] = useState(exchange?.customerPhone || "");
+
+  useEffect(() => {
+    if (exchange) {
+      if (exchange.customerName) setCustomerName(exchange.customerName);
+      if (exchange.customerPhone) setCustomerPhone(exchange.customerPhone);
+      setShowCustomer(true);
+    }
+  }, [exchange]);
 
   // Submission State
   const [issuing, setIssuing] = useState(false);
@@ -447,6 +480,12 @@ export default function ShopCounter({
     billingSettings.round_off,
   ]);
 
+  const exchangeCredit = exchange?.creditValue || 0;
+  const netAfterDiscount = Math.max(0, preview.subtotal - preview.discountAmount);
+  const payableY = exchange ? Math.max(0, netAfterDiscount - exchangeCredit) : preview.estimatedTotal;
+  const balanceZ = exchange ? Math.max(0, exchangeCredit - netAfterDiscount) : 0;
+  const exchangeUnderpaid = Boolean(exchange && !exchange.creditNoteAllowed && balanceZ > 0);
+
   // Validation logic
   const validateCart = (): { error?: string; args?: Record<string, any> } => {
     if (lines.length === 0) {
@@ -577,6 +616,14 @@ export default function ShopCounter({
       args.p_discount_note = discountNote.trim().slice(0, 120);
     }
 
+    if (exchange) {
+      args.p_original_bill_id = exchange.billId;
+      args.p_return_lines = exchange.returnLines;
+      if (exchange.reason) {
+        args.p_reason = exchange.reason;
+      }
+    }
+
     return { args };
   };
 
@@ -591,10 +638,13 @@ export default function ShopCounter({
       return;
     }
 
+    const isExchange = Boolean(exchange);
+    const rpcName = isExchange ? "create_tapx_exchange" : "create_tapx_bill";
+
     const isUpiCollect = paymentMethod === "upi" && Boolean(upiQrEnabled);
 
     const payload = { ...validation.args };
-    if (paymentMethod && !isUpiCollect) {
+    if (paymentMethod && !isUpiCollect && (!isExchange || payableY > 0)) {
       payload.p_payment_method = paymentMethod;
     }
 
@@ -603,7 +653,7 @@ export default function ShopCounter({
 
     try {
       const { data, error: rpcError } = await supabase.rpc(
-        "create_tapx_bill",
+        rpcName,
         payload
       );
 
@@ -612,14 +662,26 @@ export default function ShopCounter({
         return;
       }
 
-      const row = Array.isArray(data) ? data[0] : data;
-      const billId = row?.id ? String(row.id) : "";
-      if (!billId) {
-        setSubmitError("Bill was created without an ID. Please check Bills list.");
-        return;
+      if (isExchange) {
+        const billObj = data?.bill;
+        const billId = billObj?.id ? String(billObj.id) : "";
+        if (!billId) {
+          setSubmitError("Exchange bill was created without an ID. Please check Bills list.");
+          return;
+        }
+        await onIssued(billId, {
+          collectUpi: isUpiCollect,
+          creditNote: data?.credit_note || null,
+        });
+      } else {
+        const row = Array.isArray(data) ? data[0] : data;
+        const billId = row?.id ? String(row.id) : "";
+        if (!billId) {
+          setSubmitError("Bill was created without an ID. Please check Bills list.");
+          return;
+        }
+        await onIssued(billId, isUpiCollect ? { collectUpi: true } : undefined);
       }
-
-      await onIssued(billId, isUpiCollect ? { collectUpi: true } : undefined);
     } catch (err: any) {
       setSubmitError(err?.message || "An unexpected error occurred while creating the bill.");
     } finally {
@@ -696,7 +758,7 @@ export default function ShopCounter({
             ← Back
           </button>
           <h1 style={{ fontSize: "20px", fontWeight: 800, color: "#0f172a", margin: 0 }}>
-            New bill
+            {exchange ? "Exchange" : "New bill"}
           </h1>
         </div>
 
@@ -711,6 +773,46 @@ export default function ShopCounter({
           />
         </div>
       </div>
+
+      {exchange && (
+        <div
+          style={{
+            padding: "12px 16px",
+            borderRadius: "12px",
+            background: "#eff6ff",
+            border: "1px solid #bfdbfe",
+            color: "#1e40af",
+            fontSize: "14px",
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "10px",
+            marginBottom: "12px",
+          }}
+        >
+          <div>
+            Exchange for bill {exchange.billNo} — customer returns {formatMoney(exchange.creditValue)}
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              border: "1px solid #93c5fd",
+              background: "#ffffff",
+              color: "#1d4ed8",
+              borderRadius: "8px",
+              padding: "6px 12px",
+              fontSize: "12.5px",
+              fontWeight: 700,
+              cursor: "pointer",
+              minHeight: "44px",
+            }}
+          >
+            Cancel exchange
+          </button>
+        </div>
+      )}
 
       {/* TWO-COLUMN LAYOUT */}
       <div style={mainLayoutGridStyle}>
@@ -1249,7 +1351,9 @@ export default function ShopCounter({
             {/* TOTALS PREVIEW */}
             <div style={totalsBoxStyle}>
               <div style={totalRowStyle}>
-                <span style={{ color: "#64748b" }}>Subtotal</span>
+                <span style={{ color: "#64748b" }}>
+                  {exchange ? "New items total" : "Subtotal"}
+                </span>
                 <strong>{formatMoney(preview.subtotal)}</strong>
               </div>
 
@@ -1260,7 +1364,14 @@ export default function ShopCounter({
                 </div>
               )}
 
-              {billingSettings.round_off && preview.roundOffDelta !== 0 && (
+              {exchange && (
+                <div style={{ ...totalRowStyle, color: "#0284c7" }}>
+                  <span>Returned items credit</span>
+                  <strong>- {formatMoney(exchangeCredit)}</strong>
+                </div>
+              )}
+
+              {billingSettings.round_off && preview.roundOffDelta !== 0 && !exchange && (
                 <div style={totalRowStyle}>
                   <span style={{ color: "#64748b" }}>Round off</span>
                   <span>
@@ -1271,76 +1382,116 @@ export default function ShopCounter({
               )}
 
               <div style={grandTotalRowStyle}>
-                <span>Total Amount</span>
+                <span>{exchange ? "Customer pays" : "Total Amount"}</span>
                 <span style={grandTotalValueStyle}>
-                  {formatMoney(preview.estimatedTotal)}
+                  {formatMoney(exchange ? payableY : preview.estimatedTotal)}
                 </span>
               </div>
+
+              {exchange && balanceZ > 0 && (
+                <div style={{ marginTop: "6px" }}>
+                  {exchange.creditNoteAllowed ? (
+                    <div style={{ fontSize: "12px", color: "#0284c7", fontWeight: 600 }}>
+                      {formatMoney(balanceZ)} will stay as a credit note for the customer.
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: "12px", color: "#d97706", fontWeight: 700 }}>
+                      Add items worth at least {formatMoney(balanceZ)} more.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* PAYMENT BUTTONS */}
             <div style={paymentActionBoxStyle}>
-              <div style={paymentMethodsGridStyle}>
-                <button
-                  type="button"
-                  disabled={lines.length === 0 || issuing}
-                  onClick={() => handleIssueBill("cash")}
-                  style={{
-                    ...payMethodBtnStyle,
-                    background: "#16a34a",
-                    color: "#ffffff",
-                    opacity: lines.length === 0 || issuing ? 0.5 : 1,
-                  }}
-                >
-                  💵 Cash
-                </button>
-
-                <button
-                  type="button"
-                  disabled={lines.length === 0 || issuing}
-                  onClick={() => handleIssueBill("upi")}
-                  style={{
-                    ...payMethodBtnStyle,
-                    background: "#2563eb",
-                    color: "#ffffff",
-                    opacity: lines.length === 0 || issuing ? 0.5 : 1,
-                  }}
-                >
-                  <span>📱 UPI</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={lines.length === 0 || issuing}
-                  onClick={() => handleIssueBill("card")}
-                  style={{
-                    ...payMethodBtnStyle,
-                    background: "#4f46e5",
-                    color: "#ffffff",
-                    opacity: lines.length === 0 || issuing ? 0.5 : 1,
-                  }}
-                >
-                  💳 Card
-                </button>
-              </div>
-
-              {upiQrEnabled && (
-                <div style={{ fontSize: "12px", color: "#64748b", textAlign: "center", marginTop: "2px" }}>
-                  UPI shows a QR code for the customer to scan.
+              {exchange && payableY === 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <button
+                    type="button"
+                    disabled={lines.length === 0 || issuing || exchangeUnderpaid}
+                    onClick={() => handleIssueBill()}
+                    style={{
+                      ...payMethodBtnStyle,
+                      background: "#16a34a",
+                      color: "#ffffff",
+                      opacity: lines.length === 0 || issuing || exchangeUnderpaid ? 0.5 : 1,
+                      minHeight: "46px",
+                      cursor: lines.length === 0 || issuing || exchangeUnderpaid ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    Complete exchange
+                  </button>
                 </div>
-              )}
+              ) : (
+                <>
+                  <div style={paymentMethodsGridStyle}>
+                    <button
+                      type="button"
+                      disabled={lines.length === 0 || issuing || exchangeUnderpaid}
+                      onClick={() => handleIssueBill("cash")}
+                      style={{
+                        ...payMethodBtnStyle,
+                        background: "#16a34a",
+                        color: "#ffffff",
+                        opacity: lines.length === 0 || issuing || exchangeUnderpaid ? 0.5 : 1,
+                        cursor: lines.length === 0 || issuing || exchangeUnderpaid ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      💵 Cash
+                    </button>
 
-              <button
-                type="button"
-                disabled={lines.length === 0 || issuing}
-                onClick={() => handleIssueBill()}
-                style={{
-                  ...unpaidBtnStyle,
-                  opacity: lines.length === 0 || issuing ? 0.5 : 1,
-                }}
-              >
-                Save as unpaid
-              </button>
+                    <button
+                      type="button"
+                      disabled={lines.length === 0 || issuing || exchangeUnderpaid}
+                      onClick={() => handleIssueBill("upi")}
+                      style={{
+                        ...payMethodBtnStyle,
+                        background: "#2563eb",
+                        color: "#ffffff",
+                        opacity: lines.length === 0 || issuing || exchangeUnderpaid ? 0.5 : 1,
+                        cursor: lines.length === 0 || issuing || exchangeUnderpaid ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      <span>📱 UPI</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={lines.length === 0 || issuing || exchangeUnderpaid}
+                      onClick={() => handleIssueBill("card")}
+                      style={{
+                        ...payMethodBtnStyle,
+                        background: "#4f46e5",
+                        color: "#ffffff",
+                        opacity: lines.length === 0 || issuing || exchangeUnderpaid ? 0.5 : 1,
+                        cursor: lines.length === 0 || issuing || exchangeUnderpaid ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      💳 Card
+                    </button>
+                  </div>
+
+                  {upiQrEnabled && (
+                    <div style={{ fontSize: "12px", color: "#64748b", textAlign: "center", marginTop: "2px" }}>
+                      UPI shows a QR code for the customer to scan.
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={lines.length === 0 || issuing || exchangeUnderpaid}
+                    onClick={() => handleIssueBill()}
+                    style={{
+                      ...unpaidBtnStyle,
+                      opacity: lines.length === 0 || issuing || exchangeUnderpaid ? 0.5 : 1,
+                      cursor: lines.length === 0 || issuing || exchangeUnderpaid ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    Save as unpaid
+                  </button>
+                </>
+              )}
 
               {issuing && (
                 <div style={{ textAlign: "center", fontSize: "13px", color: "#64748b", fontWeight: 700 }}>
@@ -1456,7 +1607,7 @@ export default function ShopCounter({
             {lines.length} {lines.length === 1 ? "item" : "items"}
           </div>
           <strong style={{ fontSize: "17px", color: "#0f172a" }}>
-            {formatMoney(preview.estimatedTotal)}
+            {formatMoney(exchange ? payableY : preview.estimatedTotal)}
           </strong>
         </div>
 

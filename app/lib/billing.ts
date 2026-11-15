@@ -17,6 +17,11 @@ export type BillingSettings = {
   round_off: boolean;
   show_upi_qr: boolean;
   show_logo: boolean;
+  exchange_enabled: boolean;
+  exchange_window_days: number | null;
+  exchange_credit_note: boolean;
+  exchange_cash_back: boolean;
+  exchange_credit_valid_days: number | null;
 };
 
 export type BillingBusinessProfile = {
@@ -51,6 +56,7 @@ export type TapxBill = {
   tax_total: number;
   round_off: number;
   total: number;
+  credit_applied: number;
   payment_status: BillPaymentStatus;
   payment_method: PaymentMethod | null;
   paid_at: string | null;
@@ -104,6 +110,7 @@ export type PublicBillPayload = {
   tax_total: number;
   round_off: number;
   total: number;
+  credit_applied?: number;
   payment_status: BillPaymentStatus;
   payment_method: PaymentMethod | null;
   paid_at: string | null;
@@ -130,6 +137,11 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   round_off: false,
   show_upi_qr: true,
   show_logo: true,
+  exchange_enabled: false,
+  exchange_window_days: null,
+  exchange_credit_note: false,
+  exchange_cash_back: false,
+  exchange_credit_valid_days: null,
 };
 
 export function parseBillingSettings(
@@ -156,6 +168,14 @@ export function parseBillingSettings(
       ? scRaw
       : null;
 
+  const ewRaw = Number(raw.exchange_window_days);
+  const exchange_window_days =
+    Number.isInteger(ewRaw) && ewRaw >= 1 && ewRaw <= 365 ? ewRaw : null;
+
+  const cvRaw = Number(raw.exchange_credit_valid_days);
+  const exchange_credit_valid_days =
+    Number.isInteger(cvRaw) && cvRaw >= 1 && cvRaw <= 3650 ? cvRaw : null;
+
   return {
     prefix,
     paper,
@@ -164,8 +184,79 @@ export function parseBillingSettings(
     round_off: Boolean(raw.round_off),
     show_upi_qr: raw.show_upi_qr !== false,
     show_logo: raw.show_logo !== false,
+    exchange_enabled: Boolean(raw.exchange_enabled),
+    exchange_window_days,
+    exchange_credit_note: Boolean(raw.exchange_credit_note),
+    exchange_cash_back: Boolean(raw.exchange_cash_back),
+    exchange_credit_valid_days,
   };
 }
+
+export type ReturnableBillLine = {
+  bill_item_id: string;
+  item_name: string;
+  unit_price: number;
+  quantity: number;
+  returned_qty: number;
+  remaining_qty: number;
+  credit_per_unit: number;
+};
+
+export type ReturnableBillSettings = {
+  enabled: boolean;
+  window_days: number | null;
+  credit_note: boolean;
+  cash_back: boolean;
+  credit_valid_days: number | null;
+};
+
+export type ReturnableBill = {
+  bill_id: string;
+  bill_no_text: string;
+  bill_day: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  eligible: boolean;
+  reason: string | null;
+  days_left: number | null;
+  settings: ReturnableBillSettings;
+  lines: ReturnableBillLine[];
+};
+
+export type CreditNoteResult = {
+  id: string;
+  note_no_text: string;
+  amount: number;
+  expires_on?: string | null;
+};
+
+export type ExchangeResult = {
+  bill: {
+    id: string;
+    bill_no_text: string;
+    total: number;
+    share_token: string;
+    credit_applied: number;
+  };
+  credit_note: {
+    id: string;
+    note_no_text: string;
+    amount: number;
+    balance_left: number;
+    expires_on: string | null;
+  } | null;
+};
+
+export type ExchangeSearchBill = {
+  id: string;
+  bill_no_text: string;
+  bill_day: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  total: number;
+  credit_applied: number;
+  days_left: number | null;
+};
 
 /**
  * Shared INR money formatter across all billing views (Intl en-IN).

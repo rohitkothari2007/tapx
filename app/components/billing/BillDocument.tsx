@@ -46,6 +46,7 @@ export type BillDocumentData = {
   tax_total: number;
   round_off: number;
   total: number;
+  credit_applied?: number;
   payment_status: BillPaymentStatus;
   payment_method: PaymentMethod | null;
   paid_at: string | null;
@@ -92,6 +93,7 @@ export function toBillDocumentDataFromDashboard(
     tax_total: Number(bill.tax_total || 0),
     round_off: Number(bill.round_off || 0),
     total: Number(bill.total || 0),
+    credit_applied: Number(bill.credit_applied || 0),
     payment_status: bill.payment_status,
     payment_method: bill.payment_method,
     paid_at: bill.paid_at,
@@ -139,6 +141,7 @@ export function toBillDocumentDataFromPublic(
     tax_total: Number(payload.tax_total || 0),
     round_off: Number(payload.round_off || 0),
     total: Number(payload.total || 0),
+    credit_applied: Number(payload.credit_applied || 0),
     payment_status: payload.payment_status,
     payment_method: payload.payment_method,
     paid_at: payload.paid_at,
@@ -166,6 +169,7 @@ type Props = {
   onMarkPaid?: (method: PaymentMethod) => Promise<void>;
   onMarkUnpaid?: () => Promise<void>;
   onVoid?: (reason: string) => Promise<void>;
+  onExchange?: () => void;
   hideWhatsAppButtons?: boolean;
   autoOpenUpiCollect?: boolean;
 };
@@ -177,6 +181,7 @@ export default function BillDocument({
   onMarkPaid,
   onMarkUnpaid,
   onVoid,
+  onExchange,
   hideWhatsAppButtons = false,
   autoOpenUpiCollect = false,
 }: Props) {
@@ -571,6 +576,17 @@ export default function BillDocument({
                     {busyAction === "paid" ? "Saving..." : "Mark paid"}
                   </button>
                 )
+              )}
+
+              {onExchange && (
+                <button
+                  type="button"
+                  disabled={Boolean(busyAction)}
+                  onClick={onExchange}
+                  style={btnSecondaryStyle}
+                >
+                  🔄 Exchange / return
+                </button>
               )}
 
               {onVoid && (
@@ -1157,6 +1173,13 @@ export default function BillDocument({
                   Discount{data.discount_note ? ` (${data.discount_note})` : ""}
                 </span>
                 <span>-{formatMoney(data.discount_amount)}</span>
+              </div>
+            )}
+
+            {Boolean(data.credit_applied && data.credit_applied > 0) && (
+              <div style={{ ...metaRowStyle, color: "#0284c7" }}>
+                <span>Exchange credit</span>
+                <span>-{formatMoney(data.credit_applied)}</span>
               </div>
             )}
 

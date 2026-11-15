@@ -38,6 +38,17 @@ export default function BillingSettingsCard({
   const [roundOff, setRoundOff] = useState(initialParsed.round_off);
   const [showUpiQr, setShowUpiQr] = useState(initialParsed.show_upi_qr);
   const [showLogo, setShowLogo] = useState(initialParsed.show_logo);
+  const [exchangeEnabled, setExchangeEnabled] = useState(initialParsed.exchange_enabled);
+  const [exchangeWindowDaysInput, setExchangeWindowDaysInput] = useState(
+    initialParsed.exchange_window_days !== null ? String(initialParsed.exchange_window_days) : ""
+  );
+  const [exchangeCreditNote, setExchangeCreditNote] = useState(initialParsed.exchange_credit_note);
+  const [exchangeCashBack, setExchangeCashBack] = useState(initialParsed.exchange_cash_back);
+  const [exchangeCreditValidDaysInput, setExchangeCreditValidDaysInput] = useState(
+    initialParsed.exchange_credit_valid_days !== null
+      ? String(initialParsed.exchange_credit_valid_days)
+      : ""
+  );
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -55,6 +66,17 @@ export default function BillingSettingsCard({
     setRoundOff(parsed.round_off);
     setShowUpiQr(parsed.show_upi_qr);
     setShowLogo(parsed.show_logo);
+    setExchangeEnabled(parsed.exchange_enabled);
+    setExchangeWindowDaysInput(
+      parsed.exchange_window_days !== null ? String(parsed.exchange_window_days) : ""
+    );
+    setExchangeCreditNote(parsed.exchange_credit_note);
+    setExchangeCashBack(parsed.exchange_cash_back);
+    setExchangeCreditValidDaysInput(
+      parsed.exchange_credit_valid_days !== null
+        ? String(parsed.exchange_credit_valid_days)
+        : ""
+    );
   }, []);
 
   const loadFromDb = useCallback(async () => {
@@ -106,6 +128,26 @@ export default function BillingSettingsCard({
 
     const cleanFooter = footer.slice(0, 200);
 
+    let parsedExchangeWindow: number | null = null;
+    if (exchangeEnabled && exchangeWindowDaysInput.trim() !== "") {
+      const n = Number(exchangeWindowDaysInput.trim());
+      if (!Number.isInteger(n) || n < 1 || n > 365) {
+        setErrorMsg("Exchange allowed within (days) must be a whole number between 1 and 365.");
+        return;
+      }
+      parsedExchangeWindow = n;
+    }
+
+    let parsedCreditValidDays: number | null = null;
+    if (exchangeEnabled && exchangeCreditNote && exchangeCreditValidDaysInput.trim() !== "") {
+      const n = Number(exchangeCreditValidDaysInput.trim());
+      if (!Number.isInteger(n) || n < 1 || n > 3650) {
+        setErrorMsg("Credit note valid for (days) must be a whole number between 1 and 3650.");
+        return;
+      }
+      parsedCreditValidDays = n;
+    }
+
     setSaving(true);
     try {
       const { error: rpcErr } = await supabase.rpc(
@@ -120,6 +162,12 @@ export default function BillingSettingsCard({
             round_off: roundOff,
             show_upi_qr: showUpiQr,
             show_logo: showLogo,
+            exchange_enabled: exchangeEnabled,
+            exchange_window_days: exchangeEnabled ? parsedExchangeWindow : null,
+            exchange_credit_note: exchangeEnabled ? exchangeCreditNote : false,
+            exchange_cash_back: exchangeEnabled && exchangeCreditNote ? exchangeCashBack : false,
+            exchange_credit_valid_days:
+              exchangeEnabled && exchangeCreditNote ? parsedCreditValidDays : null,
           },
         }
       );
@@ -337,6 +385,125 @@ export default function BillingSettingsCard({
             style={checkboxInputStyle}
           />
         </label>
+      </div>
+
+      <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: "14px", marginTop: "14px" }}>
+        <h4 style={{ margin: "0 0 10px", fontSize: "14px", fontWeight: 700, color: "#0f172a" }}>
+          Exchange &amp; credit notes
+        </h4>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <label style={switchBoxStyle}>
+            <span style={{ fontSize: "13px", fontWeight: 600, color: "#1e293b" }}>
+              Allow exchange of items from a paid bill
+            </span>
+            <input
+              type="checkbox"
+              checked={exchangeEnabled}
+              disabled={loading || saving}
+              onChange={(e) => setExchangeEnabled(e.target.checked)}
+              style={checkboxInputStyle}
+            />
+          </label>
+
+          {exchangeEnabled && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "12px",
+                padding: "14px",
+                borderRadius: "10px",
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+              }}
+            >
+              <div>
+                <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#334155", marginBottom: "4px" }}>
+                  Exchange allowed within (days)
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={exchangeWindowDaysInput}
+                  disabled={loading || saving}
+                  onChange={(e) => setExchangeWindowDaysInput(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
+                  placeholder="e.g. 7"
+                  style={{
+                    width: "100%",
+                    maxWidth: "200px",
+                    padding: "8px 10px",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: "8px",
+                    fontSize: "16px",
+                    color: "#0f172a",
+                    boxSizing: "border-box",
+                  }}
+                />
+                <p style={{ margin: "4px 0 0", fontSize: "11.5px", color: "#64748b" }}>
+                  Leave empty for no limit.
+                </p>
+              </div>
+
+              <label style={switchBoxStyle}>
+                <span style={{ fontSize: "13px", fontWeight: 600, color: "#1e293b" }}>
+                  Allow credit notes (keep the value for later)
+                </span>
+                <input
+                  type="checkbox"
+                  checked={exchangeCreditNote}
+                  disabled={loading || saving}
+                  onChange={(e) => setExchangeCreditNote(e.target.checked)}
+                  style={checkboxInputStyle}
+                />
+              </label>
+
+              {exchangeCreditNote && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px", paddingLeft: "8px" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#334155", marginBottom: "4px" }}>
+                      Credit note valid for (days)
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={exchangeCreditValidDaysInput}
+                      disabled={loading || saving}
+                      onChange={(e) => setExchangeCreditValidDaysInput(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+                      placeholder="e.g. 90"
+                      style={{
+                        width: "100%",
+                        maxWidth: "200px",
+                        padding: "8px 10px",
+                        border: "1px solid #cbd5e1",
+                        borderRadius: "8px",
+                        fontSize: "16px",
+                        color: "#0f172a",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                    <p style={{ margin: "4px 0 0", fontSize: "11.5px", color: "#64748b" }}>
+                      Leave empty if it never expires.
+                    </p>
+                  </div>
+
+                  <label style={switchBoxStyle}>
+                    <span style={{ fontSize: "13px", fontWeight: 600, color: "#1e293b" }}>
+                      Allow giving money back from a credit note
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={exchangeCashBack}
+                      disabled={loading || saving}
+                      onChange={(e) => setExchangeCashBack(e.target.checked)}
+                      style={checkboxInputStyle}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ marginTop: "16px", display: "flex", justifyContent: "flex-end" }}>
