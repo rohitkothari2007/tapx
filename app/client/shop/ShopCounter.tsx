@@ -173,6 +173,56 @@ export default function ShopCounter({
     }
   }, []);
 
+  // Category chip ref for scrolling into view on phone
+  const selectedChipRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (selectedChipRef.current) {
+      selectedChipRef.current.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+    }
+  }, [selectedCategoryId]);
+
+  // Added-to-bill Toast state (Phone only)
+  const [addedToastText, setAddedToastText] = useState<string | null>(null);
+  const toastTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const showAddedToast = useCallback((composedName: string) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    setAddedToastText(composedName);
+    toastTimerRef.current = setTimeout(() => {
+      setAddedToastText(null);
+      toastTimerRef.current = null;
+    }, 1400);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Mobile Bottom Sheet size picker handling (Escape key & body overflow lock)
+  useEffect(() => {
+    if (!openSizePickerItemId) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpenSizePickerItemId(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openSizePickerItemId]);
+
   // Quick lookup maps
   const categoryMap = useMemo(() => {
     const map = new Map<string, CatalogCategory>();
@@ -278,7 +328,15 @@ export default function ShopCounter({
     setTimeout(() => {
       setRecentLineKey((k) => (k === lineKey ? null : k));
     }, 800);
+
+    // Show added feedback on phone
+    showAddedToast(composed);
   };
+
+  const activeSizePickerItem = useMemo(() => {
+    if (!openSizePickerItemId) return null;
+    return items.find((it) => it.id === openSizePickerItemId) || null;
+  }, [openSizePickerItemId, items]);
 
   // Update line details
   const updateLinePrice = (key: string, value: string) => {
@@ -625,7 +683,7 @@ export default function ShopCounter({
   }
 
   return (
-    <div style={containerStyle}>
+    <div className="shop-counter-root" style={containerStyle}>
       {/* TOP BAR */}
       <div style={topBarStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -654,32 +712,6 @@ export default function ShopCounter({
         </div>
       </div>
 
-      {/* MOBILE TOGGLE HEADER (Phone only) */}
-      <div className="counter-mobile-toggle" style={mobileToggleBarStyle}>
-        <button
-          type="button"
-          onClick={() => setMobileView("picker")}
-          style={{
-            ...mobileToggleBtnStyle,
-            background: mobileView === "picker" ? "#0f172a" : "#f1f5f9",
-            color: mobileView === "picker" ? "#ffffff" : "#475569",
-          }}
-        >
-          Items Catalog
-        </button>
-        <button
-          type="button"
-          onClick={() => setMobileView("bill")}
-          style={{
-            ...mobileToggleBtnStyle,
-            background: mobileView === "bill" ? "#0f172a" : "#f1f5f9",
-            color: mobileView === "bill" ? "#ffffff" : "#475569",
-          }}
-        >
-          Bill ({lines.length}) • {formatMoney(preview.estimatedTotal)}
-        </button>
-      </div>
-
       {/* TWO-COLUMN LAYOUT */}
       <div style={mainLayoutGridStyle}>
         {/* LEFT COLUMN: ITEM PICKER */}
@@ -691,13 +723,14 @@ export default function ShopCounter({
         >
           {/* Category Chips (hidden while searching) */}
           {!searchQuery.trim() && (
-            <div style={categoryChipsRowStyle}>
+            <div className="counter-category-chips" style={categoryChipsRowStyle}>
               {categories.map((c) => {
                 const isSelected = selectedCategoryId === c.id;
                 const count = items.filter((it) => it.category_id === c.id).length;
                 return (
                   <button
                     key={c.id}
+                    ref={isSelected ? selectedChipRef : null}
                     type="button"
                     onClick={() => {
                       setSelectedCategoryId(c.id);
@@ -751,7 +784,7 @@ export default function ShopCounter({
               No items found. Try another search.
             </div>
           ) : (
-            <div style={itemsGridStyle}>
+            <div className="counter-items-grid" style={itemsGridStyle}>
               {displayedItems.map((item) => {
                 const sizeSet = item.size_set_id ? sizeSetMap.get(item.size_set_id) : null;
                 const hasSizes = sizeSet && Array.isArray(sizeSet.sizes) && sizeSet.sizes.length > 0;
@@ -773,6 +806,7 @@ export default function ShopCounter({
                   <div key={item.id} style={itemCardWrapperStyle}>
                     <button
                       type="button"
+                      className="counter-item-card-btn"
                       onClick={() => {
                         if (hasSizes) {
                           setOpenSizePickerItemId((prev) => (prev === item.id ? null : item.id));
@@ -807,9 +841,9 @@ export default function ShopCounter({
                       </div>
                     </button>
 
-                    {/* Inline Size Picker Sheet */}
+                    {/* Inline Size Picker Sheet (Desktop only) */}
                     {isSizePickerOpen && hasSizes && (
-                      <div style={sizePickerContainerStyle}>
+                      <div className="counter-desktop-size-picker" style={sizePickerContainerStyle}>
                         <div style={sizePickerHeaderStyle}>
                           <span>Select size for {item.name}:</span>
                           <button
@@ -853,11 +887,28 @@ export default function ShopCounter({
         >
           <div style={billPanelCardStyle}>
             <div style={billHeaderStyle}>
-              <div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <button
+                  type="button"
+                  className="counter-mobile-back-items"
+                  onClick={() => setMobileView("picker")}
+                  style={{
+                    border: 0,
+                    background: "transparent",
+                    color: "#2563eb",
+                    fontSize: "13.5px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    padding: "4px 0",
+                    marginRight: "4px",
+                  }}
+                >
+                  ← Items
+                </button>
                 <strong style={{ fontSize: "16px", color: "#0f172a" }}>
                   Current Bill
                 </strong>
-                <span style={{ fontSize: "12.5px", color: "#64748b", marginLeft: "8px" }}>
+                <span style={{ fontSize: "12.5px", color: "#64748b" }}>
                   ({lines.length} {lines.length === 1 ? "item" : "items"})
                 </span>
               </div>
@@ -898,89 +949,109 @@ export default function ShopCounter({
                   return (
                     <div
                       key={l.key}
+                      className="counter-bill-line-card"
                       style={{
                         ...billLineRowStyle,
                         background: isRecent ? "#f0fdf4" : isMissingPrice ? "#fffbeb" : "#ffffff",
                         borderColor: isMissingPrice ? "#f59e0b" : "#e2e8f0",
                       }}
                     >
-                      <div style={{ flex: 1, minWidth: "120px" }}>
-                        <div style={billLineNameStyle}>{l.composedName}</div>
-                        {isMissingPrice && (
-                          <div style={{ fontSize: "11px", fontWeight: 700, color: "#b45309" }}>
-                            ⚠️ Enter price
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Quantity Controls */}
-                      <div style={qtyControlsWrapStyle}>
+                      {/* Row 1 on phone (<900px) */}
+                      <div className="counter-line-row1">
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div className="counter-line-name" style={billLineNameStyle}>{l.composedName}</div>
+                          {isMissingPrice && (
+                            <div style={{ fontSize: "11px", fontWeight: 700, color: "#b45309" }}>
+                              ⚠️ Enter price
+                            </div>
+                          )}
+                        </div>
                         <button
                           type="button"
-                          onClick={() => adjustQtyStep(l.key, -1)}
-                          style={qtyStepBtnStyle}
-                          title="Decrease quantity"
+                          onClick={() => removeLine(l.key)}
+                          className="counter-line-remove-btn counter-line-remove-mobile"
+                          title="Remove line"
                         >
-                          −
-                        </button>
-                        <input
-                          type="number"
-                          step={l.unit === "kg" || l.unit === "g" || l.unit === "litre" ? "0.001" : "1"}
-                          min={l.unit === "kg" || l.unit === "g" || l.unit === "litre" ? "0.001" : "1"}
-                          value={l.qtyInput}
-                          onChange={(e) => updateLineQty(l.key, e.target.value)}
-                          style={qtyInputStyle}
-                          title="Quantity"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => adjustQtyStep(l.key, 1)}
-                          style={qtyStepBtnStyle}
-                          title="Increase quantity"
-                        >
-                          +
+                          ✕
                         </button>
                       </div>
 
-                      {/* Price Input */}
-                      <div style={priceInputWrapStyle}>
-                        <span style={{ fontSize: "13px", fontWeight: 700, color: "#64748b" }}>
-                          ₹
-                        </span>
-                        <input
-                          ref={(el) => {
-                            priceInputRefs.current[l.key] = el;
-                          }}
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          max="10000000"
-                          placeholder="0.00"
-                          value={l.priceInput}
-                          onChange={(e) => updateLinePrice(l.key, e.target.value)}
-                          style={{
-                            ...linePriceFieldStyle,
-                            borderColor: isMissingPrice ? "#f59e0b" : "#cbd5e1",
-                            background: isMissingPrice ? "#fffbeb" : "#ffffff",
-                          }}
-                          title="Unit price (editable)"
-                        />
-                      </div>
+                      {/* Row 2 on phone (<900px) */}
+                      <div className="counter-line-row2">
+                        {/* Quantity Controls */}
+                        <div style={qtyControlsWrapStyle}>
+                          <button
+                            type="button"
+                            onClick={() => adjustQtyStep(l.key, -1)}
+                            className="counter-qty-btn"
+                            style={qtyStepBtnStyle}
+                            title="Decrease quantity"
+                          >
+                            −
+                          </button>
+                          <input
+                            type="number"
+                            step={l.unit === "kg" || l.unit === "g" || l.unit === "litre" ? "0.001" : "1"}
+                            min={l.unit === "kg" || l.unit === "g" || l.unit === "litre" ? "0.001" : "1"}
+                            value={l.qtyInput}
+                            onChange={(e) => updateLineQty(l.key, e.target.value)}
+                            className="counter-qty-input"
+                            style={qtyInputStyle}
+                            title="Quantity"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => adjustQtyStep(l.key, 1)}
+                            className="counter-qty-btn"
+                            style={qtyStepBtnStyle}
+                            title="Increase quantity"
+                          >
+                            +
+                          </button>
+                        </div>
 
-                      {/* Line Total */}
-                      <div style={lineTotalTextStyle}>
-                        {formatMoney(lineTotal)}
-                      </div>
+                        {/* Price Input */}
+                        <div style={priceInputWrapStyle}>
+                          <span style={{ fontSize: "13px", fontWeight: 700, color: "#64748b" }}>
+                            ₹
+                          </span>
+                          <input
+                            ref={(el) => {
+                              priceInputRefs.current[l.key] = el;
+                            }}
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="10000000"
+                            placeholder="0.00"
+                            value={l.priceInput}
+                            onChange={(e) => updateLinePrice(l.key, e.target.value)}
+                            className="counter-price-input"
+                            style={{
+                              ...linePriceFieldStyle,
+                              borderColor: isMissingPrice ? "#f59e0b" : "#cbd5e1",
+                              background: isMissingPrice ? "#fffbeb" : "#ffffff",
+                            }}
+                            title="Unit price (editable)"
+                          />
+                        </div>
 
-                      {/* Remove Button */}
-                      <button
-                        type="button"
-                        onClick={() => removeLine(l.key)}
-                        style={removeLineBtnStyle}
-                        title="Remove line"
-                      >
-                        ✕
-                      </button>
+                        {/* Line Total */}
+                        <div className="counter-line-total" style={lineTotalTextStyle}>
+                          {formatMoney(lineTotal)}
+                        </div>
+
+                        {/* Remove Button for Desktop */}
+                        <button
+                          type="button"
+                          onClick={() => removeLine(l.key)}
+                          className="counter-line-remove-btn counter-line-remove-desktop"
+                          style={removeLineBtnStyle}
+                          title="Remove line"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -1046,10 +1117,10 @@ export default function ShopCounter({
               </div>
 
               {/* Custom Discount & Final Price Row */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginTop: "10px" }}>
+              <div className="counter-discount-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginTop: "10px" }}>
                 {/* Custom Discount */}
                 <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "4px", marginBottom: "4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: "26px", marginBottom: "4px" }}>
                     <span style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>
                       Custom
                     </span>
@@ -1086,8 +1157,10 @@ export default function ShopCounter({
 
                 {/* Final Price / Customer Pays */}
                 <div>
-                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#64748b", marginBottom: "4px" }}>
-                    Customer pays (final)
+                  <div style={{ display: "flex", alignItems: "center", minHeight: "26px", marginBottom: "4px" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#64748b" }}>
+                      Customer pays (final)
+                    </span>
                   </div>
                   <input
                     type="number"
@@ -1234,11 +1307,6 @@ export default function ShopCounter({
                   }}
                 >
                   <span>📱 UPI</span>
-                  {upiQrEnabled && (
-                    <span style={{ fontSize: "10.5px", fontWeight: 500, opacity: 0.9 }}>
-                      Shows a QR to scan
-                    </span>
-                  )}
                 </button>
 
                 <button
@@ -1255,6 +1323,12 @@ export default function ShopCounter({
                   💳 Card
                 </button>
               </div>
+
+              {upiQrEnabled && (
+                <div style={{ fontSize: "12px", color: "#64748b", textAlign: "center", marginTop: "2px" }}>
+                  UPI shows a QR code for the customer to scan.
+                </div>
+              )}
 
               <button
                 type="button"
@@ -1277,6 +1351,103 @@ export default function ShopCounter({
           </div>
         </div>
       </div>
+
+      {/* MOBILE SIZE PICKER BOTTOM SHEET (Phone only) */}
+      {activeSizePickerItem && (
+        <div className="counter-mobile-size-sheet">
+          {/* Dimmed backdrop */}
+          <div
+            className="counter-size-sheet-backdrop"
+            onClick={() => setOpenSizePickerItemId(null)}
+          />
+          {/* Bottom sheet content */}
+          <div className="counter-size-sheet-content">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+              <div>
+                <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  Select size
+                </div>
+                <div style={{ fontSize: "17px", fontWeight: 800, color: "#0f172a", marginTop: "2px" }}>
+                  {activeSizePickerItem.name}
+                  {activeSizePickerItem.default_price !== null && (
+                    <span style={{ marginLeft: "8px", color: "#16a34a", fontSize: "16px" }}>
+                      {formatPrice(activeSizePickerItem.default_price)}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenSizePickerItemId(null)}
+                style={{
+                  border: 0,
+                  background: "#f1f5f9",
+                  color: "#475569",
+                  borderRadius: "8px",
+                  width: "44px",
+                  height: "44px",
+                  fontSize: "18px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  display: "grid",
+                  placeItems: "center",
+                }}
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {activeSizePickerItem.size_set_id && sizeSetMap.get(activeSizePickerItem.size_set_id) && (
+              <div className="counter-size-sheet-grid">
+                {sizeSetMap.get(activeSizePickerItem.size_set_id)!.sizes.map((sz) => (
+                  <button
+                    key={sz}
+                    type="button"
+                    onClick={() => {
+                      handleAddItem(activeSizePickerItem, sz);
+                      setOpenSizePickerItemId(null);
+                    }}
+                    className="counter-size-sheet-btn"
+                  >
+                    {sz}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ADDED TO BILL TOAST (Phone only) */}
+      {addedToastText && (
+        <div
+          className="counter-added-toast"
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            bottom: "calc(76px + env(safe-area-inset-bottom))",
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(15, 23, 42, 0.92)",
+            color: "#ffffff",
+            padding: "8px 16px",
+            borderRadius: "99px",
+            fontSize: "13px",
+            fontWeight: 600,
+            zIndex: 150,
+            pointerEvents: "none",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.18)",
+            maxWidth: "88vw",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          Added: {addedToastText}
+        </div>
+      )}
 
       {/* MOBILE STICKY BOTTOM BAR (Phone only) */}
       <div className="counter-mobile-sticky-bar" style={mobileStickyBarStyle}>
@@ -1305,8 +1476,10 @@ export default function ShopCounter({
       {/* RESPONSIVE STYLES */}
       <style>{`
         @media (max-width: 899px) {
-          .counter-mobile-toggle {
-            display: flex !important;
+          .shop-counter-root input,
+          .shop-counter-root select,
+          .shop-counter-root textarea {
+            font-size: 16px !important;
           }
           .counter-mobile-sticky-bar {
             display: flex !important;
@@ -1316,12 +1489,160 @@ export default function ShopCounter({
           }
           .mobile-show {
             display: block !important;
+          }
+          .counter-category-chips {
+            flex-wrap: nowrap !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            scrollbar-width: none !important;
+            -ms-overflow-style: none !important;
+            padding-bottom: 4px !important;
+            margin-bottom: 12px !important;
+          }
+          .counter-category-chips::-webkit-scrollbar {
+            display: none !important;
+          }
+          .counter-items-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 10px !important;
+          }
+          .counter-item-card-btn {
+            min-height: 88px !important;
+          }
+          .counter-desktop-size-picker {
+            display: none !important;
+          }
+          .counter-mobile-size-sheet {
+            display: block !important;
+          }
+          .counter-size-sheet-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(15, 23, 42, 0.55);
+            z-index: 200;
+          }
+          .counter-size-sheet-content {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #ffffff;
+            border-top-left-radius: 16px;
+            border-top-right-radius: 16px;
+            max-height: 75vh;
+            overflow-y: auto;
+            padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+            z-index: 201;
+            box-shadow: 0 -4px 25px rgba(0,0,0,0.2);
+          }
+          .counter-size-sheet-grid {
+            display: grid !important;
+            grid-template-columns: repeat(4, 1fr) !important;
+            gap: 10px !important;
+          }
+          @media (max-width: 339px) {
+            .counter-size-sheet-grid {
+              grid-template-columns: repeat(3, 1fr) !important;
+            }
+          }
+          .counter-size-sheet-btn {
+            min-height: 52px;
+            font-size: 16px;
+            font-weight: 800;
+            border-radius: 10px;
+            border: 1.5px solid #0f172a;
+            background: #ffffff;
+            color: #0f172a;
+            cursor: pointer;
+            display: grid;
+            place-items: center;
+          }
+          .counter-mobile-back-items {
+            display: inline-flex !important;
+          }
+          .counter-bill-line-card {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 8px !important;
+            padding: 10px 12px !important;
+          }
+          .counter-line-row1 {
+            display: flex !important;
+            width: 100% !important;
+            justify-content: space-between !important;
+            align-items: flex-start !important;
+            gap: 8px !important;
+          }
+          .counter-line-name {
+            display: -webkit-box !important;
+            -webkit-line-clamp: 2 !important;
+            -webkit-box-orient: vertical !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            word-break: break-word !important;
+          }
+          .counter-line-remove-mobile {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 44px !important;
+            height: 44px !important;
+            min-width: 44px !important;
+            min-height: 44px !important;
+            padding: 0 !important;
+            background: #f1f5f9 !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 8px !important;
+            color: #64748b !important;
+            font-size: 16px !important;
+            cursor: pointer !important;
+            flex-shrink: 0 !important;
+          }
+          .counter-line-row2 {
+            display: flex !important;
+            width: 100% !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            gap: 6px !important;
+          }
+          .counter-qty-btn {
+            width: 40px !important;
+            height: 40px !important;
+            min-width: 40px !important;
+            min-height: 40px !important;
+            font-size: 17px !important;
+          }
+          .counter-qty-input {
+            font-size: 16px !important;
+            height: 40px !important;
+            min-width: 32px !important;
+          }
+          .counter-price-input {
+            font-size: 16px !important;
+            height: 40px !important;
+            min-height: 40px !important;
+            box-sizing: border-box !important;
+          }
+          .counter-line-total {
+            font-size: 15px !important;
+            font-weight: 800 !important;
+            white-space: nowrap !important;
+            min-width: 0 !important;
+            text-align: right !important;
+          }
+          .counter-line-remove-desktop {
+            display: none !important;
+          }
+          .counter-discount-grid {
+            grid-template-columns: 1fr !important;
+            gap: 8px !important;
           }
         }
+
         @media (min-width: 900px) {
-          .counter-mobile-toggle {
-            display: none !important;
-          }
           .counter-mobile-sticky-bar {
             display: none !important;
           }
@@ -1330,6 +1651,49 @@ export default function ShopCounter({
           }
           .mobile-show {
             display: block !important;
+          }
+          .counter-desktop-size-picker {
+            display: block !important;
+          }
+          .counter-mobile-size-sheet {
+            display: none !important;
+          }
+          .counter-mobile-back-items {
+            display: none !important;
+          }
+          .counter-bill-line-card {
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+          }
+          .counter-line-row1 {
+            display: flex !important;
+            flex: 1 !important;
+            min-width: 120px !important;
+            align-items: center !important;
+          }
+          .counter-line-remove-mobile {
+            display: none !important;
+          }
+          .counter-line-row2 {
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            flex-shrink: 0 !important;
+          }
+          .counter-line-remove-desktop {
+            display: block !important;
+          }
+          .counter-discount-grid {
+            grid-template-columns: 1fr 1fr !important;
+          }
+          .counter-added-toast {
+            display: none !important;
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .counter-added-toast {
+            transition: none !important;
           }
         }
       `}</style>
@@ -1347,7 +1711,7 @@ const containerStyle: React.CSSProperties = {
   margin: "0 auto",
   fontFamily: "inherit",
   overflowX: "hidden",
-  paddingBottom: "80px",
+  paddingBottom: "130px",
 };
 
 const cardStyle: React.CSSProperties = {
@@ -1508,6 +1872,8 @@ const itemTitleStyle: React.CSSProperties = {
   fontSize: "14.5px",
   color: "#0f172a",
   lineHeight: 1.3,
+  wordBreak: "break-word",
+  overflowWrap: "anywhere",
 };
 
 const itemPriceLineStyle: React.CSSProperties = {
@@ -1898,7 +2264,7 @@ const mobileStickyBarStyle: React.CSSProperties = {
   bottom: 0,
   left: 0,
   right: 0,
-  padding: "12px 16px",
+  padding: "12px 16px calc(12px + env(safe-area-inset-bottom))",
   background: "#ffffff",
   borderTop: "1px solid #cbd5e1",
   boxShadow: "0 -4px 12px rgba(0,0,0,0.08)",

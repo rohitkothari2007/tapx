@@ -338,7 +338,159 @@ export default function QuickBill({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "110px" }}>
+    <div className="quickbill-root" style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "160px" }}>
+      <style>{`
+        .quickbill-item-row {
+          padding: 10px;
+          border-radius: 11px;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+        }
+        @media (min-width: 640px) {
+          .quickbill-item-row {
+            display: flex !important;
+            align-items: flex-end !important;
+            gap: 8px !important;
+          }
+          .quickbill-line1 {
+            flex: 2 !important;
+            min-width: 150px !important;
+            display: flex !important;
+            align-items: flex-end !important;
+            gap: 8px !important;
+          }
+          .quickbill-line1-input-wrap {
+            flex: 1 !important;
+            min-width: 0 !important;
+          }
+          .quickbill-remove-mobile {
+            display: none !important;
+          }
+          .quickbill-line2 {
+            flex: 3 !important;
+            display: flex !important;
+            align-items: flex-end !important;
+            gap: 8px !important;
+          }
+          .quickbill-line2-price {
+            flex: 1 !important;
+            min-width: 90px !important;
+          }
+          .quickbill-line2-qty {
+            flex: 1 !important;
+            min-width: 85px !important;
+          }
+          .quickbill-line2-total-wrap {
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            flex-shrink: 0 !important;
+          }
+          .quickbill-line2-total-label {
+            display: none !important;
+          }
+          .quickbill-line2-total {
+            font-size: 13px !important;
+            font-weight: 700 !important;
+            color: #0f172a !important;
+            min-width: 60px !important;
+            text-align: right !important;
+            height: 40px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+          }
+          .quickbill-remove-desktop {
+            display: block !important;
+            width: 36px !important;
+            height: 40px !important;
+            border: 1px solid #fecaca !important;
+            background: #fef2f2 !important;
+            color: #dc2626 !important;
+            border-radius: 8px !important;
+            font-weight: 800 !important;
+            cursor: pointer !important;
+          }
+        }
+
+        @media (max-width: 639px) {
+          .quickbill-root input,
+          .quickbill-root select,
+          .quickbill-root textarea {
+            font-size: 16px !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+          }
+          .quickbill-item-row {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 10px !important;
+          }
+          .quickbill-line1 {
+            display: flex !important;
+            align-items: flex-end !important;
+            gap: 8px !important;
+            width: 100% !important;
+          }
+          .quickbill-line1-input-wrap {
+            flex: 1 !important;
+            min-width: 0 !important;
+          }
+          .quickbill-remove-mobile {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            min-width: 40px !important;
+            width: 40px !important;
+            height: 40px !important;
+            min-height: 40px !important;
+            font-size: 16px !important;
+            flex-shrink: 0 !important;
+            border: 1px solid #fecaca !important;
+            background: #fef2f2 !important;
+            color: #dc2626 !important;
+            border-radius: 8px !important;
+            font-weight: 800 !important;
+            cursor: pointer !important;
+          }
+          .quickbill-line2 {
+            display: grid !important;
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+            align-items: end !important;
+            width: 100% !important;
+          }
+          .quickbill-line2-price,
+          .quickbill-line2-qty,
+          .quickbill-line2-total-wrap {
+            min-width: 0 !important;
+          }
+          .quickbill-line2-total-wrap {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-end !important;
+          }
+          .quickbill-line2-total-label {
+            display: block !important;
+          }
+          .quickbill-line2-total {
+            font-size: 14px !important;
+            font-weight: 800 !important;
+            color: #0f172a !important;
+            text-align: right !important;
+            white-space: nowrap !important;
+            height: 40px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+          }
+          .quickbill-remove-desktop {
+            display: none !important;
+          }
+        }
+      `}</style>
       {/* HEADER */}
       <div
         style={{
@@ -512,92 +664,85 @@ export default function QuickBill({
             return (
               <div
                 key={line.key}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(150px, 2fr) minmax(90px, 1fr) minmax(85px, 1fr) auto",
-                  gap: "8px",
-                  alignItems: "end",
-                  padding: "10px",
-                  borderRadius: "11px",
-                  background: "#f8fafc",
-                  border: "1px solid #e2e8f0",
-                }}
+                className="quickbill-item-row"
               >
-                <div>
-                  <label style={miniLabelStyle}>Item {index + 1}</label>
-                  <input
-                    type="text"
-                    maxLength={120}
-                    disabled={issuing}
-                    value={line.name}
-                    onChange={(e) =>
-                      updateLine(line.key, {
-                        name: e.target.value,
-                        menu_item_id: undefined,
-                      })
-                    }
-                    placeholder="Item name"
-                    style={fieldStyle}
-                  />
-                </div>
-                <div>
-                  <label style={miniLabelStyle}>Price</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    disabled={issuing}
-                    value={line.priceInput}
-                    onChange={(e) => updateLine(line.key, { priceInput: e.target.value })}
-                    placeholder="0"
-                    style={fieldStyle}
-                  />
-                </div>
-                <div>
-                  <label style={miniLabelStyle}>Qty</label>
-                  <input
-                    type="number"
-                    min={0.001}
-                    step="any"
-                    disabled={issuing}
-                    value={line.qtyInput}
-                    onChange={(e) => updateLine(line.key, { qtyInput: e.target.value })}
-                    placeholder="1"
-                    style={fieldStyle}
-                  />
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span
-                    style={{
-                      fontSize: "13px",
-                      fontWeight: 700,
-                      color: "#0f172a",
-                      minWidth: "60px",
-                      textAlign: "right",
-                    }}
-                  >
-                    {formatMoney(estLine)}
-                  </span>
+                {/* Line 1 on phone (<640px) */}
+                <div className="quickbill-line1">
+                  <div className="quickbill-line1-input-wrap">
+                    <label style={miniLabelStyle}>Item {index + 1}</label>
+                    <input
+                      type="text"
+                      maxLength={120}
+                      disabled={issuing}
+                      value={line.name}
+                      onChange={(e) =>
+                        updateLine(line.key, {
+                          name: e.target.value,
+                          menu_item_id: undefined,
+                        })
+                      }
+                      placeholder="Item name"
+                      style={fieldStyle}
+                    />
+                  </div>
                   {lines.length > 1 && (
                     <button
                       type="button"
                       disabled={issuing}
                       onClick={() => handleRemoveLine(line.key)}
                       aria-label={`Remove line ${index + 1}`}
-                      style={{
-                        border: "1px solid #fecaca",
-                        background: "#fef2f2",
-                        color: "#dc2626",
-                        borderRadius: "8px",
-                        width: "36px",
-                        height: "40px",
-                        fontWeight: 800,
-                        cursor: "pointer",
-                      }}
+                      className="quickbill-remove-mobile"
                     >
                       ✕
                     </button>
                   )}
+                </div>
+
+                {/* Line 2 on phone (<640px) */}
+                <div className="quickbill-line2">
+                  <div className="quickbill-line2-price">
+                    <label style={miniLabelStyle}>Price</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      disabled={issuing}
+                      value={line.priceInput}
+                      onChange={(e) => updateLine(line.key, { priceInput: e.target.value })}
+                      placeholder="0"
+                      style={fieldStyle}
+                    />
+                  </div>
+                  <div className="quickbill-line2-qty">
+                    <label style={miniLabelStyle}>Qty</label>
+                    <input
+                      type="number"
+                      min={0.001}
+                      step="any"
+                      disabled={issuing}
+                      value={line.qtyInput}
+                      onChange={(e) => updateLine(line.key, { qtyInput: e.target.value })}
+                      placeholder="1"
+                      style={fieldStyle}
+                    />
+                  </div>
+                  <div className="quickbill-line2-total-wrap">
+                    <label style={miniLabelStyle} className="quickbill-line2-total-label">Total</label>
+                    <div className="quickbill-line2-total">
+                      {formatMoney(estLine)}
+                    </div>
+                    {lines.length > 1 && (
+                      <button
+                        type="button"
+                        disabled={issuing}
+                        onClick={() => handleRemoveLine(line.key)}
+                        aria-label={`Remove line ${index + 1}`}
+                        className="quickbill-remove-desktop"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -789,6 +934,7 @@ export default function QuickBill({
           color: "#ffffff",
           borderRadius: "14px",
           padding: "12px 16px",
+          paddingBottom: "calc(12px + env(safe-area-inset-bottom))",
           boxShadow: "0 14px 32px rgba(15, 23, 42, 0.24)",
           display: "flex",
           flexDirection: "column",
@@ -917,6 +1063,7 @@ const miniLabelStyle: React.CSSProperties = {
 
 const fieldStyle: React.CSSProperties = {
   width: "100%",
+  minWidth: 0,
   padding: "9px 10px",
   borderRadius: "9px",
   border: "1px solid #cbd5e1",

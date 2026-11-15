@@ -590,6 +590,123 @@ export default function BillDocument({
           )}
         </div>
 
+        {/* COLLECT UPI PAYMENT PANEL (rendered directly below action buttons) */}
+        {showCollectPanel && onMarkPaid && (
+          <div
+            style={{
+              padding: "16px",
+              borderRadius: "12px",
+              background: "#f8fafc",
+              border: "1px solid #cbd5e1",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "10px",
+              textAlign: "center",
+            }}
+          >
+            <strong style={{ fontSize: "16px", color: "#0f172a" }}>
+              Collect UPI payment
+            </strong>
+
+            <div
+              style={{
+                background: "#ffffff",
+                padding: "12px",
+                borderRadius: "12px",
+                border: "1px solid #e2e8f0",
+                width: "100%",
+                maxWidth: "min(240px, 62vw)",
+                aspectRatio: "1 / 1",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                boxSizing: "border-box",
+              }}
+            >
+              {qrDataUrl ? (
+                <img
+                  src={qrDataUrl}
+                  alt={`Scan to pay ${formatMoney(data.total)}`}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "contain",
+                    display: "block",
+                  }}
+                />
+              ) : (
+                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>
+                  Preparing QR...
+                </div>
+              )}
+            </div>
+
+            <div style={{ fontSize: "20px", fontWeight: 800, color: "#0f172a" }}>
+              Scan to pay {formatMoney(data.total)}
+            </div>
+
+            <div style={{ fontSize: "12px", color: "#64748b" }}>
+              UPI ID: {cleanUpiId}
+            </div>
+
+            <div
+              style={{
+                fontSize: "12.5px",
+                color: "#475569",
+                maxWidth: "340px",
+                lineHeight: 1.4,
+              }}
+            >
+              Check the payment on your phone, then tap Payment received.
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "8px",
+                justifyContent: "center",
+                width: "100%",
+                marginTop: "4px",
+              }}
+            >
+              <button
+                type="button"
+                disabled={Boolean(busyAction)}
+                onClick={() => runAction("paid", () => onMarkPaid("upi"))}
+                style={{
+                  ...btnSuccessStyle,
+                  minHeight: "44px",
+                  padding: "10px 20px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                }}
+              >
+                {busyAction === "paid" ? "Saving..." : "✓ Payment received"}
+              </button>
+
+              <button
+                type="button"
+                disabled={Boolean(busyAction)}
+                onClick={() => {
+                  setCollectUpiOpen(false);
+                  setShowPayChooser(true);
+                }}
+                style={{
+                  ...btnSecondaryStyle,
+                  minHeight: "44px",
+                  padding: "10px 16px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                }}
+              >
+                Other payment method
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* DIRECT WHATSAPP SEND SECTION */}
         {mode === "dashboard" && !hideWhatsAppButtons && (
           <div
@@ -718,123 +835,6 @@ export default function BillDocument({
         {mode === "dashboard" && (
           <div style={{ fontSize: "11.5px", color: "#64748b" }}>
             Tip: Choose <strong>Save as PDF</strong> in the Print dialog to save a PDF copy ({paper.toUpperCase()} layout).
-          </div>
-        )}
-
-        {/* COLLECT UPI PAYMENT PANEL */}
-        {showCollectPanel && onMarkPaid && (
-          <div
-            style={{
-              padding: "16px",
-              borderRadius: "12px",
-              background: "#f8fafc",
-              border: "1px solid #cbd5e1",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "10px",
-              textAlign: "center",
-            }}
-          >
-            <strong style={{ fontSize: "16px", color: "#0f172a" }}>
-              Collect UPI payment
-            </strong>
-
-            <div
-              style={{
-                background: "#ffffff",
-                padding: "12px",
-                borderRadius: "12px",
-                border: "1px solid #e2e8f0",
-                width: "100%",
-                maxWidth: "240px",
-                aspectRatio: "1 / 1",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                boxSizing: "border-box",
-              }}
-            >
-              {qrDataUrl ? (
-                <img
-                  src={qrDataUrl}
-                  alt={`Scan to pay ${formatMoney(data.total)}`}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "contain",
-                    display: "block",
-                  }}
-                />
-              ) : (
-                <div style={{ fontSize: "13px", color: "#64748b", fontWeight: 600 }}>
-                  Preparing QR...
-                </div>
-              )}
-            </div>
-
-            <div style={{ fontSize: "20px", fontWeight: 800, color: "#0f172a" }}>
-              Scan to pay {formatMoney(data.total)}
-            </div>
-
-            <div style={{ fontSize: "12px", color: "#64748b" }}>
-              UPI ID: {cleanUpiId}
-            </div>
-
-            <div
-              style={{
-                fontSize: "12.5px",
-                color: "#475569",
-                maxWidth: "340px",
-                lineHeight: 1.4,
-              }}
-            >
-              Check the payment on your phone, then tap Payment received.
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: "8px",
-                justifyContent: "center",
-                width: "100%",
-                marginTop: "4px",
-              }}
-            >
-              <button
-                type="button"
-                disabled={Boolean(busyAction)}
-                onClick={() => runAction("paid", () => onMarkPaid("upi"))}
-                style={{
-                  ...btnSuccessStyle,
-                  minHeight: "44px",
-                  padding: "10px 20px",
-                  fontSize: "14px",
-                  fontWeight: 700,
-                }}
-              >
-                {busyAction === "paid" ? "Saving..." : "✓ Payment received"}
-              </button>
-
-              <button
-                type="button"
-                disabled={Boolean(busyAction)}
-                onClick={() => {
-                  setCollectUpiOpen(false);
-                  setShowPayChooser(true);
-                }}
-                style={{
-                  ...btnSecondaryStyle,
-                  minHeight: "44px",
-                  padding: "10px 16px",
-                  fontSize: "13px",
-                  fontWeight: 600,
-                }}
-              >
-                Other payment method
-              </button>
-            </div>
           </div>
         )}
 

@@ -32,6 +32,14 @@ export default function ProductsPage({ businessId }: Props) {
   const [startEmptyChosen, setStartEmptyChosen] = useState(false);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [shopReadyExpanded, setShopReadyExpanded] = useState(false);
+  const selectedCatChipRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (selectedCatChipRef.current) {
+      selectedCatChipRef.current.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+    }
+  }, [selectedCategoryId]);
 
   // Modals state
   const [showTypeModal, setShowTypeModal] = useState(false);
@@ -696,16 +704,149 @@ export default function ProductsPage({ businessId }: Props) {
     );
   }
 
+  const isShopReady = step1Done && step2Done;
+
   // Normal screen
   return (
-    <div style={containerStyle}>
+    <div className="products-page-root" style={containerStyle}>
+      <style>{`
+        @media (max-width: 899px) {
+          .products-page-root input,
+          .products-page-root select,
+          .products-page-root textarea {
+            font-size: 16px !important;
+          }
+          .products-page-root .catalog-desktop-sidebar {
+            display: none !important;
+          }
+          .products-page-root .catalog-mobile-chips {
+            display: flex !important;
+            flex-wrap: nowrap !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            scrollbar-width: none !important;
+            -ms-overflow-style: none !important;
+            padding-bottom: 8px !important;
+            margin-bottom: 12px !important;
+          }
+          .products-page-root .catalog-mobile-chips::-webkit-scrollbar {
+            display: none !important;
+          }
+          .products-page-root .catalog-layout-grid {
+            display: block !important;
+          }
+          .products-page-root .catalog-top-toolbar {
+            width: 100% !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 8px !important;
+          }
+          .products-page-root .catalog-add-type-btn {
+            width: 100% !important;
+            order: -1 !important;
+            min-height: 44px !important;
+          }
+          .products-page-root .catalog-category-header {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 10px !important;
+          }
+          .products-page-root .catalog-category-actions {
+            width: 100% !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 8px !important;
+          }
+          .products-page-root .catalog-category-actions button {
+            min-height: 40px !important;
+            padding: 8px 12px !important;
+          }
+          .products-page-root .catalog-type-row {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 10px !important;
+          }
+          .products-page-root .catalog-type-line1 {
+            width: 100% !important;
+          }
+          .products-page-root .catalog-type-line2 {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 8px !important;
+            width: 100% !important;
+          }
+          .products-page-root .catalog-price-badge {
+            min-height: 44px !important;
+            display: inline-flex !important;
+            align-items: center !important;
+          }
+          .products-page-root .catalog-type-actions-wrap button {
+            min-height: 40px !important;
+          }
+          .products-page-root .products-progress-card {
+            padding: 12px !important;
+          }
+        }
+
+        @media (min-width: 900px) {
+          .products-page-root .catalog-mobile-chips {
+            display: none !important;
+          }
+          .products-page-root .catalog-desktop-sidebar {
+            display: block !important;
+          }
+          .products-page-root .catalog-type-row {
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 12px !important;
+          }
+          .products-page-root .catalog-type-line1 {
+            flex: 1 1 200px !important;
+            min-width: 160px !important;
+          }
+          .products-page-root .catalog-type-line2 {
+            display: flex !important;
+            align-items: center !important;
+            gap: 12px !important;
+            flex-shrink: 0 !important;
+          }
+        }
+      `}</style>
+
       {/* Notifications */}
       {noticeMsg && <div style={noticeBannerStyle}>{noticeMsg}</div>}
       {errorMsg && <div style={errorBannerStyle}>{errorMsg}</div>}
 
       {/* Progress Card */}
-      {showProgressCard && (
-        <div style={progressCardStyle}>
+      {isShopReady && !shopReadyExpanded ? (
+        <div
+          className="products-shop-ready-pill"
+          onClick={() => setShopReadyExpanded(true)}
+          style={{
+            padding: "10px 14px",
+            borderRadius: "10px",
+            background: "#f0fdf4",
+            border: "1px solid #bbf7d0",
+            color: "#166534",
+            fontSize: "13px",
+            fontWeight: 700,
+            marginBottom: "16px",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <span>✓ Shop is ready</span>
+          <span style={{ fontSize: "12px", color: "#15803d", fontWeight: 600 }}>Show details ▾</span>
+        </div>
+      ) : (
+        <div className="products-progress-card" style={progressCardStyle}>
           <div
             style={{
               display: "flex",
@@ -720,13 +861,32 @@ export default function ProductsPage({ businessId }: Props) {
                 Get your shop ready
               </strong>
             </div>
-            <span style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>
-              {step1Done && step2Done
-                ? "2 of 2 ready"
-                : step1Done
-                ? "1 of 2 ready"
-                : "0 of 2 ready"}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "12px", fontWeight: 700, color: "#64748b" }}>
+                {step1Done && step2Done
+                  ? "2 of 2 ready"
+                  : step1Done
+                  ? "1 of 2 ready"
+                  : "0 of 2 ready"}
+              </span>
+              {isShopReady && (
+                <button
+                  type="button"
+                  onClick={() => setShopReadyExpanded(false)}
+                  style={{
+                    border: 0,
+                    background: "transparent",
+                    fontSize: "12px",
+                    color: "#64748b",
+                    cursor: "pointer",
+                    padding: "2px 4px",
+                  }}
+                  title="Collapse"
+                >
+                  ▲
+                </button>
+              )}
+            </div>
           </div>
 
           <div
@@ -785,24 +945,18 @@ export default function ProductsPage({ businessId }: Props) {
                   : `${pricedTypesCount} of ${totalTypesCount} done`}
               </span>
             </div>
+          </div>
 
-            <div
-              style={{
-                ...progressStepStyle,
-                background: "#f8fafc",
-                borderColor: "#e2e8f0",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <span style={{ fontSize: "14px" }}>3</span>
-                <strong style={{ fontSize: "13.5px", color: "#0f172a" }}>
-                  Make a test bill
-                </strong>
-              </div>
-              <span style={{ fontSize: "12px", color: "#64748b" }}>
-                Go to Bills to create your first bill and see how quick it is.
-              </span>
-            </div>
+          <div
+            style={{
+              marginTop: "10px",
+              fontSize: "12.5px",
+              color: "#64748b",
+              paddingTop: "8px",
+              borderTop: "1px dashed #e2e8f0",
+            }}
+          >
+            Next: make a test bill from the Bills page.
           </div>
         </div>
       )}
@@ -828,7 +982,7 @@ export default function ProductsPage({ businessId }: Props) {
           />
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+        <div className="catalog-top-toolbar" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
           <button
             type="button"
             onClick={() => setShowSizesModal(true)}
@@ -852,6 +1006,7 @@ export default function ProductsPage({ businessId }: Props) {
 
           <button
             type="button"
+            className="catalog-add-type-btn"
             onClick={() => {
               if (categories.length === 0) {
                 setEditingCategory(null);
@@ -901,6 +1056,7 @@ export default function ProductsPage({ businessId }: Props) {
                 return (
                   <button
                     key={cat.id}
+                    ref={isSelected ? selectedCatChipRef : null}
                     type="button"
                     onClick={() => setSelectedCategoryId(cat.id)}
                     style={{
@@ -941,7 +1097,7 @@ export default function ProductsPage({ businessId }: Props) {
           )}
 
           {/* Desktop Two-Column Layout */}
-          <div style={layoutGridStyle}>
+          <div className="catalog-layout-grid" style={layoutGridStyle}>
             {/* Left Column: Categories (Desktop) */}
             {!searchQuery && (
               <div className="catalog-desktop-sidebar" style={categorySidebarStyle}>
@@ -1046,7 +1202,7 @@ export default function ProductsPage({ businessId }: Props) {
             <div style={{ flex: 1, minWidth: 0 }}>
               {/* Category Header with Actions (when not in search mode) */}
               {!searchQuery && selectedCategory && (
-                <div style={categoryHeaderCardStyle}>
+                <div className="catalog-category-header" style={categoryHeaderCardStyle}>
                   <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                     <h2 style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a", margin: 0 }}>
                       {selectedCategory.name}
@@ -1071,7 +1227,7 @@ export default function ProductsPage({ businessId }: Props) {
                   </div>
 
                   {/* Category Action Buttons */}
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                  <div className="catalog-category-actions" style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
                     <button
                       type="button"
                       onClick={() => {
@@ -1241,16 +1397,17 @@ export default function ProductsPage({ businessId }: Props) {
                     return (
                       <div
                         key={item.id}
+                        className="catalog-type-row"
                         style={{
                           ...typeRowStyle,
                           opacity: item.active ? 1 : 0.65,
                           background: item.active ? "#ffffff" : "#f8fafc",
                         }}
                       >
-                        {/* Name and Meta */}
-                        <div style={{ flex: "1 1 200px", minWidth: "160px" }}>
+                        {/* Name and Meta (Line 1 on phone) */}
+                        <div className="catalog-type-line1" style={{ flex: "1 1 200px", minWidth: "160px" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                            <strong style={{ fontSize: "14.5px", color: "#0f172a" }}>
+                            <strong style={{ fontSize: "14.5px", color: "#0f172a", wordBreak: "break-word" }}>
                               {item.name}
                             </strong>
                             {!item.active && (
@@ -1306,134 +1463,139 @@ export default function ProductsPage({ businessId }: Props) {
                           </div>
                         </div>
 
-                        {/* Inline Price Editor / Display */}
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "8px",
-                            minWidth: "140px",
-                          }}
-                        >
-                          {isEditingThisPrice ? (
-                            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                              <span style={{ fontSize: "14px", fontWeight: 700, color: "#64748b" }}>
-                                ₹
+                        {/* Price & Actions (Line 2 on phone) */}
+                        <div className="catalog-type-line2">
+                          {/* Inline Price Editor / Display */}
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              minWidth: "140px",
+                            }}
+                          >
+                            {isEditingThisPrice ? (
+                              <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                                <span style={{ fontSize: "14px", fontWeight: 700, color: "#64748b" }}>
+                                  ₹
+                                </span>
+                                <input
+                                  ref={priceInputRef}
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  max="10000000"
+                                  value={editingPriceValue}
+                                  onChange={(e) => setEditingPriceValue(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      savePriceAndNext(item, index);
+                                    } else if (e.key === "Escape") {
+                                      cancelEditingPrice();
+                                    }
+                                  }}
+                                  onBlur={() => savePriceOnBlur(item)}
+                                  style={priceInlineInputStyle}
+                                  placeholder="0.00"
+                                />
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startEditingPrice(item)}
+                                className="catalog-price-badge"
+                                style={
+                                  item.default_price !== null
+                                    ? priceBadgeStyle
+                                    : unpricedBadgeStyle
+                                }
+                                title="Tap to change price"
+                              >
+                                {item.default_price !== null
+                                  ? formatPrice(item.default_price)
+                                  : "⚠️ Set price"}
+                              </button>
+                            )}
+
+                            {thisStatus === "saving" && (
+                              <span style={{ fontSize: "11px", color: "#64748b" }}>
+                                Saving...
                               </span>
-                              <input
-                                ref={priceInputRef}
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                max="10000000"
-                                value={editingPriceValue}
-                                onChange={(e) => setEditingPriceValue(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    savePriceAndNext(item, index);
-                                  } else if (e.key === "Escape") {
-                                    cancelEditingPrice();
-                                  }
-                                }}
-                                onBlur={() => savePriceOnBlur(item)}
-                                style={priceInlineInputStyle}
-                                placeholder="0.00"
-                              />
-                            </div>
-                          ) : (
+                            )}
+                            {thisStatus === "saved" && (
+                              <span style={{ fontSize: "11px", color: "#16a34a", fontWeight: 700 }}>
+                                ✓ Saved
+                              </span>
+                            )}
+                            {thisError && (
+                              <span style={{ fontSize: "11px", color: "#dc2626" }}>
+                                {thisError}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Active Switch & Actions */}
+                          <div
+                            className="catalog-type-actions-wrap"
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            {/* Active Toggle Switch */}
                             <button
                               type="button"
-                              onClick={() => startEditingPrice(item)}
-                              style={
-                                item.default_price !== null
-                                  ? priceBadgeStyle
-                                  : unpricedBadgeStyle
-                              }
-                              title="Tap to change price"
-                            >
-                              {item.default_price !== null
-                                ? formatPrice(item.default_price)
-                                : "⚠️ Set price"}
-                            </button>
-                          )}
-
-                          {thisStatus === "saving" && (
-                            <span style={{ fontSize: "11px", color: "#64748b" }}>
-                              Saving...
-                            </span>
-                          )}
-                          {thisStatus === "saved" && (
-                            <span style={{ fontSize: "11px", color: "#16a34a", fontWeight: 700 }}>
-                              ✓ Saved
-                            </span>
-                          )}
-                          {thisError && (
-                            <span style={{ fontSize: "11px", color: "#dc2626" }}>
-                              {thisError}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Active Switch & Actions */}
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "8px",
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          {/* Active Toggle Switch */}
-                          <button
-                            type="button"
-                            onClick={() => handleToggleTypeActive(item)}
-                            style={{
-                              ...activeSwitchStyle,
-                              background: item.active ? "#16a34a" : "#cbd5e1",
-                            }}
-                            title={item.active ? "Active (click to hide)" : "Hidden (click to show)"}
-                          >
-                            <span
+                              onClick={() => handleToggleTypeActive(item)}
                               style={{
-                                ...activeSwitchKnobStyle,
-                                transform: item.active ? "translateX(18px)" : "translateX(2px)",
+                                ...activeSwitchStyle,
+                                background: item.active ? "#16a34a" : "#cbd5e1",
                               }}
-                            />
-                          </button>
+                              title={item.active ? "Active (click to hide)" : "Hidden (click to show)"}
+                            >
+                              <span
+                                style={{
+                                  ...activeSwitchKnobStyle,
+                                  transform: item.active ? "translateX(18px)" : "translateX(2px)",
+                                }}
+                              />
+                            </button>
 
-                          {/* Row Actions Menu */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingType(item);
-                              setShowTypeModal(true);
-                            }}
-                            style={iconBtnStyle}
-                            title="Edit item"
-                          >
-                            ✏️ Edit
-                          </button>
+                            {/* Row Actions Menu */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingType(item);
+                                setShowTypeModal(true);
+                              }}
+                              style={iconBtnStyle}
+                              title="Edit item"
+                            >
+                              ✏️ Edit
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={() => handleDuplicateType(item)}
-                            disabled={actionBusy}
-                            style={iconBtnStyle}
-                            title="Duplicate item"
-                          >
-                            📋 Copy
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDuplicateType(item)}
+                              disabled={actionBusy}
+                              style={iconBtnStyle}
+                              title="Duplicate item"
+                            >
+                              📋 Copy
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteType(item)}
-                            disabled={actionBusy}
-                            style={{ ...iconBtnStyle, color: "#dc2626" }}
-                            title="Delete item"
-                          >
-                            🗑️
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteType(item)}
+                              disabled={actionBusy}
+                              style={{ ...iconBtnStyle, color: "#dc2626" }}
+                              title="Delete item"
+                            >
+                              🗑️
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );
