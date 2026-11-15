@@ -105,6 +105,7 @@ export default function BillsPage({
     amount: number;
     balance_left: number;
     expires_on: string | null;
+    original_bill_no?: string | null;
   } | null>(null);
   const [creditNoteSlipId, setCreditNoteSlipId] = useState<string | null>(null);
   const [creditNoteSlipBillNo, setCreditNoteSlipBillNo] = useState<string | null>(null);
@@ -292,9 +293,13 @@ export default function BillsPage({
       } | null;
     }
   ) => {
+    const origBillNo = activeExchangeData?.billNo || null;
     setActiveExchangeData(null);
     if (opts?.creditNote && opts.creditNote.balance_left > 0) {
-      setExchangeCreditNoteNotice(opts.creditNote);
+      setExchangeCreditNoteNotice({
+        ...opts.creditNote,
+        original_bill_no: origBillNo,
+      });
     } else {
       setExchangeCreditNoteNotice(null);
     }
@@ -475,7 +480,7 @@ export default function BillsPage({
               type="button"
               onClick={() => {
                 setCreditNoteSlipId(exchangeCreditNoteNotice.id);
-                setCreditNoteSlipBillNo(selectedBill.bill_no_text);
+                setCreditNoteSlipBillNo(exchangeCreditNoteNotice.original_bill_no || null);
                 setView("credit_note_slip");
               }}
               style={{

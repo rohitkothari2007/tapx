@@ -1392,11 +1392,11 @@ export default function ShopCounter({
                 <div style={{ marginTop: "6px" }}>
                   {exchange.creditNoteAllowed ? (
                     <div style={{ fontSize: "12px", color: "#0284c7", fontWeight: 600 }}>
-                      ₹{formatMoney(balanceZ)} will stay as a credit note for the customer.
+                      {formatMoney(balanceZ)} will stay as a credit note for the customer.
                     </div>
                   ) : (
                     <div style={{ fontSize: "12px", color: "#d97706", fontWeight: 700 }}>
-                      Add items worth at least ₹{formatMoney(balanceZ)} more.
+                      Add items worth at least {formatMoney(balanceZ)} more.
                     </div>
                   )}
                 </div>

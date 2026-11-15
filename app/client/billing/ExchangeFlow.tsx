@@ -134,13 +134,6 @@ export default function ExchangeFlow({
     return () => clearTimeout(t);
   }, [step, searchQuery, runSearch]);
 
-  // Initial search on step 0
-  useEffect(() => {
-    if (step === 0 && searchResults.length === 0 && !searching && !searchError) {
-      void runSearch("");
-    }
-  }, [step, runSearch, searchResults.length, searching, searchError]);
-
   // --- Step 1: Fetch Returnable Bill ---
   const loadReturnable = useCallback(async (billId: string) => {
     setLoadingReturnable(true);
@@ -174,15 +167,23 @@ export default function ExchangeFlow({
   }, []);
 
   useEffect(() => {
-    if (activeBillId && step >= 1) {
+    if (activeBillId) {
       void loadReturnable(activeBillId);
     }
-  }, [activeBillId, step, loadReturnable]);
+  }, [activeBillId, loadReturnable]);
 
   // Handle bill selection from search
   const handleSelectBill = (b: ExchangeSearchBill) => {
+    setReturnableBill(null);
+    setReturnSelections({});
+    setSelectedReason("");
+    setOtherReasonNote("");
+    setReturnableError("");
     setActiveBillId(b.id);
     setStep(1);
+    if (activeBillId === b.id) {
+      void loadReturnable(b.id);
+    }
   };
 
   // Stepper quantity update
@@ -352,6 +353,10 @@ export default function ExchangeFlow({
                 setStep(0);
                 setActiveBillId(null);
                 setReturnableBill(null);
+                setReturnSelections({});
+                setSelectedReason("");
+                setOtherReasonNote("");
+                setReturnableError("");
               } else {
                 onClose();
               }

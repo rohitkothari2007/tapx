@@ -166,6 +166,7 @@ export default function CreditNoteSlip({
       <div
         className="tapx-bill-no-print"
         style={{
+          boxSizing: "border-box",
           background: "#ffffff",
           border: "1px solid #e2e8f0",
           borderRadius: "14px",
@@ -250,6 +251,7 @@ export default function CreditNoteSlip({
           className="tapx-bill-print-sheet"
           style={{
             ...sheetWidthStyle,
+            boxSizing: "border-box",
             margin: "0 auto",
             background: "#ffffff",
             border: "1px solid #e2e8f0",
@@ -430,7 +432,7 @@ export default function CreditNoteSlip({
               lineHeight: 1.35,
             }}
           >
-            Valid for use at this shop only. Not exchangeable for cash.
+            Valid for use at this shop only.
           </div>
         </div>
       )}

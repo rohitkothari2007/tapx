@@ -1031,11 +1031,11 @@ export default function QuickBill({
             <div style={{ marginTop: "6px" }}>
               {exchange.creditNoteAllowed ? (
                 <div style={{ fontSize: "12.5px", color: "#0284c7", fontWeight: 600 }}>
-                  ₹{formatMoney(balanceZ)} will stay as a credit note for the customer.
+                  {formatMoney(balanceZ)} will stay as a credit note for the customer.
                 </div>
               ) : (
                 <div style={{ fontSize: "12.5px", color: "#d97706", fontWeight: 700 }}>
-                  Add items worth at least ₹{formatMoney(balanceZ)} more.
+                  Add items worth at least {formatMoney(balanceZ)} more.
                 </div>
               )}
             </div>
