@@ -117,6 +117,30 @@ function defaultGroupForSpan(spanDays: number): GroupType {
   return "month";
 }
 
+function shouldShowLabel(idx: number, total: number, step: number): boolean {
+  if (idx === 0) return true;
+  if (idx === total - 1) return true;
+  if (idx % step !== 0) return false;
+  const collisionThreshold = Math.max(2, Math.ceil(step * 0.65));
+  if (total - 1 - idx < collisionThreshold) return false;
+  return true;
+}
+
+function isMissingReportFunctionError(err: any): boolean {
+  const code = String(err?.code || "").toUpperCase();
+  if (code === "42883" || code === "PGRST202") {
+    return true;
+  }
+  const msg = (err?.message || "").toLowerCase();
+  if (
+    msg.includes("tapx_sales_report") &&
+    (msg.includes("does not exist") || msg.includes("could not find"))
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function escapeCsvCell(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return '""';
   let str = String(value);
@@ -317,15 +341,7 @@ export default function SalesReport({ businessId }: Props) {
       if (reqId !== activeReqRef.current) return; // Stale request, ignore
 
       if (error) {
-        const msg = (error.message || "").toLowerCase();
-        const code = String(error.code || "");
-        if (
-          code === "42883" ||
-          code === "pgrst202" ||
-          msg.includes("does not exist") ||
-          msg.includes("could not find") ||
-          msg.includes("not found")
-        ) {
+        if (isMissingReportFunctionError(error)) {
           setErrorMsg("The sales report is not switched on yet. Please contact support.");
         } else {
           setErrorMsg(error.message || "Could not load sales report. Please try again.");
@@ -338,8 +354,7 @@ export default function SalesReport({ businessId }: Props) {
       setReportData(sanitized);
     } catch (err: any) {
       if (reqId !== activeReqRef.current) return;
-      const msg = (err?.message || "").toLowerCase();
-      if (msg.includes("does not exist") || msg.includes("could not find")) {
+      if (isMissingReportFunctionError(err)) {
         setErrorMsg("The sales report is not switched on yet. Please contact support.");
       } else {
         setErrorMsg(err?.message || "Could not load sales report. Please try again.");
@@ -385,9 +400,20 @@ export default function SalesReport({ businessId }: Props) {
     return Math.max(...reportData.series.map((s) => s.revenue), 0);
   }, [reportData?.series]);
 
-  // Step for showing X labels if > 14 bars
+  // Only scroll horizontally if there are more than 31 periods
+  const isScrollable = (reportData?.series?.length || 0) > 31;
+
+  // Step for showing X labels so labels never collide (approx 1 label per ~56px)
   const seriesLen = reportData?.series?.length || 0;
-  const labelStep = seriesLen > 14 ? Math.ceil(seriesLen / 14) : 1;
+  const labelStep = useMemo(() => {
+    if (seriesLen <= 6) return 1;
+    if (seriesLen <= 31) {
+      // Roughly 1 label per 56px of slot width on a 280px chart
+      return Math.max(1, Math.round(seriesLen / 5));
+    }
+    // For > 31 bars where each slot is at least 20px wide: 56px / 20px ≈ 3
+    return 3;
+  }, [seriesLen]);
 
   // Build CSV in browser and trigger download
   const handleDownloadCsv = () => {
@@ -949,7 +975,7 @@ export default function SalesReport({ businessId }: Props) {
               background: "#ffffff",
               border: "1px solid #e2e8f0",
               borderRadius: "14px",
-              padding: "16px",
+              padding: "16px 16px 12px 16px",
             }}
           >
             <div
@@ -994,111 +1020,142 @@ export default function SalesReport({ businessId }: Props) {
             {/* Scrollable chart container */}
             <div
               style={{
-                overflowX: "auto",
+                overflowX: isScrollable ? "auto" : "visible",
                 WebkitOverflowScrolling: "touch",
-                paddingBottom: "10px",
+                width: "100%",
               }}
             >
               <div
                 style={{
-                  minWidth: `${Math.max(reportData.series.length * 40, 300)}px`,
-                  height: "210px",
-                  display: "flex",
-                  alignItems: "flex-end",
-                  gap: "6px",
-                  paddingTop: "24px",
-                  paddingBottom: "32px",
-                  position: "relative",
-                  borderBottom: "1px solid #e2e8f0",
+                  minWidth: isScrollable ? `${reportData.series.length * 20}px` : "100%",
+                  width: "100%",
                 }}
               >
-                {/* Horizontal baseline guide */}
+                {/* (a) Plot area: fixed height (160px) containing the baseline line and the bars, aligned to bottom */}
                 <div
                   style={{
-                    position: "absolute",
-                    bottom: "32px",
-                    left: 0,
-                    right: 0,
-                    height: "1px",
-                    background: "#cbd5e1",
+                    height: "160px",
+                    display: "flex",
+                    alignItems: "flex-end",
+                    position: "relative",
+                    borderBottom: "1px solid #cbd5e1",
                   }}
-                />
-
-                {maxSeriesRevenue === 0 && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "45%",
-                      left: "50%",
-                      transform: "translate(-50%, -50%)",
-                      color: "#94a3b8",
-                      fontSize: "14px",
-                      fontWeight: 700,
-                      pointerEvents: "none",
-                    }}
-                  >
-                    No sales in this period
-                  </div>
-                )}
-
-                {reportData.series.map((s, idx) => {
-                  const rev = Number(s.revenue) || 0;
-                  const barHeight =
-                    maxSeriesRevenue > 0
-                      ? Math.max(4, Math.round((rev / maxSeriesRevenue) * 140))
-                      : 4;
-                  const label = formatPeriodLabel(s.period, reportData.group);
-                  const showLabel = idx % labelStep === 0 || idx === seriesLen - 1;
-                  const tooltip = `${label}: ${formatMoney(rev)} (${s.bills} ${
-                    s.bills === 1 ? "bill" : "bills"
-                  })`;
-
-                  return (
+                >
+                  {maxSeriesRevenue === 0 && (
                     <div
-                      key={s.period}
-                      title={tooltip}
                       style={{
-                        flex: 1,
-                        minWidth: "24px",
-                        maxWidth: "60px",
-                        height: "100%",
-                        display: "flex",
-                        flexDirection: "column",
-                        justifyContent: "flex-end",
-                        alignItems: "center",
-                        position: "relative",
-                        cursor: "pointer",
+                        position: "absolute",
+                        top: "50%",
+                        left: "50%",
+                        transform: "translate(-50%, -50%)",
+                        color: "#94a3b8",
+                        fontSize: "14px",
+                        fontWeight: 700,
+                        pointerEvents: "none",
                       }}
                     >
-                      {/* Bar */}
+                      No sales in this period
+                    </div>
+                  )}
+
+                  {reportData.series.map((s) => {
+                    const rev = Number(s.revenue) || 0;
+                    const barHeight =
+                      maxSeriesRevenue > 0
+                        ? Math.max(4, Math.round((rev / maxSeriesRevenue) * 140))
+                        : 4;
+                    const label = formatPeriodLabel(s.period, reportData.group);
+                    const tooltip = `${label}: ${formatMoney(rev)} (${s.bills} ${
+                      s.bills === 1 ? "bill" : "bills"
+                    })`;
+
+                    return (
                       <div
+                        key={s.period}
+                        title={tooltip}
                         style={{
-                          width: "100%",
-                          maxWidth: "24px",
-                          height: `${barHeight}px`,
-                          background: rev > 0 ? "#2563eb" : "#e2e8f0",
-                          borderRadius: "4px 4px 0 0",
-                          transition: "height 0.2s ease",
-                        }}
-                      />
-                      {/* X Label */}
-                      <div
-                        style={{
-                          position: "absolute",
-                          bottom: "8px",
-                          fontSize: "10px",
-                          color: showLabel ? "#64748b" : "transparent",
-                          whiteSpace: "nowrap",
-                          fontWeight: 600,
-                          textAlign: "center",
-                          pointerEvents: "none",
+                          flex: "1 1 0",
+                          minWidth: isScrollable ? "20px" : 0,
+                          height: "100%",
+                          display: "flex",
+                          alignItems: "flex-end",
+                          justifyContent: "center",
+                          cursor: "pointer",
                         }}
                       >
-                        {showLabel ? label : ""}
+                        {/* Bar */}
+                        <div
+                          style={{
+                            width: "100%",
+                            maxWidth: "24px",
+                            minWidth: "4px",
+                            height: `${barHeight}px`,
+                            background: rev > 0 ? "#2563eb" : "#e2e8f0",
+                            borderRadius: "4px 4px 0 0",
+                            transition: "height 0.2s ease",
+                          }}
+                        />
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+
+                {/* (b) Separate label row directly BELOW the baseline: height about 22px */}
+                <div
+                  style={{
+                    height: "22px",
+                    display: "flex",
+                    alignItems: "center",
+                    marginTop: "4px",
+                  }}
+                >
+                  {reportData.series.map((s, idx) => {
+                    const label = formatPeriodLabel(s.period, reportData.group);
+                    const showLabel = shouldShowLabel(
+                      idx,
+                      reportData.series.length,
+                      labelStep
+                    );
+                    const alignJustify =
+                      idx === 0
+                        ? "flex-start"
+                        : idx === reportData.series.length - 1
+                        ? "flex-end"
+                        : "center";
+
+                    return (
+                      <div
+                        key={`lbl-${s.period}`}
+                        style={{
+                          flex: "1 1 0",
+                          minWidth: isScrollable ? "20px" : 0,
+                          height: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: alignJustify,
+                          overflow: "visible",
+                        }}
+                      >
+                        {showLabel ? (
+                          <span
+                            style={{
+                              fontSize: "10.5px",
+                              color: "#64748b",
+                              whiteSpace: "nowrap",
+                              fontWeight: 600,
+                              lineHeight: "22px",
+                              display: "inline-block",
+                            }}
+                          >
+                            {label}
+                          </span>
+                        ) : (
+                          <span style={{ display: "inline-block" }} />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
