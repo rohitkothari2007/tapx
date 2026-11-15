@@ -31,6 +31,7 @@ import LoyaltyMilestoneRulesEditor from "./LoyaltyMilestoneRulesEditor";
 import RemindersPage, { useRemindersData } from "./RemindersPage";
 import BillingSettingsCard from "./billing/BillingSettingsCard";
 import BillsPage from "./billing/BillsPage";
+import ProductsPage from "./shop/ProductsPage";
 import BillFromOrders from "./billing/BillFromOrders";
 import UnbilledOrdersWarning from "./billing/UnbilledOrdersWarning";
 import {
@@ -252,6 +253,7 @@ type PageKey =
   | "orders"
   | "requests"
   | "bills"
+  | "products"
   | "appointments"
   | "menu"
   | "offers"
@@ -1485,6 +1487,7 @@ export default function ClientPortalPage() {
   );
 
   const hasBilling = hasModule("billing");
+  const hasRetailBilling = hasModule("retail_billing");
 
   const tableOrderingConfigRow = useMemo(() => {
     return (moduleConfigs || []).find(
@@ -2262,6 +2265,12 @@ export default function ClientPortalPage() {
       show: hasBilling,
     },
     {
+      key: "products" as PageKey,
+      label: "Products",
+      icon: "🛍️",
+      show: hasBilling && hasRetailBilling,
+    },
+    {
       key: "appointments" as PageKey,
       label: "Appointments",
       icon: "◷",
@@ -2960,6 +2969,10 @@ export default function ClientPortalPage() {
               onConsumedInitialBillId={() => setPendingOpenBillId(null)}
               onBillsChanged={loadPortal}
             />
+          )}
+
+          {activePage === "products" && hasBilling && hasRetailBilling && business && (
+            <ProductsPage businessId={business.id} />
           )}
 
           {activePage === "appointments" &&
