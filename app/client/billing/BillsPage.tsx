@@ -385,7 +385,27 @@ export default function BillsPage({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+    <div className="bills-page-root" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <style>{`
+        @media (max-width: 639px) {
+          .bills-summary-strip {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+          }
+          .bills-stat-card {
+            padding: 10px 12px !important;
+            border-radius: 12px !important;
+          }
+          .bills-stat-value {
+            font-size: 18px !important;
+          }
+          .bills-stat-sub {
+            font-size: 11px !important;
+            word-break: break-word !important;
+            overflow-wrap: anywhere !important;
+          }
+        }
+      `}</style>
       {/* HEADER */}
       <div
         style={{
@@ -579,16 +599,17 @@ export default function BillsPage({
 
       {/* SUMMARY STRIP */}
       <div
+        className="bills-summary-strip"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
           gap: "12px",
         }}
       >
-        <div style={statCardStyle}>
+        <div className="bills-stat-card" style={statCardStyle}>
           <div style={statLabelStyle}>BILLED (ISSUED)</div>
-          <div style={statValueStyle}>{formatMoney(summary?.billed_total ?? 0)}</div>
-          <div style={statSubStyle}>
+          <div className="bills-stat-value" style={statValueStyle}>{formatMoney(summary?.billed_total ?? 0)}</div>
+          <div className="bills-stat-sub" style={statSubStyle}>
             {summary?.billed_count ?? 0} {(summary?.billed_count ?? 0) === 1 ? "bill" : "bills"}
             {(summary?.discount_total ?? 0) > 0
               ? ` · Discounts ${formatMoney(summary?.discount_total)}`
@@ -596,34 +617,34 @@ export default function BillsPage({
           </div>
         </div>
 
-        <div style={{ ...statCardStyle, borderColor: "#bbf7d0", background: "#f0fdf4" }}>
+        <div className="bills-stat-card" style={{ ...statCardStyle, borderColor: "#bbf7d0", background: "#f0fdf4" }}>
           <div style={{ ...statLabelStyle, color: "#15803d" }}>PAID</div>
-          <div style={{ ...statValueStyle, color: "#14532d" }}>
+          <div className="bills-stat-value" style={{ ...statValueStyle, color: "#14532d" }}>
             {formatMoney(summary?.paid_total ?? 0)}
           </div>
-          <div style={{ ...statSubStyle, color: "#166534" }}>
+          <div className="bills-stat-sub" style={{ ...statSubStyle, color: "#166534" }}>
             {summary?.paid_count ?? 0} {(summary?.paid_count ?? 0) === 1 ? "bill" : "bills"}
             {" · "}Cash {formatMoney(summary?.cash_total ?? 0)} · UPI{" "}
             {formatMoney(summary?.upi_total ?? 0)} · Card {formatMoney(summary?.card_total ?? 0)}
           </div>
         </div>
 
-        <div style={{ ...statCardStyle, borderColor: "#fde68a", background: "#fffbeb" }}>
+        <div className="bills-stat-card" style={{ ...statCardStyle, borderColor: "#fde68a", background: "#fffbeb" }}>
           <div style={{ ...statLabelStyle, color: "#b45309" }}>UNPAID</div>
-          <div style={{ ...statValueStyle, color: "#92400e" }}>
+          <div className="bills-stat-value" style={{ ...statValueStyle, color: "#92400e" }}>
             {formatMoney(summary?.unpaid_total ?? 0)}
           </div>
-          <div style={{ ...statSubStyle, color: "#92400e" }}>
+          <div className="bills-stat-sub" style={{ ...statSubStyle, color: "#92400e" }}>
             {summary?.unpaid_count ?? 0} {(summary?.unpaid_count ?? 0) === 1 ? "bill" : "bills"}
           </div>
         </div>
 
-        <div style={{ ...statCardStyle, background: "#f8fafc" }}>
+        <div className="bills-stat-card" style={{ ...statCardStyle, background: "#f8fafc" }}>
           <div style={{ ...statLabelStyle, color: "#64748b" }}>VOIDED (EXCLUDED)</div>
-          <div style={{ ...statValueStyle, color: "#475569" }}>
+          <div className="bills-stat-value" style={{ ...statValueStyle, color: "#475569" }}>
             {formatMoney(summary?.void_total ?? 0)}
           </div>
-          <div style={statSubStyle}>
+          <div className="bills-stat-sub" style={statSubStyle}>
             {summary?.void_count ?? 0} voided
           </div>
         </div>
