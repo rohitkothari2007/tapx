@@ -33,6 +33,7 @@ export type BillPdfData = {
   tax_total: number;
   round_off: number;
   total: number;
+  credit_applied?: number;
   payment_status: BillPaymentStatus;
   payment_method: PaymentMethod | null;
   paid_at: string | null;
@@ -308,6 +309,7 @@ export async function generateBillPdfBlob(
     // Financial totals
     h += 4; // subtotal
     if (data.discount_amount > 0) h += 4;
+    if (data.credit_applied && data.credit_applied > 0) h += 4;
     if (data.service_charge > 0) h += 4;
     if (data.round_off !== 0) h += 4;
     h += 6; // TOTAL
@@ -530,6 +532,10 @@ export async function generateBillPdfBlob(
       ? `Discount (${data.discount_note})`
       : "Discount";
     drawSummaryRow(discLabel, `-${formatPdfMoney(data.discount_amount)}`);
+  }
+
+  if (data.credit_applied && data.credit_applied > 0) {
+    drawSummaryRow("Exchange Credit", `-${formatPdfMoney(data.credit_applied)}`);
   }
 
   if (data.service_charge > 0) {

@@ -29,9 +29,11 @@ import BillDocument, {
 } from "../../components/billing/BillDocument";
 import QuickBill from "./QuickBill";
 import ShopCounter from "../shop/ShopCounter";
+import ExchangeFlow from "./ExchangeFlow";
+import CreditNoteSlip from "./CreditNoteSlip";
 
 export const BILL_SELECT_COLUMNS =
-  "id, business_id, financial_year, bill_number, bill_no_text, bill_day, status, source, customer_name, customer_phone, table_number, subtotal, discount_amount, discount_note, service_charge_pct, service_charge, tax_mode, tax_total, round_off, total, payment_status, payment_method, paid_at, void_reason, voided_at, notes, share_token, created_at";
+  "id, business_id, financial_year, bill_number, bill_no_text, bill_day, status, source, customer_name, customer_phone, table_number, subtotal, discount_amount, discount_note, service_charge_pct, service_charge, tax_mode, tax_total, round_off, total, credit_applied, payment_status, payment_method, paid_at, void_reason, voided_at, notes, share_token, created_at";
 
 export const BILL_ITEM_SELECT_COLUMNS =
   "id, bill_id, line_no, item_name, unit_price, quantity, line_total";
@@ -85,7 +87,28 @@ export default function BillsPage({
 
   const [autoCollectUpiBillId, setAutoCollectUpiBillId] = useState<string | null>(null);
 
-  const [view, setView] = useState<"list" | "quick" | "detail">("list");
+  const [view, setView] = useState<"list" | "quick" | "detail" | "exchange" | "credit_note_slip">("list");
+  const [exchangeBillId, setExchangeBillId] = useState<string | null>(null);
+  const [activeExchangeData, setActiveExchangeData] = useState<{
+    billId: string;
+    billNo: string;
+    returnLines: { bill_item_id: string; quantity: number; restock: boolean }[];
+    creditValue: number;
+    customerName: string | null;
+    customerPhone: string | null;
+    creditNoteAllowed: boolean;
+    reason: string;
+  } | null>(null);
+  const [exchangeCreditNoteNotice, setExchangeCreditNoteNotice] = useState<{
+    id: string;
+    note_no_text: string;
+    amount: number;
+    balance_left: number;
+    expires_on: string | null;
+  } | null>(null);
+  const [creditNoteSlipId, setCreditNoteSlipId] = useState<string | null>(null);
+  const [creditNoteSlipBillNo, setCreditNoteSlipBillNo] = useState<string | null>(null);
+
   const [datePreset, setDatePreset] = useState<DatePreset>("today");
 
   const todayIST = getISTDateStr();
@@ -258,8 +281,23 @@ export default function BillsPage({
 
   const handleBillIssued = async (
     newBillId: string,
-    opts?: { collectUpi?: boolean }
+    opts?: {
+      collectUpi?: boolean;
+      creditNote?: {
+        id: string;
+        note_no_text: string;
+        amount: number;
+        balance_left: number;
+        expires_on: string | null;
+      } | null;
+    }
   ) => {
+    setActiveExchangeData(null);
+    if (opts?.creditNote && opts.creditNote.balance_left > 0) {
+      setExchangeCreditNoteNotice(opts.creditNote);
+    } else {
+      setExchangeCreditNoteNotice(null);
+    }
     if (opts?.collectUpi) {
       setAutoCollectUpiBillId(newBillId);
     } else {
@@ -336,7 +374,11 @@ export default function BillsPage({
           businessId={business.id}
           billingSettings={billingSettings}
           upiQrEnabled={upiQrEnabled}
-          onCancel={() => setView("list")}
+          exchange={activeExchangeData || undefined}
+          onCancel={() => {
+            setActiveExchangeData(null);
+            setView("list");
+          }}
           onIssued={handleBillIssued}
         />
       );
@@ -347,8 +389,55 @@ export default function BillsPage({
         billingSettings={billingSettings}
         moduleConfigs={moduleConfigs}
         upiQrEnabled={upiQrEnabled}
-        onCancel={() => setView("list")}
+        exchange={activeExchangeData || undefined}
+        onCancel={() => {
+          setActiveExchangeData(null);
+          setView("list");
+        }}
         onIssued={handleBillIssued}
+      />
+    );
+  }
+
+  if (view === "exchange") {
+    return (
+      <ExchangeFlow
+        businessId={business.id}
+        businessProfile={business}
+        billingSettings={billingSettings}
+        initialBillId={exchangeBillId}
+        onClose={() => {
+          setExchangeBillId(null);
+          if (selectedBill) {
+            setView("detail");
+          } else {
+            setView("list");
+          }
+        }}
+        onStartExchange={(exData) => {
+          setActiveExchangeData(exData);
+          setView("quick");
+        }}
+      />
+    );
+  }
+
+  if (view === "credit_note_slip" && creditNoteSlipId) {
+    return (
+      <CreditNoteSlip
+        creditNoteId={creditNoteSlipId}
+        business={business}
+        paper={billingSettings.paper}
+        originalBillNo={creditNoteSlipBillNo}
+        onClose={() => {
+          setCreditNoteSlipId(null);
+          setCreditNoteSlipBillNo(null);
+          if (selectedBill) {
+            setView("detail");
+          } else {
+            setView("list");
+          }
+        }}
       />
     );
   }
@@ -361,6 +450,51 @@ export default function BillsPage({
             Refreshing bill...
           </div>
         )}
+
+        {exchangeCreditNoteNotice && exchangeCreditNoteNotice.balance_left > 0 && (
+          <div
+            style={{
+              padding: "12px 16px",
+              borderRadius: "12px",
+              background: "#f0fdf4",
+              border: "1px solid #bbf7d0",
+              color: "#166534",
+              fontSize: "14px",
+              fontWeight: 600,
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "10px",
+            }}
+          >
+            <div>
+              Exchange done. {formatMoney(exchangeCreditNoteNotice.balance_left)} kept as credit note {exchangeCreditNoteNotice.note_no_text}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setCreditNoteSlipId(exchangeCreditNoteNotice.id);
+                setCreditNoteSlipBillNo(selectedBill.bill_no_text);
+                setView("credit_note_slip");
+              }}
+              style={{
+                border: "1px solid #16a34a",
+                background: "#16a34a",
+                color: "#ffffff",
+                borderRadius: "8px",
+                padding: "8px 14px",
+                fontSize: "13px",
+                fontWeight: 700,
+                cursor: "pointer",
+                minHeight: "44px",
+              }}
+            >
+              Print slip
+            </button>
+          </div>
+        )}
+
         <BillDocument
           mode="dashboard"
           autoOpenUpiCollect={selectedBill?.id === autoCollectUpiBillId}
@@ -374,11 +508,22 @@ export default function BillsPage({
             setSelectedBill(null);
             setSelectedItems([]);
             setAutoCollectUpiBillId(null);
+            setExchangeCreditNoteNotice(null);
             setView("list");
           }}
           onMarkPaid={handleMarkPaid}
           onMarkUnpaid={handleMarkUnpaid}
           onVoid={handleVoidBill}
+          onExchange={
+            billingSettings.exchange_enabled &&
+            selectedBill.status === "issued" &&
+            selectedBill.payment_status === "paid"
+              ? () => {
+                  setExchangeBillId(selectedBill.id);
+                  setView("exchange");
+                }
+              : undefined
+          }
         />
       </div>
     );
@@ -455,6 +600,18 @@ export default function BillsPage({
           >
             {orderBasedMode ? "Counter sale (no order)" : "+ New bill"}
           </button>
+          {billingSettings.exchange_enabled && (
+            <button
+              type="button"
+              onClick={() => {
+                setExchangeBillId(null);
+                setView("exchange");
+              }}
+              style={btnSecondaryStyle}
+            >
+              🔄 Exchange
+            </button>
+          )}
         </div>
       </div>
 
@@ -867,6 +1024,22 @@ export default function BillsPage({
                         }}
                       >
                         Unpaid
+                      </span>
+                    )}
+
+                    {Boolean(bill.credit_applied && bill.credit_applied > 0) && (
+                      <span
+                        style={{
+                          fontSize: "11px",
+                          fontWeight: 800,
+                          padding: "3px 9px",
+                          borderRadius: "99px",
+                          background: "#f0f9ff",
+                          color: "#0284c7",
+                          border: "1px solid #bae6fd",
+                        }}
+                      >
+                        Exchange
                       </span>
                     )}
 

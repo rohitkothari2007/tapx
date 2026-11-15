@@ -24,8 +24,30 @@ type Props = {
   billingSettings: BillingSettings;
   moduleConfigs?: Array<{ module_key: string; config: Record<string, any> | null }>;
   upiQrEnabled?: boolean;
+  exchange?: {
+    billId: string;
+    billNo: string;
+    returnLines: { bill_item_id: string; quantity: number; restock: boolean }[];
+    creditValue: number;
+    customerName: string | null;
+    customerPhone: string | null;
+    creditNoteAllowed: boolean;
+    reason: string;
+  };
   onCancel: () => void;
-  onIssued: (billId: string, opts?: { collectUpi?: boolean }) => Promise<void> | void;
+  onIssued: (
+    billId: string,
+    opts?: {
+      collectUpi?: boolean;
+      creditNote?: {
+        id: string;
+        note_no_text: string;
+        amount: number;
+        balance_left: number;
+        expires_on: string | null;
+      } | null;
+    }
+  ) => Promise<void> | void;
 };
 
 function createBlankLine(): DraftLine {
@@ -42,6 +64,7 @@ export default function QuickBill({
   billingSettings,
   moduleConfigs,
   upiQrEnabled = false,
+  exchange,
   onCancel,
   onIssued,
 }: Props) {
@@ -56,8 +79,15 @@ export default function QuickBill({
   const [savedItems, setSavedItems] = useState<SavedMenuItem[]>(initialMenuConfig);
   const [itemSearch, setItemSearch] = useState("");
   const [lines, setLines] = useState<DraftLine[]>([createBlankLine()]);
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
+  const [customerName, setCustomerName] = useState(exchange?.customerName || "");
+  const [customerPhone, setCustomerPhone] = useState(exchange?.customerPhone || "");
+
+  useEffect(() => {
+    if (exchange) {
+      if (exchange.customerName) setCustomerName(exchange.customerName);
+      if (exchange.customerPhone) setCustomerPhone(exchange.customerPhone);
+    }
+  }, [exchange]);
   const [discountType, setDiscountType] = useState<"none" | "amount" | "percent">("none");
   const [discountValueInput, setDiscountValueInput] = useState("");
   const [discountNote, setDiscountNote] = useState("");
@@ -194,6 +224,12 @@ export default function QuickBill({
     };
   }, [lines, discountType, discountValueInput, serviceChargeInput, billingSettings.round_off]);
 
+  const exchangeCredit = exchange?.creditValue || 0;
+  const netAfterDiscount = Math.max(0, preview.subtotal - preview.discountAmount);
+  const payableY = exchange ? Math.max(0, netAfterDiscount - exchangeCredit) : preview.estimatedTotal;
+  const balanceZ = exchange ? Math.max(0, exchangeCredit - netAfterDiscount) : 0;
+  const exchangeUnderpaid = Boolean(exchange && !exchange.creditNoteAllowed && balanceZ > 0);
+
   const validateAndBuildPayload = (paymentMethod?: PaymentMethod) => {
     if (lines.length < 1 || lines.length > 100) {
       return { error: "Please add between 1 and 100 items." };
@@ -247,6 +283,14 @@ export default function QuickBill({
       p_manual_items: manualItems,
     };
 
+    if (exchange) {
+      args.p_original_bill_id = exchange.billId;
+      args.p_return_lines = exchange.returnLines;
+      if (exchange.reason) {
+        args.p_reason = exchange.reason;
+      }
+    }
+
     const cleanCustomerName = customerName.trim();
     if (cleanCustomerName) {
       args.p_customer_name = cleanCustomerName;
@@ -283,7 +327,7 @@ export default function QuickBill({
     }
 
     const scTrim = serviceChargeInput.trim();
-    if (scTrim !== "") {
+    if (scTrim !== "" && !exchange) {
       const sc = Number(scTrim);
       if (!Number.isFinite(sc) || sc < 0 || sc > 30) {
         return { error: "Service charge % must be between 0 and 30." };
@@ -291,7 +335,7 @@ export default function QuickBill({
       args.p_service_charge_pct = Math.round(sc * 100) / 100;
     }
 
-    if (paymentMethod) {
+    if (paymentMethod && (!exchange || payableY > 0)) {
       args.p_payment_method = paymentMethod;
     }
 
@@ -302,8 +346,13 @@ export default function QuickBill({
     if (submittingRef.current || issuing) return;
     setErrorMsg("");
 
+    const isExchange = Boolean(exchange);
+    const rpcName = isExchange ? "create_tapx_exchange" : "create_tapx_bill";
+
     const isUpiCollect = paymentMethod === "upi" && Boolean(upiQrEnabled);
-    const check = validateAndBuildPayload(isUpiCollect ? undefined : paymentMethod);
+    const check = validateAndBuildPayload(
+      isUpiCollect || (isExchange && payableY === 0) ? undefined : paymentMethod
+    );
     if ("error" in check) {
       setErrorMsg(check.error || "Please check your entries.");
       return;
@@ -313,7 +362,7 @@ export default function QuickBill({
     setIssuing(true);
     try {
       const { data, error: rpcErr } = await supabase.rpc(
-        "create_tapx_bill",
+        rpcName,
         check.args
       );
       if (rpcErr) {
@@ -321,14 +370,26 @@ export default function QuickBill({
         return;
       }
 
-      const row = Array.isArray(data) ? data[0] : data;
-      const billId = row?.id ? String(row.id) : "";
-      if (!billId) {
-        setErrorMsg("Bill was created without an ID. Please refresh the bills list.");
-        return;
+      if (isExchange) {
+        const billObj = data?.bill;
+        const billId = billObj?.id ? String(billObj.id) : "";
+        if (!billId) {
+          setErrorMsg("Exchange bill was created without an ID. Please refresh the bills list.");
+          return;
+        }
+        await onIssued(billId, {
+          collectUpi: isUpiCollect,
+          creditNote: data?.credit_note || null,
+        });
+      } else {
+        const row = Array.isArray(data) ? data[0] : data;
+        const billId = row?.id ? String(row.id) : "";
+        if (!billId) {
+          setErrorMsg("Bill was created without an ID. Please refresh the bills list.");
+          return;
+        }
+        await onIssued(billId, isUpiCollect ? { collectUpi: true } : undefined);
       }
-
-      await onIssued(billId, isUpiCollect ? { collectUpi: true } : undefined);
     } catch (err: any) {
       setErrorMsg(err?.message || "Failed to issue bill.");
     } finally {
@@ -339,6 +400,44 @@ export default function QuickBill({
 
   return (
     <div className="quickbill-root" style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "160px" }}>
+      {exchange && (
+        <div
+          style={{
+            padding: "12px 16px",
+            borderRadius: "12px",
+            background: "#eff6ff",
+            border: "1px solid #bfdbfe",
+            color: "#1e40af",
+            fontSize: "14px",
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "10px",
+          }}
+        >
+          <div>
+            Exchange for bill {exchange.billNo} — customer returns {formatMoney(exchange.creditValue)}
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              border: "1px solid #93c5fd",
+              background: "#ffffff",
+              color: "#1d4ed8",
+              borderRadius: "8px",
+              padding: "6px 12px",
+              fontSize: "12.5px",
+              fontWeight: 700,
+              cursor: "pointer",
+              minHeight: "44px",
+            }}
+          >
+            Cancel exchange
+          </button>
+        </div>
+      )}
       <style>{`
         .quickbill-item-row {
           padding: 10px;
@@ -884,7 +983,7 @@ export default function QuickBill({
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "5px", fontSize: "13.5px", color: "#334155" }}>
           <div style={summaryRowStyle}>
-            <span>Subtotal</span>
+            <span>{exchange ? "New items total" : "Subtotal"}</span>
             <span>{formatMoney(preview.subtotal)}</span>
           </div>
           {preview.discountAmount > 0 && (
@@ -893,13 +992,19 @@ export default function QuickBill({
               <span>-{formatMoney(preview.discountAmount)}</span>
             </div>
           )}
-          {preview.serviceCharge > 0 && (
+          {exchange && (
+            <div style={{ ...summaryRowStyle, color: "#0284c7" }}>
+              <span>Returned items credit</span>
+              <span>-{formatMoney(exchangeCredit)}</span>
+            </div>
+          )}
+          {preview.serviceCharge > 0 && !exchange && (
             <div style={summaryRowStyle}>
               <span>Service charge ({preview.serviceChargePct}%)</span>
               <span>{formatMoney(preview.serviceCharge)}</span>
             </div>
           )}
-          {preview.roundOffDelta !== 0 && (
+          {preview.roundOffDelta !== 0 && !exchange && (
             <div style={summaryRowStyle}>
               <span>Estimated round-off</span>
               <span>
@@ -918,9 +1023,23 @@ export default function QuickBill({
               color: "#0f172a",
             }}
           >
-            <span>Estimated Total</span>
-            <span>{formatMoney(preview.estimatedTotal)}</span>
+            <span>{exchange ? "Customer pays" : "Estimated Total"}</span>
+            <span>{formatMoney(exchange ? payableY : preview.estimatedTotal)}</span>
           </div>
+
+          {exchange && balanceZ > 0 && (
+            <div style={{ marginTop: "6px" }}>
+              {exchange.creditNoteAllowed ? (
+                <div style={{ fontSize: "12.5px", color: "#0284c7", fontWeight: 600 }}>
+                  ₹{formatMoney(balanceZ)} will stay as a credit note for the customer.
+                </div>
+              ) : (
+                <div style={{ fontSize: "12.5px", color: "#d97706", fontWeight: 700 }}>
+                  Add items worth at least ₹{formatMoney(balanceZ)} more.
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -952,55 +1071,79 @@ export default function QuickBill({
         >
           <div>
             <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 700 }}>
-              ESTIMATED TOTAL
+              {exchange ? "CUSTOMER PAYS" : "ESTIMATED TOTAL"}
             </div>
             <div style={{ fontSize: "20px", fontWeight: 800 }}>
-              {formatMoney(preview.estimatedTotal)}
+              {formatMoney(exchange ? payableY : preview.estimatedTotal)}
             </div>
           </div>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+          {exchange && payableY === 0 ? (
             <button
               type="button"
-              disabled={issuing}
-              onClick={() => {
-                setShowPaidChooser(false);
-                void submitBill();
-              }}
-              style={{
-                border: "1px solid rgba(255,255,255,0.28)",
-                background: "rgba(255,255,255,0.12)",
-                color: "#ffffff",
-                borderRadius: "10px",
-                padding: "12px 16px",
-                fontSize: "14px",
-                fontWeight: 700,
-                cursor: "pointer",
-                minHeight: "46px",
-              }}
-            >
-              {issuing ? "Issuing..." : "Issue bill"}
-            </button>
-
-            <button
-              type="button"
-              disabled={issuing}
-              onClick={() => setShowPaidChooser((v) => !v)}
+              disabled={issuing || exchangeUnderpaid}
+              onClick={() => void submitBill()}
               style={{
                 border: 0,
                 background: "#22c55e",
                 color: "#052e16",
                 borderRadius: "10px",
-                padding: "12px 16px",
+                padding: "12px 18px",
                 fontSize: "14px",
                 fontWeight: 800,
-                cursor: "pointer",
+                cursor: issuing || exchangeUnderpaid ? "not-allowed" : "pointer",
+                opacity: issuing || exchangeUnderpaid ? 0.5 : 1,
                 minHeight: "46px",
               }}
             >
-              {issuing ? "Issuing..." : "Issue & mark paid"}
+              {issuing ? "Completing exchange..." : "Complete exchange"}
             </button>
-          </div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              <button
+                type="button"
+                disabled={issuing || exchangeUnderpaid}
+                onClick={() => {
+                  setShowPaidChooser(false);
+                  void submitBill();
+                }}
+                style={{
+                  border: "1px solid rgba(255,255,255,0.28)",
+                  background: "rgba(255,255,255,0.12)",
+                  color: "#ffffff",
+                  borderRadius: "10px",
+                  padding: "12px 16px",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  cursor: issuing || exchangeUnderpaid ? "not-allowed" : "pointer",
+                  opacity: issuing || exchangeUnderpaid ? 0.5 : 1,
+                  minHeight: "46px",
+                }}
+              >
+                {issuing ? "Issuing..." : "Issue bill"}
+              </button>
+
+              <button
+                type="button"
+                disabled={issuing || exchangeUnderpaid}
+                onClick={() => setShowPaidChooser((v) => !v)}
+                style={{
+                  border: 0,
+                  background: "#22c55e",
+                  color: "#052e16",
+                  borderRadius: "10px",
+                  padding: "12px 16px",
+                  fontSize: "14px",
+                  fontWeight: 800,
+                  cursor: issuing || exchangeUnderpaid ? "not-allowed" : "pointer",
+                  opacity: issuing || exchangeUnderpaid ? 0.5 : 1,
+                  minHeight: "46px",
+                }}
+              >
+                {issuing ? "Issuing..." : "Issue & mark paid"}
+              </button>
+            </div>
+          )}
         </div>
 
         {showPaidChooser && !issuing && (
