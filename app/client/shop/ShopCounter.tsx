@@ -4,10 +4,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "../../lib/supabase";
 import {
   BillingSettings,
+  CreditNoteSearchItem,
   PaymentMethod,
   formatMoney,
   hasAtMostDecimals,
 } from "../../lib/billing";
+import { CreditNotePickerSheet } from "../billing/CreditNotesPage";
 import {
   CatalogCategory,
   CatalogItem,
@@ -127,6 +129,11 @@ export default function ShopCounter({
   const [issuing, setIssuing] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const submittingRef = useRef(false);
+
+  // Credit Note State (used when billingSettings.exchange_enabled && !exchange)
+  const [selectedCreditNote, setSelectedCreditNote] = useState<CreditNoteSearchItem | null>(null);
+  const [showCreditNotePicker, setShowCreditNotePicker] = useState(false);
+  const canUseCreditNote = Boolean(billingSettings.exchange_enabled) && !exchange;
 
   // Refs for focusing inputs
   const priceInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -486,6 +493,16 @@ export default function ShopCounter({
   const balanceZ = exchange ? Math.max(0, exchangeCredit - netAfterDiscount) : 0;
   const exchangeUnderpaid = Boolean(exchange && !exchange.creditNoteAllowed && balanceZ > 0);
 
+  // Credit Note calculations
+  const creditBalance = selectedCreditNote?.balance || 0;
+  const creditApplied = selectedCreditNote ? Math.min(creditBalance, netAfterDiscount) : 0;
+  const creditPayableY = selectedCreditNote
+    ? Math.max(0, netAfterDiscount - creditBalance)
+    : preview.estimatedTotal;
+  const creditBalanceRemaining = selectedCreditNote
+    ? Math.max(0, creditBalance - netAfterDiscount)
+    : 0;
+
   // Validation logic
   const validateCart = (): { error?: string; args?: Record<string, any> } => {
     if (lines.length === 0) {
@@ -622,6 +639,8 @@ export default function ShopCounter({
       if (exchange.reason) {
         args.p_reason = exchange.reason;
       }
+    } else if (selectedCreditNote) {
+      args.p_credit_note_id = selectedCreditNote.id;
     }
 
     return { args };
@@ -642,9 +661,15 @@ export default function ShopCounter({
     const rpcName = isExchange ? "create_tapx_exchange" : "create_tapx_bill";
 
     const isUpiCollect = paymentMethod === "upi" && Boolean(upiQrEnabled);
+    const isCreditFull = Boolean(selectedCreditNote && creditPayableY === 0);
 
     const payload = { ...validation.args };
-    if (paymentMethod && !isUpiCollect && (!isExchange || payableY > 0)) {
+    if (
+      paymentMethod &&
+      !isUpiCollect &&
+      (!isExchange || payableY > 0) &&
+      !isCreditFull
+    ) {
       payload.p_payment_method = paymentMethod;
     }
 
@@ -680,6 +705,7 @@ export default function ShopCounter({
           setSubmitError("Bill was created without an ID. Please check Bills list.");
           return;
         }
+        setSelectedCreditNote(null);
         await onIssued(billId, isUpiCollect ? { collectUpi: true } : undefined);
       }
     } catch (err: any) {
@@ -1364,6 +1390,63 @@ export default function ShopCounter({
                 </div>
               )}
 
+              {/* Credit Note Row */}
+              {canUseCreditNote && (
+                <div
+                  style={{
+                    ...totalRowStyle,
+                    padding: "6px 0",
+                    borderTop: "1px dashed #e2e8f0",
+                    borderBottom: "1px dashed #e2e8f0",
+                    margin: "4px 0",
+                  }}
+                >
+                  <span style={{ fontWeight: 600, color: "#0f172a" }}>Credit note</span>
+                  {selectedCreditNote ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "13px", color: "#0284c7", fontWeight: 700 }}>
+                        {selectedCreditNote.note_no_text} - {formatMoney(creditApplied)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCreditNote(null)}
+                        style={{
+                          background: "#fee2e2",
+                          color: "#991b1b",
+                          border: 0,
+                          borderRadius: "6px",
+                          padding: "3px 8px",
+                          fontSize: "12px",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          minHeight: "28px",
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowCreditNotePicker(true)}
+                      style={{
+                        background: "#f1f5f9",
+                        color: "#0f172a",
+                        border: "1px solid #cbd5e1",
+                        borderRadius: "8px",
+                        padding: "6px 12px",
+                        fontSize: "13px",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        minHeight: "36px",
+                      }}
+                    >
+                      Use credit note
+                    </button>
+                  )}
+                </div>
+              )}
+
               {exchange && (
                 <div style={{ ...totalRowStyle, color: "#0284c7" }}>
                   <span>Returned items credit</span>
@@ -1371,7 +1454,7 @@ export default function ShopCounter({
                 </div>
               )}
 
-              {billingSettings.round_off && preview.roundOffDelta !== 0 && !exchange && (
+              {billingSettings.round_off && preview.roundOffDelta !== 0 && !exchange && !selectedCreditNote && (
                 <div style={totalRowStyle}>
                   <span style={{ color: "#64748b" }}>Round off</span>
                   <span>
@@ -1382,11 +1465,23 @@ export default function ShopCounter({
               )}
 
               <div style={grandTotalRowStyle}>
-                <span>{exchange ? "Customer pays" : "Total Amount"}</span>
+                <span>{exchange || selectedCreditNote ? "Customer pays" : "Total Amount"}</span>
                 <span style={grandTotalValueStyle}>
-                  {formatMoney(exchange ? payableY : preview.estimatedTotal)}
+                  {formatMoney(
+                    exchange
+                      ? payableY
+                      : selectedCreditNote
+                      ? creditPayableY
+                      : preview.estimatedTotal
+                  )}
                 </span>
               </div>
+
+              {selectedCreditNote && creditBalanceRemaining > 0 && (
+                <div style={{ marginTop: "6px", fontSize: "12px", color: "#0284c7", fontWeight: 600 }}>
+                  {formatMoney(creditBalanceRemaining)} will stay on the credit note.
+                </div>
+              )}
 
               {exchange && balanceZ > 0 && (
                 <div style={{ marginTop: "6px" }}>
@@ -1421,6 +1516,24 @@ export default function ShopCounter({
                     }}
                   >
                     Complete exchange
+                  </button>
+                </div>
+              ) : selectedCreditNote && creditPayableY === 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <button
+                    type="button"
+                    disabled={lines.length === 0 || issuing}
+                    onClick={() => handleIssueBill()}
+                    style={{
+                      ...payMethodBtnStyle,
+                      background: "#16a34a",
+                      color: "#ffffff",
+                      opacity: lines.length === 0 || issuing ? 0.5 : 1,
+                      minHeight: "46px",
+                      cursor: lines.length === 0 || issuing ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    Complete sale
                   </button>
                 </div>
               ) : (
@@ -1607,7 +1720,13 @@ export default function ShopCounter({
             {lines.length} {lines.length === 1 ? "item" : "items"}
           </div>
           <strong style={{ fontSize: "17px", color: "#0f172a" }}>
-            {formatMoney(exchange ? payableY : preview.estimatedTotal)}
+            {formatMoney(
+              exchange
+                ? payableY
+                : selectedCreditNote
+                ? creditPayableY
+                : preview.estimatedTotal
+            )}
           </strong>
         </div>
 
@@ -1848,6 +1967,16 @@ export default function ShopCounter({
           }
         }
       `}</style>
+
+      {/* Credit Note Picker Bottom Sheet / Modal */}
+      <CreditNotePickerSheet
+        businessId={businessId}
+        isOpen={showCreditNotePicker}
+        onClose={() => setShowCreditNotePicker(false)}
+        onSelect={(note) => {
+          setSelectedCreditNote(note);
+        }}
+      />
     </div>
   );
 }

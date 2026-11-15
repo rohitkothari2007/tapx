@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import { daysBetweenIST, formatMoney, formatQuantity, shiftISTDate } from "../../lib/billing";
+import { daysBetweenIST, formatMoney, formatQuantity, shiftISTDate, SalesReportReturns } from "../../lib/billing";
 import { getISTDateStr } from "../../lib/orderNumber";
 
 type RangePreset =
@@ -69,6 +69,7 @@ interface SalesReportData {
   series: SalesReportSeriesItem[];
   top_items: SalesReportTopItem[];
   hours: SalesReportHourItem[];
+  returns?: SalesReportReturns | null;
 }
 
 interface Props {
@@ -152,6 +153,19 @@ function escapeCsvCell(value: string | number | null | undefined): string {
   return `"${escaped}"`;
 }
 
+function hasReturnActivity(r?: SalesReportReturns | null): boolean {
+  if (!r) return false;
+  return (
+    r.notes_count > 0 ||
+    r.notes_total > 0 ||
+    r.refunded_total > 0 ||
+    r.pending_total > 0 ||
+    r.pending_count > 0 ||
+    r.expired_total > 0 ||
+    r.credit_used > 0
+  );
+}
+
 function sanitizeReportData(raw: any, fallbackGroup: GroupType): SalesReportData {
   const groupRaw = raw?.group;
   const group: GroupType =
@@ -218,6 +232,17 @@ function sanitizeReportData(raw: any, fallbackGroup: GroupType): SalesReportData
           revenue: Number(h?.revenue) || 0,
         }))
       : [],
+    returns: raw?.returns
+      ? {
+          notes_count: Number(raw.returns.notes_count) || 0,
+          notes_total: Number(raw.returns.notes_total) || 0,
+          refunded_total: Number(raw.returns.refunded_total) || 0,
+          pending_total: Number(raw.returns.pending_total) || 0,
+          pending_count: Number(raw.returns.pending_count) || 0,
+          expired_total: Number(raw.returns.expired_total) || 0,
+          credit_used: Number(raw.returns.credit_used) || 0,
+        }
+      : null,
   };
 }
 
@@ -499,6 +524,34 @@ export default function SalesReport({ businessId }: Props) {
           h.bills
         )},${escapeCsvCell(h.revenue)}`
       );
+    }
+
+    // 6. Returns & Credit
+    if (reportData.returns && hasReturnActivity(reportData.returns)) {
+      lines.push("");
+      lines.push("=== RETURNS & CREDIT ===");
+      lines.push("Metric,Count,Amount");
+      lines.push(
+        `Credit notes issued,${escapeCsvCell(reportData.returns.notes_count)},${escapeCsvCell(
+          reportData.returns.notes_total
+        )}`
+      );
+      lines.push(
+        `Credit used on bills,,${escapeCsvCell(reportData.returns.credit_used)}`
+      );
+      lines.push(
+        `Money given back,,${escapeCsvCell(reportData.returns.refunded_total)}`
+      );
+      lines.push(
+        `Credit waiting to be used,${escapeCsvCell(reportData.returns.pending_count)},${escapeCsvCell(
+          reportData.returns.pending_total
+        )}`
+      );
+      if (reportData.returns.expired_total > 0) {
+        lines.push(
+          `Credit expired unused,,${escapeCsvCell(reportData.returns.expired_total)}`
+        );
+      }
     }
 
     const csvContent = lines.join("\r\n");
@@ -968,6 +1021,131 @@ export default function SalesReport({ businessId }: Props) {
               )}
             </div>
           </div>
+
+          {/* SECTION 4B: RETURNS & CREDIT CARD */}
+          {hasReturnActivity(reportData.returns) && (
+            <div
+              style={{
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
+                borderRadius: "14px",
+                padding: "16px",
+                boxSizing: "border-box",
+              }}
+            >
+              <h3
+                style={{
+                  margin: "0 0 14px",
+                  fontSize: "16px",
+                  fontWeight: 800,
+                  color: "#0f172a",
+                }}
+              >
+                Returns & credit
+              </h3>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {/* Credit notes issued */}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    fontSize: "14px",
+                  }}
+                >
+                  <span style={{ color: "#475569" }}>Credit notes issued</span>
+                  <div style={{ textAlign: "right" }}>
+                    <strong style={{ color: "#0f172a" }}>
+                      {formatMoney(reportData.returns!.notes_total)}
+                    </strong>
+                    <span style={{ color: "#64748b", marginLeft: "6px", fontSize: "12px" }}>
+                      ({reportData.returns!.notes_count} {reportData.returns!.notes_count === 1 ? "note" : "notes"})
+                    </span>
+                  </div>
+                </div>
+
+                {/* Credit used on bills */}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    fontSize: "14px",
+                  }}
+                >
+                  <span style={{ color: "#475569" }}>Credit used on bills</span>
+                  <strong style={{ color: "#0f172a" }}>
+                    {formatMoney(reportData.returns!.credit_used)}
+                  </strong>
+                </div>
+
+                {/* Money given back */}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    fontSize: "14px",
+                  }}
+                >
+                  <span style={{ color: "#475569" }}>Money given back</span>
+                  <strong style={{ color: "#0f172a" }}>
+                    {formatMoney(reportData.returns!.refunded_total)}
+                  </strong>
+                </div>
+
+                {/* Credit waiting to be used */}
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    fontSize: "14px",
+                  }}
+                >
+                  <span style={{ color: "#475569" }}>Credit waiting to be used</span>
+                  <div style={{ textAlign: "right" }}>
+                    <strong style={{ color: "#0f172a" }}>
+                      {formatMoney(reportData.returns!.pending_total)}
+                    </strong>
+                    <span style={{ color: "#64748b", marginLeft: "6px", fontSize: "12px" }}>
+                      ({reportData.returns!.pending_count} {reportData.returns!.pending_count === 1 ? "note" : "notes"})
+                    </span>
+                  </div>
+                </div>
+
+                {/* Credit expired unused (only when above 0) */}
+                {reportData.returns!.expired_total > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      fontSize: "14px",
+                    }}
+                  >
+                    <span style={{ color: "#475569" }}>Credit expired unused</span>
+                    <strong style={{ color: "#94a3b8" }}>
+                      {formatMoney(reportData.returns!.expired_total)}
+                    </strong>
+                  </div>
+                )}
+              </div>
+
+              <div
+                style={{
+                  marginTop: "12px",
+                  paddingTop: "10px",
+                  borderTop: "1px dashed #e2e8f0",
+                  fontSize: "12px",
+                  color: "#64748b",
+                }}
+              >
+                Revenue counts money received. Credit waiting to be used is not revenue yet.
+              </div>
+            </div>
+          )}
 
           {/* SECTION 5: SALES OVER TIME CHART */}
           <div

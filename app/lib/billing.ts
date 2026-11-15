@@ -258,6 +258,61 @@ export type ExchangeSearchBill = {
   days_left: number | null;
 };
 
+export type CreditNoteSearchItem = {
+  id: string;
+  note_no_text: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  amount: number;
+  balance: number;
+  created_at: string;
+  expires_on: string | null;
+  expired: boolean;
+  original_bill_no_text?: string | null;
+};
+
+export type TapxCreditNoteRow = {
+  id: string;
+  business_id: string;
+  note_no_text: string;
+  note_day: string;
+  original_bill_id: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  reason: string | null;
+  expires_on: string | null;
+  amount: number;
+  used_amount: number;
+  refunded_amount: number;
+  status: "open" | "void";
+  refund_method: string | null;
+  refunded_at: string | null;
+  refund_note: string | null;
+  void_reason: string | null;
+  voided_at: string | null;
+  created_at: string;
+};
+
+export type TapxCreditNoteItemRow = {
+  id?: string;
+  credit_note_id: string;
+  item_name: string;
+  unit_price: number;
+  quantity: number;
+  credit_amount: number;
+  restock?: boolean;
+};
+
+export type SalesReportReturns = {
+  notes_count: number;
+  notes_total: number;
+  refunded_total: number;
+  pending_total: number;
+  pending_count: number;
+  expired_total: number;
+  credit_used: number;
+};
+
 /**
  * Shared INR money formatter across all billing views (Intl en-IN).
  * Shows 2 decimals unless the amount is a whole number.
