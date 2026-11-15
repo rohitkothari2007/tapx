@@ -21,8 +21,9 @@ import {
 type Props = {
   businessId: string;
   billingSettings: BillingSettings;
+  upiQrEnabled?: boolean;
   onCancel: () => void;
-  onIssued: (billId: string) => Promise<void> | void;
+  onIssued: (billId: string, opts?: { collectUpi?: boolean }) => Promise<void> | void;
 };
 
 interface CartLine {
@@ -55,6 +56,7 @@ const QUICK_DISCOUNT_OPTIONS: QuickDiscountOption[] = [
 export default function ShopCounter({
   businessId,
   billingSettings,
+  upiQrEnabled = false,
   onCancel,
   onIssued,
 }: Props) {
@@ -531,8 +533,10 @@ export default function ShopCounter({
       return;
     }
 
+    const isUpiCollect = paymentMethod === "upi" && Boolean(upiQrEnabled);
+
     const payload = { ...validation.args };
-    if (paymentMethod) {
+    if (paymentMethod && !isUpiCollect) {
       payload.p_payment_method = paymentMethod;
     }
 
@@ -557,7 +561,7 @@ export default function ShopCounter({
         return;
       }
 
-      await onIssued(billId);
+      await onIssued(billId, isUpiCollect ? { collectUpi: true } : undefined);
     } catch (err: any) {
       setSubmitError(err?.message || "An unexpected error occurred while creating the bill.");
     } finally {
@@ -1229,7 +1233,12 @@ export default function ShopCounter({
                     opacity: lines.length === 0 || issuing ? 0.5 : 1,
                   }}
                 >
-                  📱 UPI
+                  <span>📱 UPI</span>
+                  {upiQrEnabled && (
+                    <span style={{ fontSize: "10.5px", fontWeight: 500, opacity: 0.9 }}>
+                      Shows a QR to scan
+                    </span>
+                  )}
                 </button>
 
                 <button

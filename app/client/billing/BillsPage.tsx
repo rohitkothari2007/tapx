@@ -76,6 +76,15 @@ export default function BillsPage({
     return parseBillingSettings(row?.config);
   }, [moduleConfigs]);
 
+  const upiQrEnabled = useMemo(() => {
+    return (
+      Boolean((business?.upi_id || "").trim()) &&
+      Boolean(billingSettings.show_upi_qr)
+    );
+  }, [business?.upi_id, billingSettings.show_upi_qr]);
+
+  const [autoCollectUpiBillId, setAutoCollectUpiBillId] = useState<string | null>(null);
+
   const [view, setView] = useState<"list" | "quick" | "detail">("list");
   const [datePreset, setDatePreset] = useState<DatePreset>("today");
 
@@ -229,6 +238,7 @@ export default function BillsPage({
 
         setSelectedBill(billRes.data as TapxBill);
         setSelectedItems((itemsRes.data || []) as TapxBillItem[]);
+        setAutoCollectUpiBillId((prev) => (prev === billId ? prev : null));
         setView("detail");
       } catch (err: any) {
         setErrorMsg(err?.message || "Could not load bill.");
@@ -246,7 +256,15 @@ export default function BillsPage({
     }
   }, [initialBillId, business?.id, openBillById, onConsumedInitialBillId]);
 
-  const handleBillIssued = async (newBillId: string) => {
+  const handleBillIssued = async (
+    newBillId: string,
+    opts?: { collectUpi?: boolean }
+  ) => {
+    if (opts?.collectUpi) {
+      setAutoCollectUpiBillId(newBillId);
+    } else {
+      setAutoCollectUpiBillId(null);
+    }
     await Promise.all([
       openBillById(newBillId),
       loadBillsAndSummary(),
@@ -317,6 +335,7 @@ export default function BillsPage({
         <ShopCounter
           businessId={business.id}
           billingSettings={billingSettings}
+          upiQrEnabled={upiQrEnabled}
           onCancel={() => setView("list")}
           onIssued={handleBillIssued}
         />
@@ -327,6 +346,7 @@ export default function BillsPage({
         businessId={business.id}
         billingSettings={billingSettings}
         moduleConfigs={moduleConfigs}
+        upiQrEnabled={upiQrEnabled}
         onCancel={() => setView("list")}
         onIssued={handleBillIssued}
       />
@@ -343,6 +363,7 @@ export default function BillsPage({
         )}
         <BillDocument
           mode="dashboard"
+          autoOpenUpiCollect={selectedBill?.id === autoCollectUpiBillId}
           data={toBillDocumentDataFromDashboard(
             selectedBill,
             selectedItems,
@@ -352,6 +373,7 @@ export default function BillsPage({
           onBack={() => {
             setSelectedBill(null);
             setSelectedItems([]);
+            setAutoCollectUpiBillId(null);
             setView("list");
           }}
           onMarkPaid={handleMarkPaid}
