@@ -769,22 +769,52 @@ export default function ProductsPage({ businessId }: Props) {
           }
           .products-page-root .catalog-type-line1 {
             width: 100% !important;
+            flex: 0 0 auto !important;
+            min-width: 0 !important;
+            height: auto !important;
           }
           .products-page-root .catalog-type-line2 {
             display: flex !important;
             flex-wrap: wrap !important;
             align-items: center !important;
-            justify-content: space-between !important;
+            justify-content: flex-start !important;
             gap: 8px !important;
             width: 100% !important;
+          }
+          .products-page-root .catalog-type-price-wrap {
+            min-width: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
           }
           .products-page-root .catalog-price-badge {
             min-height: 44px !important;
             display: inline-flex !important;
             align-items: center !important;
           }
-          .products-page-root .catalog-type-actions-wrap button {
+          .products-page-root .catalog-type-actions-wrap {
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            flex-wrap: wrap !important;
+          }
+          .products-page-root .catalog-type-actions-wrap button:not(.catalog-active-switch) {
             min-height: 40px !important;
+          }
+          .products-page-root .catalog-active-switch {
+            min-height: 0 !important;
+            height: 22px !important;
+            width: 40px !important;
+            flex-shrink: 0 !important;
+            position: relative !important;
+          }
+          .products-page-root .catalog-active-switch::after {
+            content: "" !important;
+            position: absolute !important;
+            top: -9px !important;
+            bottom: -9px !important;
+            left: -4px !important;
+            right: -4px !important;
           }
           .products-page-root .products-progress-card {
             padding: 12px !important;
@@ -1467,6 +1497,7 @@ export default function ProductsPage({ businessId }: Props) {
                         <div className="catalog-type-line2">
                           {/* Inline Price Editor / Display */}
                           <div
+                            className="catalog-type-price-wrap"
                             style={{
                               display: "flex",
                               alignItems: "center",
@@ -1548,6 +1579,7 @@ export default function ProductsPage({ businessId }: Props) {
                             {/* Active Toggle Switch */}
                             <button
                               type="button"
+                              className="catalog-active-switch"
                               onClick={() => handleToggleTypeActive(item)}
                               style={{
                                 ...activeSwitchStyle,
