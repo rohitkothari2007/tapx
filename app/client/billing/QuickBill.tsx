@@ -4,12 +4,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import {
   BillingSettings,
+  CreditNoteSearchItem,
   PaymentMethod,
   SavedMenuItem,
   formatMoney,
   hasAtMostDecimals,
   parseSavedItemsFromConfig,
 } from "../../lib/billing";
+import { CreditNotePickerSheet } from "./CreditNotesPage";
 
 type DraftLine = {
   key: string;
@@ -101,6 +103,11 @@ export default function QuickBill({
   const [issuing, setIssuing] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const submittingRef = useRef(false);
+
+  // Credit Note State (used when billingSettings.exchange_enabled && !exchange)
+  const [selectedCreditNote, setSelectedCreditNote] = useState<CreditNoteSearchItem | null>(null);
+  const [showCreditNotePicker, setShowCreditNotePicker] = useState(false);
+  const canUseCreditNote = Boolean(billingSettings.exchange_enabled) && !exchange;
 
   // Sync saved items from digital_menu module config the same way the dashboard loads it
   useEffect(() => {
@@ -226,9 +233,22 @@ export default function QuickBill({
 
   const exchangeCredit = exchange?.creditValue || 0;
   const netAfterDiscount = Math.max(0, preview.subtotal - preview.discountAmount);
-  const payableY = exchange ? Math.max(0, netAfterDiscount - exchangeCredit) : preview.estimatedTotal;
+  const afterCreditEx = Math.max(0, Math.round((netAfterDiscount - exchangeCredit) * 100) / 100);
+  const payableY = exchange ? (billingSettings.round_off ? Math.round(afterCreditEx) : afterCreditEx) : preview.estimatedTotal;
   const balanceZ = exchange ? Math.max(0, exchangeCredit - netAfterDiscount) : 0;
   const exchangeUnderpaid = Boolean(exchange && !exchange.creditNoteAllowed && balanceZ > 0);
+
+  // Credit Note calculations
+  const creditBalance = selectedCreditNote?.balance || 0;
+  const dueBeforeCredit = netAfterDiscount + preview.serviceCharge;
+  const creditApplied = selectedCreditNote ? Math.min(creditBalance, dueBeforeCredit) : 0;
+  const afterCredit = Math.round((dueBeforeCredit - creditApplied) * 100) / 100;
+  const creditPayableY = selectedCreditNote
+    ? (billingSettings.round_off ? Math.round(afterCredit) : afterCredit)
+    : preview.estimatedTotal;
+  const creditBalanceRemaining = selectedCreditNote
+    ? Math.max(0, Math.round((creditBalance - dueBeforeCredit) * 100) / 100)
+    : 0;
 
   const validateAndBuildPayload = (paymentMethod?: PaymentMethod) => {
     if (lines.length < 1 || lines.length > 100) {
@@ -289,6 +309,8 @@ export default function QuickBill({
       if (exchange.reason) {
         args.p_reason = exchange.reason;
       }
+    } else if (selectedCreditNote) {
+      args.p_credit_note_id = selectedCreditNote.id;
     }
 
     const cleanCustomerName = customerName.trim();
@@ -350,8 +372,9 @@ export default function QuickBill({
     const rpcName = isExchange ? "create_tapx_exchange" : "create_tapx_bill";
 
     const isUpiCollect = paymentMethod === "upi" && Boolean(upiQrEnabled);
+    const isCreditFull = Boolean(selectedCreditNote && creditPayableY === 0);
     const check = validateAndBuildPayload(
-      isUpiCollect || (isExchange && payableY === 0) ? undefined : paymentMethod
+      isUpiCollect || (isExchange && payableY === 0) || isCreditFull ? undefined : paymentMethod
     );
     if ("error" in check) {
       setErrorMsg(check.error || "Please check your entries.");
@@ -388,6 +411,7 @@ export default function QuickBill({
           setErrorMsg("Bill was created without an ID. Please refresh the bills list.");
           return;
         }
+        setSelectedCreditNote(null);
         await onIssued(billId, isUpiCollect ? { collectUpi: true } : undefined);
       }
     } catch (err: any) {
@@ -992,6 +1016,61 @@ export default function QuickBill({
               <span>-{formatMoney(preview.discountAmount)}</span>
             </div>
           )}
+          {canUseCreditNote && (
+            <div
+              style={{
+                ...summaryRowStyle,
+                padding: "6px 0",
+                borderTop: "1px dashed #e2e8f0",
+                borderBottom: "1px dashed #e2e8f0",
+                margin: "4px 0",
+              }}
+            >
+              <span style={{ fontWeight: 600, color: "#0f172a" }}>Credit note</span>
+              {selectedCreditNote ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "13px", color: "#0284c7", fontWeight: 700 }}>
+                    {selectedCreditNote.note_no_text} - {formatMoney(creditApplied)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCreditNote(null)}
+                    style={{
+                      background: "#fee2e2",
+                      color: "#991b1b",
+                      border: 0,
+                      borderRadius: "6px",
+                      padding: "3px 8px",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      minHeight: "28px",
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowCreditNotePicker(true)}
+                  style={{
+                    background: "#f1f5f9",
+                    color: "#0f172a",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: "8px",
+                    padding: "6px 12px",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    minHeight: "36px",
+                  }}
+                >
+                  Use credit note
+                </button>
+              )}
+            </div>
+          )}
           {exchange && (
             <div style={{ ...summaryRowStyle, color: "#0284c7" }}>
               <span>Returned items credit</span>
@@ -1004,7 +1083,7 @@ export default function QuickBill({
               <span>{formatMoney(preview.serviceCharge)}</span>
             </div>
           )}
-          {preview.roundOffDelta !== 0 && !exchange && (
+          {preview.roundOffDelta !== 0 && !exchange && !selectedCreditNote && (
             <div style={summaryRowStyle}>
               <span>Estimated round-off</span>
               <span>
@@ -1023,9 +1102,15 @@ export default function QuickBill({
               color: "#0f172a",
             }}
           >
-            <span>{exchange ? "Customer pays" : "Estimated Total"}</span>
-            <span>{formatMoney(exchange ? payableY : preview.estimatedTotal)}</span>
+            <span>{exchange || selectedCreditNote ? "Customer pays" : "Estimated Total"}</span>
+            <span>{formatMoney(exchange ? payableY : selectedCreditNote ? creditPayableY : preview.estimatedTotal)}</span>
           </div>
+
+          {selectedCreditNote && creditBalanceRemaining > 0 && (
+            <div style={{ marginTop: "6px", fontSize: "12.5px", color: "#0284c7", fontWeight: 600 }}>
+              {formatMoney(creditBalanceRemaining)} will stay on the credit note.
+            </div>
+          )}
 
           {exchange && balanceZ > 0 && (
             <div style={{ marginTop: "6px" }}>
@@ -1071,10 +1156,10 @@ export default function QuickBill({
         >
           <div>
             <div style={{ fontSize: "11px", color: "#94a3b8", fontWeight: 700 }}>
-              {exchange ? "CUSTOMER PAYS" : "ESTIMATED TOTAL"}
+              {exchange || selectedCreditNote ? "CUSTOMER PAYS" : "ESTIMATED TOTAL"}
             </div>
             <div style={{ fontSize: "20px", fontWeight: 800 }}>
-              {formatMoney(exchange ? payableY : preview.estimatedTotal)}
+              {formatMoney(exchange ? payableY : selectedCreditNote ? creditPayableY : preview.estimatedTotal)}
             </div>
           </div>
 
@@ -1097,6 +1182,26 @@ export default function QuickBill({
               }}
             >
               {issuing ? "Completing exchange..." : "Complete exchange"}
+            </button>
+          ) : selectedCreditNote && creditPayableY === 0 ? (
+            <button
+              type="button"
+              disabled={issuing}
+              onClick={() => void submitBill()}
+              style={{
+                border: 0,
+                background: "#22c55e",
+                color: "#052e16",
+                borderRadius: "10px",
+                padding: "12px 18px",
+                fontSize: "14px",
+                fontWeight: 800,
+                cursor: issuing ? "not-allowed" : "pointer",
+                opacity: issuing ? 0.5 : 1,
+                minHeight: "46px",
+              }}
+            >
+              {issuing ? "Completing sale..." : "Complete sale"}
             </button>
           ) : (
             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
@@ -1185,6 +1290,16 @@ export default function QuickBill({
           </div>
         )}
       </div>
+
+      {/* Credit Note Picker Bottom Sheet / Modal */}
+      <CreditNotePickerSheet
+        businessId={businessId}
+        isOpen={showCreditNotePicker}
+        onClose={() => setShowCreditNotePicker(false)}
+        onSelect={(note) => {
+          setSelectedCreditNote(note);
+        }}
+      />
     </div>
   );
 }

@@ -32,6 +32,7 @@ import RemindersPage, { useRemindersData } from "./RemindersPage";
 import BillingSettingsCard from "./billing/BillingSettingsCard";
 import BillsPage from "./billing/BillsPage";
 import SalesReport from "./billing/SalesReport";
+import CreditNotesPage from "./billing/CreditNotesPage";
 import ProductsPage from "./shop/ProductsPage";
 import BillFromOrders from "./billing/BillFromOrders";
 import UnbilledOrdersWarning from "./billing/UnbilledOrdersWarning";
@@ -255,6 +256,7 @@ type PageKey =
   | "requests"
   | "bills"
   | "sales_report"
+  | "credit_notes"
   | "products"
   | "appointments"
   | "menu"
@@ -2273,6 +2275,12 @@ export default function ClientPortalPage() {
       show: hasBilling,
     },
     {
+      key: "credit_notes" as PageKey,
+      label: "Credit notes",
+      icon: "🎫",
+      show: hasBilling && billingSettings.exchange_enabled,
+    },
+    {
       key: "products" as PageKey,
       label: "Products",
       icon: "🛍️",
@@ -2982,6 +2990,13 @@ export default function ClientPortalPage() {
 
           {activePage === "sales_report" && hasBilling && business && (
             <SalesReport businessId={business.id} />
+          )}
+
+          {activePage === "credit_notes" && hasBilling && business && (
+            <CreditNotesPage
+              business={business}
+              billingSettings={billingSettings}
+            />
           )}
 
           {activePage === "products" && hasBilling && hasRetailBilling && business && (
