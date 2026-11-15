@@ -195,7 +195,7 @@ export function CreditNotePickerSheet({
             type="search"
             value={query}
             onChange={handleQueryChange}
-            placeholder="Phone, name or credit note number"
+            placeholder="Phone, name or note no."
             autoFocus
             style={{
               width: "100%",
@@ -415,6 +415,7 @@ export default function CreditNotesPage({
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null);
   const [itemsCache, setItemsCache] = useState<Record<string, TapxCreditNoteItemRow[]>>({});
   const [loadingItemsFor, setLoadingItemsFor] = useState<string | null>(null);
+  const [itemsErrorNoteId, setItemsErrorNoteId] = useState<string | null>(null);
 
   // Modals
   const [printingNote, setPrintingNote] = useState<TapxCreditNoteRow | null>(null);
@@ -431,6 +432,7 @@ export default function CreditNotesPage({
   const [voidReasonText, setVoidReasonText] = useState("");
 
   const PAGE_SIZE = 50;
+  const notesCountRef = useRef(PAGE_SIZE);
 
   // Derive status
   const deriveStatus = useCallback(
@@ -452,53 +454,65 @@ export default function CreditNotesPage({
     [todayIST]
   );
 
-  // Fetch initial notes
-  const fetchNotes = useCallback(async () => {
-    if (!businessId) return;
-    setLoading(true);
-    setErrorMsg("");
+  // Fetch initial notes or silent refresh
+  const fetchNotes = useCallback(
+    async (silent?: boolean) => {
+      if (!businessId) return;
+      if (!silent) {
+        setLoading(true);
+      }
+      setErrorMsg("");
 
-    try {
-      const { data, error, count } = await supabase
-        .from("tapx_credit_notes")
-        .select(
-          "id, business_id, note_no_text, note_day, original_bill_id, customer_name, customer_phone, reason, expires_on, amount, used_amount, refunded_amount, status, refund_method, refunded_at, refund_note, void_reason, voided_at, created_at",
-          { count: "exact" }
-        )
-        .eq("business_id", businessId)
-        .order("created_at", { ascending: false })
-        .range(0, PAGE_SIZE - 1);
+      const limit = Math.max(PAGE_SIZE, notesCountRef.current || PAGE_SIZE);
 
-      if (error) throw error;
+      try {
+        const { data, error, count } = await supabase
+          .from("tapx_credit_notes")
+          .select(
+            "id, business_id, note_no_text, note_day, original_bill_id, customer_name, customer_phone, reason, expires_on, amount, used_amount, refunded_amount, status, refund_method, refunded_at, refund_note, void_reason, voided_at, created_at",
+            { count: "exact" }
+          )
+          .eq("business_id", businessId)
+          .order("created_at", { ascending: false })
+          .range(0, limit - 1);
 
-      const loadedNotes = (data as TapxCreditNoteRow[]) || [];
-      setNotes(loadedNotes);
-      setHasMore(count !== null ? loadedNotes.length < count : loadedNotes.length === PAGE_SIZE);
+        if (error) throw error;
 
-      // Fetch original bills
-      const billIds = Array.from(
-        new Set(loadedNotes.map((n) => n.original_bill_id).filter(Boolean) as string[])
-      );
-      if (billIds.length > 0) {
-        const { data: billsData } = await supabase
-          .from("tapx_bills")
-          .select("id, bill_no_text")
-          .in("id", billIds);
+        const loadedNotes = (data as TapxCreditNoteRow[]) || [];
+        notesCountRef.current = loadedNotes.length;
+        setNotes(loadedNotes);
+        setHasMore(count !== null ? loadedNotes.length < count : loadedNotes.length === limit);
 
-        if (billsData) {
-          const map: Record<string, string> = {};
-          for (const b of billsData) {
-            map[b.id] = b.bill_no_text;
+        // Fetch original bills
+        const billIds = Array.from(
+          new Set(loadedNotes.map((n) => n.original_bill_id).filter(Boolean) as string[])
+        );
+        if (billIds.length > 0) {
+          const { data: billsData } = await supabase
+            .from("tapx_bills")
+            .select("id, bill_no_text")
+            .in("id", billIds);
+
+          if (billsData) {
+            const map: Record<string, string> = {};
+            for (const b of billsData) {
+              map[b.id] = b.bill_no_text;
+            }
+            setBillsMap((prev) => ({ ...prev, ...map }));
           }
-          setBillsMap(map);
+        }
+      } catch (err: any) {
+        if (!silent) {
+          setErrorMsg(err?.message || "Failed to load credit notes. Please try again.");
+        }
+      } finally {
+        if (!silent) {
+          setLoading(false);
         }
       }
-    } catch (err: any) {
-      setErrorMsg(err?.message || "Failed to load credit notes. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  }, [businessId]);
+    },
+    [businessId]
+  );
 
   useEffect(() => {
     void fetchNotes();
@@ -525,6 +539,7 @@ export default function CreditNotesPage({
 
       const moreNotes = (data as TapxCreditNoteRow[]) || [];
       const combined = [...notes, ...moreNotes];
+      notesCountRef.current = combined.length;
       setNotes(combined);
       setHasMore(count !== null ? combined.length < count : moreNotes.length === PAGE_SIZE);
 
@@ -565,15 +580,20 @@ export default function CreditNotesPage({
 
     if (!itemsCache[noteId]) {
       setLoadingItemsFor(noteId);
+      setItemsErrorNoteId(null);
       try {
         const { data, error } = await supabase
           .from("tapx_credit_note_items")
           .select("*")
           .eq("credit_note_id", noteId);
 
-        if (!error && data) {
+        if (error) {
+          setItemsErrorNoteId(noteId);
+        } else if (data) {
           setItemsCache((prev) => ({ ...prev, [noteId]: data as TapxCreditNoteItemRow[] }));
         }
+      } catch {
+        setItemsErrorNoteId(noteId);
       } finally {
         setLoadingItemsFor(null);
       }
@@ -600,7 +620,7 @@ export default function CreditNotesPage({
 
       setRefundNote(null);
       setRefundNoteText("");
-      void fetchNotes();
+      void fetchNotes(true);
     } catch (err: any) {
       setActionError(err?.message || "Failed to process refund.");
     } finally {
@@ -632,7 +652,7 @@ export default function CreditNotesPage({
 
       setVoidNote(null);
       setVoidReasonText("");
-      void fetchNotes();
+      void fetchNotes(true);
     } catch (err: any) {
       setActionError(err?.message || "Failed to cancel credit note.");
     } finally {
@@ -724,7 +744,7 @@ export default function CreditNotesPage({
           type="search"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search by note number, customer name, phone..."
+          placeholder="Note no., name or phone"
           style={{
             width: "100%",
             boxSizing: "border-box",
@@ -1025,10 +1045,15 @@ export default function CreditNotesPage({
                       style={{
                         fontSize: "14px",
                         fontWeight: 700,
-                        color: balance > 0 ? "#16a34a" : "#64748b",
+                        color:
+                          derived === "Open"
+                            ? "#16a34a"
+                            : derived === "Expired"
+                            ? "#94a3b8"
+                            : "#64748b",
                       }}
                     >
-                      {formatMoney(balance)}
+                      {derived === "Cancelled" ? "-" : formatMoney(balance)}
                     </div>
                   </div>
                   {refunded > 0 && (
@@ -1102,6 +1127,10 @@ export default function CreditNotesPage({
 
                       {loadingItemsFor === note.id && (
                         <div style={{ fontSize: "13px", color: "#64748b" }}>Loading items...</div>
+                      )}
+
+                      {!loadingItemsFor && itemsErrorNoteId === note.id && (
+                        <div style={{ fontSize: "13px", color: "#dc2626" }}>Could not load items.</div>
                       )}
 
                       {itemsCache[note.id] && itemsCache[note.id].length === 0 && (

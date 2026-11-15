@@ -489,18 +489,21 @@ export default function ShopCounter({
 
   const exchangeCredit = exchange?.creditValue || 0;
   const netAfterDiscount = Math.max(0, preview.subtotal - preview.discountAmount);
-  const payableY = exchange ? Math.max(0, netAfterDiscount - exchangeCredit) : preview.estimatedTotal;
+  const afterCreditEx = Math.max(0, Math.round((netAfterDiscount - exchangeCredit) * 100) / 100);
+  const payableY = exchange ? (billingSettings.round_off ? Math.round(afterCreditEx) : afterCreditEx) : preview.estimatedTotal;
   const balanceZ = exchange ? Math.max(0, exchangeCredit - netAfterDiscount) : 0;
   const exchangeUnderpaid = Boolean(exchange && !exchange.creditNoteAllowed && balanceZ > 0);
 
   // Credit Note calculations
   const creditBalance = selectedCreditNote?.balance || 0;
-  const creditApplied = selectedCreditNote ? Math.min(creditBalance, netAfterDiscount) : 0;
+  const dueBeforeCredit = netAfterDiscount;
+  const creditApplied = selectedCreditNote ? Math.min(creditBalance, dueBeforeCredit) : 0;
+  const afterCredit = Math.round((dueBeforeCredit - creditApplied) * 100) / 100;
   const creditPayableY = selectedCreditNote
-    ? Math.max(0, netAfterDiscount - creditBalance)
+    ? (billingSettings.round_off ? Math.round(afterCredit) : afterCredit)
     : preview.estimatedTotal;
   const creditBalanceRemaining = selectedCreditNote
-    ? Math.max(0, creditBalance - netAfterDiscount)
+    ? Math.max(0, Math.round((creditBalance - dueBeforeCredit) * 100) / 100)
     : 0;
 
   // Validation logic
