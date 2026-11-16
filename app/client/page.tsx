@@ -33,6 +33,7 @@ import BillingSettingsCard from "./billing/BillingSettingsCard";
 import BillsPage from "./billing/BillsPage";
 import SalesReport from "./billing/SalesReport";
 import CreditNotesPage from "./billing/CreditNotesPage";
+import UnpaidBillsPage from "./billing/UnpaidBillsPage";
 import ProductsPage from "./shop/ProductsPage";
 import BillFromOrders from "./billing/BillFromOrders";
 import UnbilledOrdersWarning from "./billing/UnbilledOrdersWarning";
@@ -257,6 +258,7 @@ type PageKey =
   | "bills"
   | "sales_report"
   | "credit_notes"
+  | "unpaid_bills"
   | "products"
   | "appointments"
   | "menu"
@@ -2269,6 +2271,12 @@ export default function ClientPortalPage() {
       show: hasBilling,
     },
     {
+      key: "unpaid_bills" as PageKey,
+      label: "Unpaid bills",
+      icon: "⏳",
+      show: hasBilling,
+    },
+    {
       key: "sales_report" as PageKey,
       label: "Sales report",
       icon: "📊",
@@ -2996,6 +3004,14 @@ export default function ClientPortalPage() {
             <CreditNotesPage
               business={business}
               billingSettings={billingSettings}
+            />
+          )}
+
+          {activePage === "unpaid_bills" && hasBilling && business && (
+            <UnpaidBillsPage
+              business={business}
+              onOpenBill={openBillInBillsView}
+              onBillsChanged={loadPortal}
             />
           )}
 
