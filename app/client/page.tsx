@@ -2997,7 +2997,7 @@ export default function ClientPortalPage() {
           )}
 
           {activePage === "sales_report" && hasBilling && business && (
-            <SalesReport businessId={business.id} />
+            <SalesReport businessId={business.id} businessName={business.name} />
           )}
 
           {activePage === "credit_notes" && hasBilling && business && (

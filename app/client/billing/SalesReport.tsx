@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "../../lib/supabase";
 import { daysBetweenIST, formatMoney, formatQuantity, shiftISTDate, SalesReportReturns } from "../../lib/billing";
 import { getISTDateStr } from "../../lib/orderNumber";
+import { buildDailySummaryMessage, formatRangeLabel } from "../../lib/dailySummary";
 
 type RangePreset =
   | "today"
@@ -74,6 +75,7 @@ interface SalesReportData {
 
 interface Props {
   businessId: string;
+  businessName?: string;
 }
 
 const MONTH_NAMES = [
@@ -246,7 +248,7 @@ function sanitizeReportData(raw: any, fallbackGroup: GroupType): SalesReportData
   };
 }
 
-export default function SalesReport({ businessId }: Props) {
+export default function SalesReport({ businessId, businessName }: Props) {
   const todayIST = getISTDateStr();
 
   const [preset, setPreset] = useState<RangePreset>("today");
@@ -258,6 +260,110 @@ export default function SalesReport({ businessId }: Props) {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   const [reportData, setReportData] = useState<SalesReportData | null>(null);
+
+  // Outstanding dues across all time
+  const [outstanding, setOutstanding] = useState<{
+    count: number;
+    total: number;
+    capped: boolean;
+  } | null>(null);
+  const duesReqCountRef = useRef(0);
+
+  useEffect(() => {
+    if (!businessId) {
+      setOutstanding(null);
+      return;
+    }
+
+    const reqId = ++duesReqCountRef.current;
+
+    async function loadOutstandingDues() {
+      try {
+        const { data, error } = await supabase
+          .from("tapx_bills")
+          .select("total")
+          .eq("business_id", businessId)
+          .eq("payment_status", "unpaid")
+          .eq("status", "issued")
+          .gt("total", 0)
+          .limit(1000);
+
+        if (reqId !== duesReqCountRef.current) return;
+        if (error) {
+          setOutstanding(null);
+          return;
+        }
+
+        const rows = (data as { total: number }[]) || [];
+        const rawTotal = rows.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
+        const total = Math.round((rawTotal + Number.EPSILON) * 100) / 100;
+        setOutstanding({ count: rows.length, total, capped: rows.length === 1000 });
+      } catch {
+        if (reqId === duesReqCountRef.current) {
+          setOutstanding(null);
+        }
+      }
+    }
+
+    void loadOutstandingDues();
+  }, [businessId, reportData]);
+
+  const summaryText = useMemo(() => {
+    if (!reportData) return null;
+    return buildDailySummaryMessage({
+      businessName: businessName || null,
+      rangeLabel: formatRangeLabel(reportData.from, reportData.to, getISTDateStr()),
+      bills: reportData.totals.bills,
+      revenue: reportData.totals.revenue,
+      avgBill: reportData.totals.avg_bill,
+      unpaidCount: reportData.totals.unpaid_count,
+      unpaidTotal: reportData.totals.unpaid_total,
+      cash: reportData.payments.cash.total,
+      upi: reportData.payments.upi.total,
+      card: reportData.payments.card.total,
+      topItems: [...reportData.top_items]
+        .sort((a, b) => b.quantity - a.quantity || b.revenue - a.revenue)
+        .map((t) => ({ name: t.name, quantity: t.quantity })),
+      returns: reportData.returns
+        ? {
+            notes_count: reportData.returns.notes_count,
+            notes_total: reportData.returns.notes_total,
+          }
+        : null,
+      outstanding,
+    });
+  }, [reportData, businessName, outstanding]);
+
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopySummary = async () => {
+    if (!summaryText) return;
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+    }
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(summaryText);
+        setCopyFeedback("Copied ✓");
+      } else {
+        setCopyFeedback("Could not copy");
+      }
+    } catch {
+      setCopyFeedback("Could not copy");
+    }
+    copyTimerRef.current = setTimeout(() => {
+      setCopyFeedback(null);
+    }, 2000);
+  };
 
   // Request counter to safely ignore stale async responses
   const activeReqRef = useRef(0);
@@ -682,6 +788,27 @@ export default function SalesReport({ businessId }: Props) {
           >
             📥 Download CSV
           </button>
+          {!loading && summaryText && (
+            <>
+              <a
+                href={`https://wa.me/?text=${encodeURIComponent(summaryText)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ ...btnSecondaryStyle, textDecoration: "none" }}
+                title="Share summary on WhatsApp"
+              >
+                💬 Share summary
+              </a>
+              <button
+                type="button"
+                onClick={handleCopySummary}
+                style={btnSecondaryStyle}
+                title="Copy summary text"
+              >
+                {copyFeedback || "📋 Copy"}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
