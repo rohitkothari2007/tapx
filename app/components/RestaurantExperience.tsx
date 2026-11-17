@@ -782,20 +782,20 @@ export default function RestaurantExperience({
 
   useEffect(() => {
     if (typeof document === "undefined" || !isAnySheetOpen) return;
+    // Lock only the element that really scrolls: the full-screen layer when it exists,
+    // otherwise the page body. DiningLayerWrapper already locks the body while the layer is open.
     const container = getScrollContainer();
-    const origBodyOverflow = document.body.style.overflow;
-    let origContainerOverflow = "";
-    if (container instanceof HTMLElement) {
-      origContainerOverflow = container.style.overflow;
-      container.style.overflow = "hidden";
-    }
-    document.body.style.overflow = "hidden";
+    const target: HTMLElement = container instanceof HTMLElement ? container : document.body;
+    // Save and restore the two longhand properties separately. Never use the `overflow`
+    // shorthand here: writing it back as "" would wipe the inline overflow-y set by React.
+    const prevX = target.style.overflowX;
+    const prevY = target.style.overflowY;
+    target.style.overflowX = "hidden";
+    target.style.overflowY = "hidden";
 
     return () => {
-      document.body.style.overflow = origBodyOverflow;
-      if (container instanceof HTMLElement) {
-        container.style.overflow = origContainerOverflow;
-      }
+      target.style.overflowX = prevX;
+      target.style.overflowY = prevY;
     };
   }, [isAnySheetOpen, getScrollContainer]);
 
