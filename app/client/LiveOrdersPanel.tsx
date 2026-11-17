@@ -10,6 +10,12 @@ import {
   ordinalLabel,
   summarizeItemNames,
 } from "../lib/tableRounds";
+import {
+  buildKitchenSlip,
+  formatSlipTime,
+  printHtmlInHiddenFrame,
+  renderKitchenSlipsHtml,
+} from "../lib/kitchenSlip";
 
 export const LATE_ORDER_WARN_MINUTES = 10;
 export const LATE_ORDER_ALERT_MINUTES = 20;
@@ -360,6 +366,51 @@ export default function LiveOrdersPanel({
     [orders, liveBillLinks]
   );
 
+  const newPendingOrders = useMemo(
+    () => activeOrders.filter((o) => o.status === "pending"),
+    [activeOrders]
+  );
+
+  const [printNotice, setPrintNotice] = useState("");
+  const printNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (printNoticeTimerRef.current) clearTimeout(printNoticeTimerRef.current);
+    };
+  }, []);
+  const showPrintNotice = (text: string) => {
+    setPrintNotice(text);
+    if (printNoticeTimerRef.current) clearTimeout(printNoticeTimerRef.current);
+    printNoticeTimerRef.current = setTimeout(() => setPrintNotice(""), 5000);
+  };
+
+  const printOrders = (list: LiveOrder[]) => {
+    const printable = list.filter((o) => orderItems.some((i) => i.order_id === o.id));
+    if (printable.length === 0) {
+      showPrintNotice("Nothing to print yet.");
+      return;
+    }
+    const slips = printable.map((o) =>
+      buildKitchenSlip({
+        tableNumber: o.table_number,
+        addOnText: addOnBadgeText(roundInfo.get(o.id)?.round ?? 1),
+        orderLabel: formatOrderLabel(o, { showDayIfNotToday: true }),
+        createdAt: o.created_at,
+        items: orderItems
+          .filter((i) => i.order_id === o.id)
+          .map((i) => ({
+            item_name: i.item_name,
+            quantity: i.quantity,
+            special_request: i.special_request,
+            notes: i.notes,
+          })),
+        orderNote: o.notes,
+      })
+    );
+    const ok = printHtmlInHiddenFrame(renderKitchenSlipsHtml(slips, formatSlipTime(new Date())));
+    if (!ok) showPrintNotice("Could not open the print window.");
+  };
+
   // Detect newly arrived active orders for sound & highlight
   // A7: Sound/new-order highlight logic must keep working for new pending orders only;
   // moving an order to "served" must not trigger the new-order chime.
@@ -505,6 +556,25 @@ export default function LiveOrdersPanel({
           </button>
         </div>
       </div>
+
+      {printNotice && (
+        <div
+          role="status"
+          style={{
+            fontSize: "13px",
+            fontWeight: 600,
+            color: "#b91c1c",
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            borderRadius: "8px",
+            padding: "8px 10px",
+            margin: "0 0 12px",
+            boxSizing: "border-box",
+          }}
+        >
+          {printNotice}
+        </div>
+      )}
 
       {(() => {
         const renderSortSwitch = () => (
@@ -799,6 +869,16 @@ export default function LiveOrdersPanel({
                   Cancel
                 </button>
 
+                <button
+                  type="button"
+                  disabled={items.length === 0}
+                  onClick={() => printOrders([order])}
+                  style={{ ...styles.printButton, opacity: items.length === 0 ? 0.5 : 1 }}
+                  title={items.length === 0 ? "Items not loaded yet" : "Print kitchen slip (dishes only, no customer details)"}
+                >
+                  🖨 Print
+                </button>
+
                 {!order.archived_at &&
                   order.status !== "cancelled" &&
                   (onBillOrder || onOpenBill) &&
@@ -856,7 +936,21 @@ export default function LiveOrdersPanel({
                   <div style={{ ...styles.sectionHeaderTitle, margin: 0 }}>
                     Kitchen — New &amp; in progress ({newAndInProgressOrders.length})
                   </div>
-                  {newAndInProgressOrders.length >= 2 && renderSortSwitch()}
+                  {(newPendingOrders.length >= 2 || newAndInProgressOrders.length >= 2) && (
+                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" }}>
+                      {newPendingOrders.length >= 2 && (
+                        <button
+                          type="button"
+                          onClick={() => printOrders(newPendingOrders)}
+                          style={{ ...styles.printButton, fontWeight: 700 }}
+                          title="Print a kitchen slip for every new order, oldest first"
+                        >
+                          🖨 Print all new ({newPendingOrders.length})
+                        </button>
+                      )}
+                      {newAndInProgressOrders.length >= 2 && renderSortSwitch()}
+                    </div>
+                  )}
                 </div>
                 {newAndInProgressOrders.length === 0 ? (
                   <div style={styles.kitchenClearNote}>
@@ -1132,9 +1226,22 @@ export default function LiveOrdersPanel({
                 style={{
                   display: "flex",
                   justifyContent: "flex-end",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: "8px",
                   marginBottom: "12px",
                 }}
               >
+                {newPendingOrders.length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={() => printOrders(newPendingOrders)}
+                    style={{ ...styles.printButton, fontWeight: 700 }}
+                    title="Print a kitchen slip for every new order, oldest first"
+                  >
+                    🖨 Print all new ({newPendingOrders.length})
+                  </button>
+                )}
                 {renderSortSwitch()}
               </div>
             )}
@@ -1757,5 +1864,18 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
     padding: "6px 8px",
     fontFamily: "inherit",
+  },
+  printButton: {
+    padding: "11px 16px",
+    background: "#ffffff",
+    color: "#334155",
+    border: "1px solid #cbd5e1",
+    borderRadius: "10px",
+    fontSize: "13px",
+    fontWeight: 700,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    minHeight: "44px",
+    transition: "all 0.15s ease",
   },
 };
