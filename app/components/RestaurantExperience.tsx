@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 import { parseStandTableNumber, resolveSessionTableNumber } from "../lib/tableNumber";
 import { formatOrderLabel } from "../lib/orderNumber";
+import { isGuestRoundFresh, sumOrderTotals } from "../lib/tableRounds";
 import { WhatsAppIcon } from "./BrandIcons";
 import UpiPaymentModal from "./UpiPaymentModal";
 import { MENU_TOKENS, MENU_THEME_GLOBAL_CSS, formatDisplayName } from "../lib/menuTheme";
@@ -483,8 +484,56 @@ export default function RestaurantExperience({
 
   // Live order state
   const storageKey = `tapx_active_order_${business.id}_${device.device_code}`;
+  const idsKey = `tapx_order_ids_${business.id}_${device.device_code}`;
+
+  const readOrderIds = useCallback((): string[] => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem(idsKey);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((x): x is string => typeof x === "string" && Boolean(x));
+    } catch {
+      return [];
+    }
+  }, [idsKey]);
+
+  const addOrderId = useCallback(
+    (id: string) => {
+      if (!id || typeof window === "undefined") return;
+      try {
+        const current = readOrderIds();
+        const next = current.filter((x) => x !== id);
+        next.push(id);
+        const capped = next.slice(-12);
+        window.localStorage.setItem(idsKey, JSON.stringify(capped));
+      } catch {}
+    },
+    [idsKey, readOrderIds]
+  );
+
+  const removeOrderId = useCallback(
+    (id: string) => {
+      if (!id || typeof window === "undefined") return;
+      try {
+        const current = readOrderIds();
+        const next = current.filter((x) => x !== id);
+        window.localStorage.setItem(idsKey, JSON.stringify(next));
+      } catch {}
+    },
+    [idsKey, readOrderIds]
+  );
+
   const [currentOrder, setCurrentOrder] = useState<ActiveOrder | null>(null);
   const [currentOrderItems, setCurrentOrderItems] = useState<ActiveOrderItem[]>([]);
+  const [earlierRounds, setEarlierRounds] = useState<
+    { order: ActiveOrder; items: ActiveOrderItem[] }[]
+  >([]);
+  const earlierReqRef = useRef(0);
+  const earlierCacheRef = useRef(
+    new Map<string, { order: ActiveOrder; items: ActiveOrderItem[]; final: boolean }>()
+  );
   const [cancellingOrder, setCancellingOrder] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
 
@@ -1064,6 +1113,7 @@ export default function RestaurantExperience({
 
       if (orderErr || !orderData || (orderData as any).archived_at) {
         if (typeof window !== "undefined") window.localStorage.removeItem(storageKey);
+        removeOrderId(savedId);
         setCurrentOrder(null);
         setCurrentOrderItems([]);
         return;
@@ -1100,11 +1150,107 @@ export default function RestaurantExperience({
     }
   };
 
+  const loadEarlierRounds = async () => {
+    try {
+      if (typeof window === "undefined") return;
+      const latestId = window.localStorage.getItem(storageKey);
+      const ids = readOrderIds().filter((id) => id !== latestId);
+      if (ids.length === 0) {
+        setEarlierRounds([]);
+        return;
+      }
+
+      const reqId = ++earlierReqRef.current;
+
+      const responses = await Promise.all(
+        ids.map(async (id) => {
+          const cached = earlierCacheRef.current.get(id);
+          if (cached && cached.final === true) {
+            return { id, data: null, error: null, cached };
+          }
+          const { data, error } = await supabase.rpc("get_tap_order_status", {
+            p_order_id: id,
+          });
+          return { id, data, error, cached: null };
+        })
+      );
+
+      if (reqId !== earlierReqRef.current) {
+        return;
+      }
+
+      const validRounds: { order: ActiveOrder; items: ActiveOrderItem[] }[] = [];
+
+      for (const res of responses) {
+        if (res.cached) {
+          if (!isGuestRoundFresh(res.cached.order.created_at)) {
+            removeOrderId(res.id);
+            earlierCacheRef.current["delete"](res.id);
+            continue;
+          }
+          validRounds.push({ order: res.cached.order, items: res.cached.items });
+          continue;
+        }
+
+        const { id, data: orderData, error: orderErr } = res;
+        if (
+          orderErr ||
+          !orderData ||
+          (orderData as any).archived_at ||
+          (orderData as any).status === "cancelled" ||
+          (orderData as any).payment_status === "paid" ||
+          !isGuestRoundFresh(String((orderData as any).created_at || ""))
+        ) {
+          removeOrderId(id);
+          earlierCacheRef.current["delete"](id);
+          continue;
+        }
+
+        const typedOrder = {
+          id: String(orderData.id),
+          order_number: (orderData as any).order_number ?? null,
+          order_day: (orderData as any).order_day ?? null,
+          payment_status: (orderData as any).payment_status ?? null,
+          table_number: orderData.table_number,
+          customer_name: "",
+          customer_phone: "",
+          status: String(orderData.status),
+          subtotal: Number(orderData.subtotal || 0),
+          total: Number(orderData.total || 0),
+          created_at: String(orderData.created_at),
+        } as ActiveOrder;
+
+        const typedItems = ((orderData as any).items || []) as ActiveOrderItem[];
+        const isFinal = typedOrder.status === "served" || typedOrder.status === "completed";
+
+        earlierCacheRef.current.set(id, {
+          order: typedOrder,
+          items: typedItems,
+          final: isFinal,
+        });
+
+        validRounds.push({ order: typedOrder, items: typedItems });
+      }
+
+      validRounds.sort((a, b) => {
+        const ta = new Date(a.order.created_at).getTime() || 0;
+        const tb = new Date(b.order.created_at).getTime() || 0;
+        return ta - tb;
+      });
+
+      setEarlierRounds(validRounds);
+    } catch {
+      // Keep previous state on error
+    }
+  };
+
   // Poll active order
   useEffect(() => {
     void loadActiveOrder();
+    void loadEarlierRounds();
     const interval = setInterval(() => {
       void loadActiveOrder();
+      void loadEarlierRounds();
     }, 7000);
     return () => clearInterval(interval);
   }, [business.id, device.device_code]);
@@ -1149,11 +1295,13 @@ export default function RestaurantExperience({
       const newOrderId = String(data || "");
       if (newOrderId && typeof window !== "undefined") {
         window.localStorage.setItem(storageKey, newOrderId);
+        addOrderId(newOrderId);
       }
 
       setCart({});
       setShowCheckoutSheet(false);
       await loadActiveOrder(newOrderId || undefined);
+      await loadEarlierRounds();
       setActiveTab("orders");
     } catch (err: any) {
       console.error("Error creating table order:", err);
@@ -1186,11 +1334,21 @@ export default function RestaurantExperience({
         return;
       }
 
-      if (typeof window !== "undefined") {
-        window.localStorage.removeItem(storageKey);
+      removeOrderId(currentOrder.id);
+      const remaining = readOrderIds();
+      if (remaining.length > 0) {
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(storageKey, remaining[remaining.length - 1]);
+        }
+        await loadActiveOrder();
+        await loadEarlierRounds();
+      } else {
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(storageKey);
+        }
+        setCurrentOrder(null);
+        setCurrentOrderItems([]);
       }
-      setCurrentOrder(null);
-      setCurrentOrderItems([]);
     } catch (err: any) {
       alert("Unable to cancel order: " + (err.message || err));
     } finally {
@@ -1884,7 +2042,8 @@ export default function RestaurantExperience({
           {renderStaffRequestBar()}
 
           {currentOrder ? (
-            <div style={styles.orderCard}>
+            <>
+              <div style={styles.orderCard}>
               {/* Status Header */}
               <div style={styles.orderTopMetaRow}>
                 <div>
@@ -2027,7 +2186,135 @@ export default function RestaurantExperience({
                 )}
               </div>
             </div>
-          ) : (
+
+            {earlierRounds.length > 0 && (
+              <div
+                style={{
+                  backgroundColor: "#FFFFFF",
+                  borderRadius: MENU_TOKENS.radii.card,
+                  border: `1px solid ${MENU_TOKENS.colors.light.hairline}`,
+                  padding: "20px",
+                  boxShadow: MENU_TOKENS.shadows.card,
+                  marginTop: "16px",
+                  boxSizing: "border-box",
+                }}
+              >
+                <div style={styles.sectionSubHeader}>
+                  Earlier orders from this table
+                </div>
+
+                <div>
+                  {earlierRounds.map((round, idx) => {
+                    const o = round.order;
+                    const statusInfo = getStatusDisplay(o.status);
+                    const itemsText = round.items
+                      .map((item) => `${item.quantity}x ${formatDisplayName(item.item_name)}`)
+                      .join(", ");
+
+                    return (
+                      <div key={o.id}>
+                        {idx > 0 && (
+                          <div
+                            style={{
+                              height: "1px",
+                              backgroundColor: MENU_TOKENS.colors.light.hairline,
+                              margin: "12px 0",
+                            }}
+                          />
+                        )}
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "flex-start",
+                            gap: "12px",
+                          }}
+                        >
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={styles.orderIdText}>
+                              Order {formatOrderLabel(o, { showDayIfNotToday: true })}
+                            </div>
+                            <div style={styles.orderTimeText}>
+                              Placed at {formatOrderTime(o.created_at)}
+                            </div>
+                            {itemsText && (
+                              <div
+                                style={{
+                                  fontSize: "12px",
+                                  color: MENU_TOKENS.colors.light.muted,
+                                  marginTop: "4px",
+                                  lineHeight: 1.4,
+                                  wordBreak: "break-word",
+                                }}
+                              >
+                                {itemsText}
+                              </div>
+                            )}
+                          </div>
+
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "flex-end",
+                              gap: "6px",
+                              flexShrink: 0,
+                            }}
+                          >
+                            <div
+                              style={{
+                                ...styles.statusBadge,
+                                backgroundColor: statusInfo.bg,
+                                color: statusInfo.color,
+                                borderColor: statusInfo.border,
+                              }}
+                            >
+                              {statusInfo.label}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: "14px",
+                                fontWeight: 700,
+                                color: MENU_TOKENS.colors.light.ink,
+                                fontVariantNumeric: "tabular-nums",
+                              }}
+                            >
+                              ₹{Number(o.total || 0).toFixed(0)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={styles.orderTotalDivider} />
+
+                <div style={styles.orderTotalRow}>
+                  <span style={styles.orderTotalLabel}>Table total so far</span>
+                  <span style={styles.orderTotalAmount}>
+                    ₹{sumOrderTotals([
+                      ...earlierRounds
+                        .filter((r) => r.order.status !== "cancelled")
+                        .map((r) => r.order.total),
+                      currentOrder.status !== "cancelled" ? currentOrder.total : null,
+                    ]).toFixed(0)}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    fontSize: "12px",
+                    color: MENU_TOKENS.colors.light.muted,
+                    marginTop: "6px",
+                  }}
+                >
+                  Includes only orders placed from this phone.
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
             <div style={styles.emptyOrdersCard}>
               <div style={{ fontSize: "40px", marginBottom: "12px" }}>🧾</div>
               <h3 style={styles.emptyOrdersTitle}>No active order</h3>

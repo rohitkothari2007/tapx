@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { formatOrderLabel } from "../lib/orderNumber";
 import { isAutoTableName, type LiveOrderBillLinkMap } from "../lib/billing";
+import { computeTableRounds, countInKitchenByTable } from "../lib/tableRounds";
 
 export const LATE_ORDER_WARN_MINUTES = 10;
 export const LATE_ORDER_ALERT_MINUTES = 20;
@@ -313,6 +314,15 @@ export default function LiveOrdersPanel({
     return { servedTableGroups: groups, servedNoTableOrders: noTable };
   }, [billingOrderMode, servedOrders, liveBillLinks]);
 
+  const roundInfo = useMemo(
+    () => computeTableRounds(orders, liveBillLinks),
+    [orders, liveBillLinks]
+  );
+  const kitchenCountByTable = useMemo(
+    () => countInKitchenByTable(orders, liveBillLinks),
+    [orders, liveBillLinks]
+  );
+
   // Detect newly arrived active orders for sound & highlight
   // A7: Sound/new-order highlight logic must keep working for new pending orders only;
   // moving an order to "served" must not trigger the new-order chime.
@@ -461,6 +471,8 @@ export default function LiveOrdersPanel({
 
       {(() => {
         const renderOrderCard = (order: LiveOrder) => {
+          const info = roundInfo.get(order.id);
+          const prev = info?.prevOrderId ? orders.find((o) => o.id === info.prevOrderId) : null;
           const nextAction = getNextAction(order.status, billingOrderMode);
           const statusBadge = getStatusBadgeStyle(order.status);
           const isHighlighted = Boolean(highlightedIds[order.id]);
@@ -520,6 +532,22 @@ export default function LiveOrdersPanel({
                       ? `Table ${order.table_number}`
                       : "No Table"}
                   </div>
+                  {info && info.round >= 2 && (
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 800,
+                        color: "#3730a3",
+                        background: "#eef2ff",
+                        padding: "2px 8px",
+                        borderRadius: "999px",
+                        alignSelf: "flex-start",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Round {info.round}
+                    </span>
+                  )}
                   <div style={styles.orderRef}>
                     {formatOrderLabel(order, { showDayIfNotToday: true })}
                   </div>
@@ -555,6 +583,19 @@ export default function LiveOrdersPanel({
                   </div>
                 </div>
               </div>
+
+              {info && info.round >= 2 && prev && (
+                <div
+                  style={{
+                    fontSize: "12px",
+                    color: "#64748b",
+                    fontWeight: 600,
+                    margin: "0 0 8px",
+                  }}
+                >
+                  Round {info.round - 1}: {getStatusBadgeStyle(prev.status).label} · placed {formatTimeAgo(prev.created_at)}
+                </div>
+              )}
 
               {/* CUSTOMER INFO */}
               <div style={styles.customerRow}>
@@ -679,7 +720,7 @@ export default function LiveOrdersPanel({
                     >
                       Billed · {liveBillLinks[order.id].billNoText}
                     </button>
-                  ) : onBillOrder ? (
+                  ) : onBillOrder && !(billingOrderMode && typeof order.table_number === "number") ? (
                     <button
                       type="button"
                       onClick={() => onBillOrder(order)}
@@ -744,6 +785,7 @@ export default function LiveOrdersPanel({
                     {servedTableGroups.map((group) => {
                       const isGroupUpdating = group.orders.some((o) => updatingOrderId === o.id);
                       const ageStr = formatServedTimeAgo(group.oldestCreatedAt);
+                      const kitchenRounds = kitchenCountByTable.get(group.tableNumber) || 0;
 
                       return (
                         <div key={`table-${group.tableNumber}`} style={styles.servedCard}>
@@ -764,6 +806,23 @@ export default function LiveOrdersPanel({
                             )}
                           </div>
 
+                          {kitchenRounds > 0 && (
+                            <div
+                              style={{
+                                fontSize: "12.5px",
+                                fontWeight: 600,
+                                color: "#92400e",
+                                background: "#fffbeb",
+                                border: "1px solid #fde68a",
+                                borderRadius: "8px",
+                                padding: "8px 10px",
+                                boxSizing: "border-box",
+                              }}
+                            >
+                              ⏳ {kitchenRounds} more {kitchenRounds === 1 ? "round is" : "rounds are"} still in the kitchen. Billing this table includes {kitchenRounds === 1 ? "it" : "them"}.
+                            </div>
+                          )}
+
                           {/* ORDERS BREAKDOWN */}
                           <div style={styles.servedOrdersList}>
                             {group.orders.map((order, idx) => {
@@ -782,6 +841,11 @@ export default function LiveOrdersPanel({
                                 >
                                   <div style={styles.servedOrderRow}>
                                     <div style={styles.servedOrderLeft}>
+                                      {group.orders.length > 1 && roundInfo.get(order.id) && (
+                                        <span style={{ fontWeight: 700, color: "#3730a3" }}>
+                                          Round {roundInfo.get(order.id)!.round} ·{" "}
+                                        </span>
+                                      )}
                                       <span style={styles.servedOrderRef}>
                                         {formatOrderLabel(order, { showDayIfNotToday: true })}
                                       </span>
