@@ -133,3 +133,39 @@ export function sumOrderTotals(totals: Array<number | null | undefined>): number
   const raw = (totals || []).reduce<number>((s, v) => s + (Number(v) || 0), 0);
   return Math.round((raw + Number.EPSILON) * 100) / 100;
 }
+
+/** 1 -> "1st", 2 -> "2nd", 3 -> "3rd", 4 -> "4th", 11 -> "11th", 21 -> "21st". Invalid -> "". */
+export function ordinalLabel(n: number): string {
+  const v = Math.floor(Number(n));
+  if (!Number.isFinite(v) || v < 1) return "";
+  const mod100 = v % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${v}th`;
+  switch (v % 10) {
+    case 1:
+      return `${v}st`;
+    case 2:
+      return `${v}nd`;
+    case 3:
+      return `${v}rd`;
+    default:
+      return `${v}th`;
+  }
+}
+
+/** Text of the add-on badge on kitchen cards. The first order of a visit has no badge (""). */
+export function addOnBadgeText(round: number): string {
+  if (!(round >= 2)) return "";
+  return `ADD-ON · ${ordinalLabel(round)} order`;
+}
+
+/** First `max` item names joined by commas, then "+N more". Empty names are ignored. */
+export function summarizeItemNames(
+  names: Array<string | null | undefined>,
+  max: number = 2
+): string {
+  const clean = (names || []).map((n) => (n || "").trim()).filter(Boolean);
+  if (clean.length === 0) return "";
+  const shown = clean.slice(0, max);
+  const rest = clean.length - shown.length;
+  return rest > 0 ? `${shown.join(", ")} +${rest} more` : shown.join(", ");
+}
