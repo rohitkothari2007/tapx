@@ -3,7 +3,13 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { formatOrderLabel } from "../lib/orderNumber";
 import { isAutoTableName, type LiveOrderBillLinkMap } from "../lib/billing";
-import { computeTableRounds, countInKitchenByTable } from "../lib/tableRounds";
+import {
+  addOnBadgeText,
+  computeTableRounds,
+  countInKitchenByTable,
+  ordinalLabel,
+  summarizeItemNames,
+} from "../lib/tableRounds";
 
 export const LATE_ORDER_WARN_MINUTES = 10;
 export const LATE_ORDER_ALERT_MINUTES = 20;
@@ -173,6 +179,7 @@ export default function LiveOrdersPanel({
   onBillTable,
 }: Props) {
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [newestFirst, setNewestFirst] = useState(true);
   const [highlightedIds, setHighlightedIds] = useState<Record<string, boolean>>({});
   const [, setTick] = useState(0);
 
@@ -187,6 +194,27 @@ export default function LiveOrdersPanel({
       // ignore
     }
   }, []);
+
+  // Initialize newest-first sort preference from localStorage
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined") {
+        const stored = window.localStorage.getItem("tapx_live_orders_sort");
+        if (stored === "oldest") setNewestFirst(false);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const changeSort = (next: boolean) => {
+    setNewestFirst(next);
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("tapx_live_orders_sort", next ? "newest" : "oldest");
+      }
+    } catch {}
+  };
 
   const toggleSound = () => {
     setSoundEnabled((prev) => {
@@ -228,6 +256,15 @@ export default function LiveOrdersPanel({
         ["pending", "accepted", "preparing", "ready"].includes(o.status)
       ),
     [activeOrders]
+  );
+
+  const kitchenList = useMemo(
+    () => (newestFirst ? [...newAndInProgressOrders].reverse() : newAndInProgressOrders),
+    [newestFirst, newAndInProgressOrders]
+  );
+  const activeList = useMemo(
+    () => (newestFirst ? [...activeOrders].reverse() : activeOrders),
+    [newestFirst, activeOrders]
   );
 
   // Served orders (for billing order mode)
@@ -470,9 +507,56 @@ export default function LiveOrdersPanel({
       </div>
 
       {(() => {
+        const renderSortSwitch = () => (
+          <div style={{ display: "inline-flex", alignItems: "center" }} role="group" aria-label="Sort orders">
+            <button
+              type="button"
+              aria-pressed={newestFirst}
+              onClick={() => changeSort(true)}
+              style={{
+                minHeight: "44px",
+                padding: "8px 14px",
+                fontSize: "13px",
+                fontWeight: 700,
+                border: "1px solid #cbd5e1",
+                borderRadius: "10px 0 0 10px",
+                background: newestFirst ? "#0f172a" : "#ffffff",
+                color: newestFirst ? "#ffffff" : "#334155",
+                cursor: "pointer",
+              }}
+            >
+              Newest first
+            </button>
+            <button
+              type="button"
+              aria-pressed={!newestFirst}
+              onClick={() => changeSort(false)}
+              style={{
+                minHeight: "44px",
+                padding: "8px 14px",
+                fontSize: "13px",
+                fontWeight: 700,
+                border: "1px solid #cbd5e1",
+                borderRadius: "0 10px 10px 0",
+                background: !newestFirst ? "#0f172a" : "#ffffff",
+                color: !newestFirst ? "#ffffff" : "#334155",
+                cursor: "pointer",
+                marginLeft: "-1px",
+              }}
+            >
+              Oldest first
+            </button>
+          </div>
+        );
+
         const renderOrderCard = (order: LiveOrder) => {
           const info = roundInfo.get(order.id);
           const prev = info?.prevOrderId ? orders.find((o) => o.id === info.prevOrderId) : null;
+          const prevItemsText = prev
+            ? summarizeItemNames(
+                orderItems.filter((i) => i.order_id === prev.id).map((i) => i.item_name)
+              )
+            : "";
           const nextAction = getNextAction(order.status, billingOrderMode);
           const statusBadge = getStatusBadgeStyle(order.status);
           const isHighlighted = Boolean(highlightedIds[order.id]);
@@ -522,6 +606,7 @@ export default function LiveOrdersPanel({
                 borderColor: cardBorder,
                 background: cardBg,
                 boxShadow: cardShadow,
+                ...(info && info.round >= 2 ? { borderLeft: "6px solid #4338ca" } : {}),
               }}
             >
               {/* CARD HEADER: TABLE & ORDER NUMBER & TIMING */}
@@ -535,17 +620,18 @@ export default function LiveOrdersPanel({
                   {info && info.round >= 2 && (
                     <span
                       style={{
-                        fontSize: "11px",
+                        fontSize: "13px",
                         fontWeight: 800,
-                        color: "#3730a3",
-                        background: "#eef2ff",
-                        padding: "2px 8px",
-                        borderRadius: "999px",
+                        color: "#ffffff",
+                        background: "#4338ca",
+                        padding: "5px 10px",
+                        borderRadius: "8px",
                         alignSelf: "flex-start",
                         whiteSpace: "nowrap",
+                        letterSpacing: "0.02em",
                       }}
                     >
-                      Round {info.round}
+                      {addOnBadgeText(info.round)}
                     </span>
                   )}
                   <div style={styles.orderRef}>
@@ -587,13 +673,18 @@ export default function LiveOrdersPanel({
               {info && info.round >= 2 && prev && (
                 <div
                   style={{
-                    fontSize: "12px",
-                    color: "#64748b",
+                    fontSize: "13px",
                     fontWeight: 600,
-                    margin: "0 0 8px",
+                    color: "#3730a3",
+                    background: "#eef2ff",
+                    borderRadius: "8px",
+                    padding: "6px 10px",
+                    margin: "0 0 10px",
+                    boxSizing: "border-box",
+                    wordBreak: "break-word",
                   }}
                 >
-                  Round {info.round - 1}: {getStatusBadgeStyle(prev.status).label} · placed {formatTimeAgo(prev.created_at)}
+                  {ordinalLabel(info.round - 1)} order{prevItemsText ? ` (${prevItemsText})` : ""}: {getStatusBadgeStyle(prev.status).label} · placed {formatTimeAgo(prev.created_at)}
                 </div>
               )}
 
@@ -752,8 +843,20 @@ export default function LiveOrdersPanel({
             <div>
               {/* TOP: NEW & IN PROGRESS */}
               <div>
-                <div style={styles.sectionHeaderTitle}>
-                  Kitchen — New &amp; in progress ({newAndInProgressOrders.length})
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: "8px",
+                    margin: "0 0 12px 0",
+                  }}
+                >
+                  <div style={{ ...styles.sectionHeaderTitle, margin: 0 }}>
+                    Kitchen — New &amp; in progress ({newAndInProgressOrders.length})
+                  </div>
+                  {newAndInProgressOrders.length >= 2 && renderSortSwitch()}
                 </div>
                 {newAndInProgressOrders.length === 0 ? (
                   <div style={styles.kitchenClearNote}>
@@ -761,7 +864,7 @@ export default function LiveOrdersPanel({
                   </div>
                 ) : (
                   <div style={styles.orderGrid}>
-                    {newAndInProgressOrders.map(renderOrderCard)}
+                    {kitchenList.map(renderOrderCard)}
                   </div>
                 )}
               </div>
@@ -819,7 +922,7 @@ export default function LiveOrdersPanel({
                                 boxSizing: "border-box",
                               }}
                             >
-                              ⏳ {kitchenRounds} more {kitchenRounds === 1 ? "round is" : "rounds are"} still in the kitchen. Billing this table includes {kitchenRounds === 1 ? "it" : "them"}.
+                              ⏳ {kitchenRounds} more {kitchenRounds === 1 ? "order is" : "orders are"} still in the kitchen. Billing this table includes {kitchenRounds === 1 ? "it" : "them"}.
                             </div>
                           )}
 
@@ -843,7 +946,7 @@ export default function LiveOrdersPanel({
                                     <div style={styles.servedOrderLeft}>
                                       {group.orders.length > 1 && roundInfo.get(order.id) && (
                                         <span style={{ fontWeight: 700, color: "#3730a3" }}>
-                                          Round {roundInfo.get(order.id)!.round} ·{" "}
+                                          {ordinalLabel(roundInfo.get(order.id)!.round)} order ·{" "}
                                         </span>
                                       )}
                                       <span style={styles.servedOrderRef}>
@@ -1023,8 +1126,21 @@ export default function LiveOrdersPanel({
         }
 
         return (
-          <div style={styles.orderGrid}>
-            {activeOrders.map(renderOrderCard)}
+          <div>
+            {activeOrders.length >= 2 && (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  marginBottom: "12px",
+                }}
+              >
+                {renderSortSwitch()}
+              </div>
+            )}
+            <div style={styles.orderGrid}>
+              {activeList.map(renderOrderCard)}
+            </div>
           </div>
         );
       })()}
