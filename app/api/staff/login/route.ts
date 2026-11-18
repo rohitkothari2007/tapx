@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
       admin = supabaseAdmin();
     } catch {
       return NextResponse.json(
-        { error: "Server Configuration Error: Staff service not configured." },
+        { error: "Staff service not configured" },
         { status: 500 }
       );
     }
@@ -101,7 +101,15 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Verify PIN with Supabase Auth using synthetic email
-    const syntheticEmail = makeStaffAuthEmail(cleanPhone, staff.business_id);
+    let syntheticEmail: string;
+    try {
+      syntheticEmail = makeStaffAuthEmail(cleanPhone, staff.business_id);
+    } catch {
+      return NextResponse.json(
+        { error: "Staff service not configured" },
+        { status: 500 }
+      );
+    }
 
     const anonClient = createClient(supabaseUrl, supabaseAnonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
@@ -162,6 +170,9 @@ export async function POST(req: NextRequest) {
       businessName: biz?.name || "Restaurant",
     });
   } catch (err: unknown) {
+    if (err instanceof Error && err.message?.includes("STAFF_AUTH_SECRET")) {
+      return NextResponse.json({ error: "Staff service not configured" }, { status: 500 });
+    }
     const msg = err instanceof Error ? err.message : "Internal Server Error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

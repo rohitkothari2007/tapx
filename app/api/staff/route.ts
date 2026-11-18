@@ -37,6 +37,9 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ staff: staffList || [] });
   } catch (err: unknown) {
+    if (err instanceof Error && err.message?.includes("STAFF_AUTH_SECRET")) {
+      return NextResponse.json({ error: "Staff service not configured" }, { status: 500 });
+    }
     const msg = err instanceof Error ? err.message : "Internal Server Error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
@@ -167,7 +170,15 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. New staff account: create auth user with synthetic email
-    const syntheticEmail = makeStaffAuthEmail(cleanPhone, businessId);
+    let syntheticEmail: string;
+    try {
+      syntheticEmail = makeStaffAuthEmail(cleanPhone, businessId);
+    } catch {
+      return NextResponse.json(
+        { error: "Staff service not configured" },
+        { status: 500 }
+      );
+    }
 
     const { data: authUser, error: authCreateErr } = await admin.auth.admin.createUser({
       email: syntheticEmail,
@@ -214,6 +225,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ staff: newStaff, pin: resolvedPin }, { status: 201 });
   } catch (err: unknown) {
+    if (err instanceof Error && err.message?.includes("STAFF_AUTH_SECRET")) {
+      return NextResponse.json({ error: "Staff service not configured" }, { status: 500 });
+    }
     const msg = err instanceof Error ? err.message : "Internal Server Error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
