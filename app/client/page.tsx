@@ -34,6 +34,7 @@ import BillsPage from "./billing/BillsPage";
 import SalesReport from "./billing/SalesReport";
 import CreditNotesPage from "./billing/CreditNotesPage";
 import UnpaidBillsPage from "./billing/UnpaidBillsPage";
+import StaffPage from "./StaffPage";
 import ProductsPage from "./shop/ProductsPage";
 import BillFromOrders from "./billing/BillFromOrders";
 import UnbilledOrdersWarning from "./billing/UnbilledOrdersWarning";
@@ -267,7 +268,8 @@ type PageKey =
   | "reminders"
   | "feedback"
   | "analytics"
-  | "settings";
+  | "settings"
+  | "staff";
 
 type HotelRequestItem = {
   id: string;
@@ -608,6 +610,7 @@ export default function ClientPortalPage() {
   }
 
   const [loading, setLoading] = useState(true);
+  const [isStaffAccount, setIsStaffAccount] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
@@ -725,6 +728,16 @@ export default function ClientPortalPage() {
 
       let isAdminUser = false;
       if (user) {
+        // Staff account guard: prevent staff from seeing owner data
+        if (
+          user.email?.includes("@staff.tapx.example.com") ||
+          user.user_metadata?.role === "staff"
+        ) {
+          setIsStaffAccount(true);
+          setLoading(false);
+          return;
+        }
+
         setCurrentUserEmail(user.email || "");
         setCurrentUserId(user.id);
 
@@ -2265,6 +2278,12 @@ export default function ClientPortalPage() {
           : undefined,
     },
     {
+      key: "staff" as PageKey,
+      label: "Staff",
+      icon: "👥",
+      show: hasTableOrdering,
+    },
+    {
       key: "bills" as PageKey,
       label: "Bills",
       icon: "🧾",
@@ -2462,7 +2481,82 @@ export default function ClientPortalPage() {
     );
   }
 
-
+  if (isStaffAccount) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#fffaf3",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "20px",
+          fontFamily: "Inter, system-ui, sans-serif",
+        }}
+      >
+        <div
+          style={{
+            background: "#ffffff",
+            border: "1px solid #fed7aa",
+            borderRadius: "16px",
+            padding: "32px 24px",
+            maxWidth: "420px",
+            width: "100%",
+            textAlign: "center",
+            boxShadow: "0 10px 25px -5px rgba(249, 115, 22, 0.1)",
+          }}
+        >
+          <div style={{ fontSize: "40px", marginBottom: "12px" }}>📱</div>
+          <h2 style={{ fontSize: "20px", fontWeight: 800, color: "#1c1410", margin: "0 0 8px" }}>
+            Staff Account Detected
+          </h2>
+          <p style={{ fontSize: "14px", color: "#64748b", margin: "0 0 24px", lineHeight: "1.5" }}>
+            This is a staff account. Use the staff app to take orders, view tables, and manage kitchen workflow.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <a
+              href="/staff"
+              style={{
+                minHeight: "44px",
+                padding: "12px 20px",
+                background: "#f97316",
+                color: "#ffffff",
+                borderRadius: "10px",
+                textDecoration: "none",
+                fontWeight: 700,
+                fontSize: "15px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              Open Staff App
+            </a>
+            <button
+              type="button"
+              onClick={async () => {
+                await supabase.auth.signOut();
+                window.location.href = "/client/login";
+              }}
+              style={{
+                minHeight: "44px",
+                padding: "10px 20px",
+                background: "#ffffff",
+                color: "#64748b",
+                border: "1px solid #cbd5e1",
+                borderRadius: "10px",
+                fontWeight: 600,
+                fontSize: "14px",
+                cursor: "pointer",
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (error || !business) {
     return (
@@ -2975,6 +3069,14 @@ export default function ClientPortalPage() {
               onUpdateStatus={handleUpdateStaffRequestStatus}
               hasOrders={hasOrders}
               onOpenOrders={() => navigate("orders")}
+            />
+          )}
+
+          {activePage === "staff" && hasTableOrdering && business && (
+            <StaffPage
+              business={business}
+              tableOrderingConfig={tableOrderingConfigRow?.config as Record<string, unknown> | undefined}
+              onTableOrderingConfigUpdated={loadPortal}
             />
           )}
 
