@@ -29,11 +29,19 @@ export function normalizeStaffPhone(input: string | null | undefined): string | 
 
 /**
  * Generates synthetic auth email for Supabase Auth.
- * Format: s<phone>.<first 8 chars of business id>@staff.tapx.example.com
+ * Format: s + first 24 hex characters of HMAC-SHA256(secret, phone10 + "|" + businessId) + @staff.tapx.example.com
  */
 export function makeStaffAuthEmail(phone10: string, businessId: string): string {
-  const cleanBiz = businessId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8).toLowerCase();
-  return `s${phone10}.${cleanBiz}@staff.tapx.example.com`;
+  const secret = process.env.STAFF_AUTH_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error("STAFF_AUTH_SECRET is missing or shorter than 32 characters");
+  }
+  const hmacHex = crypto
+    .createHmac("sha256", secret)
+    .update(`${phone10}|${businessId}`)
+    .digest("hex")
+    .slice(0, 24);
+  return `s${hmacHex}@staff.tapx.example.com`;
 }
 
 /**
@@ -164,11 +172,17 @@ export async function requireBusinessOwner(
 
   // 3. Check if businesses.email matches caller email (case-insensitive)
   if (caller.email) {
+    // Escape \, % and _ in caller's email before using ilike so it behaves as a case-insensitive exact match
+    const escapedEmail = caller.email
+      .replace(/\\/g, "\\\\")
+      .replace(/%/g, "\\%")
+      .replace(/_/g, "\\_");
+
     const { data: bizRow } = await adminClient
       .from("businesses")
       .select("id")
       .eq("id", businessId)
-      .ilike("email", caller.email)
+      .ilike("email", escapedEmail)
       .maybeSingle();
 
     if (bizRow) {
