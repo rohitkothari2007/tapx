@@ -192,6 +192,7 @@ type Order = {
   taken_by_name?: string | null;
   packing_charge?: number | null;
   order_note?: string | null;
+  notes?: string | null;
   client_token?: string | null;
 };
 
@@ -6768,7 +6769,7 @@ function OrdersPage({
                   )}
                 </div>
 
-                {(order.order_note || (order as any).notes) && (
+                {(order.order_note || order.notes) && (
                   <div
                     style={{
                       fontSize: "12px",
@@ -6779,7 +6780,7 @@ function OrdersPage({
                       margin: "8px 0",
                     }}
                   >
-                    <strong>Order Note:</strong> {order.order_note || (order as any).notes}
+                    <strong>Order Note:</strong> {order.order_note || order.notes}
                   </div>
                 )}
 
