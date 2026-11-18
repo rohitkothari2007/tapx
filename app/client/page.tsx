@@ -55,6 +55,8 @@ import {
   sanitizeOnlineOrderingLinks,
 } from "../lib/onlineOrdering";
 import TablesBoard, { type TableUnbilledSummary } from "../components/TablesBoard";
+import NewOrderScreen from "../components/staff/NewOrderScreen";
+import { parseStaffMenu } from "../lib/staffMenu";
 
 function playDashboardChime() {
   try {
@@ -184,6 +186,13 @@ type Order = {
   paid_at?: string | null;
   archived_at?: string | null;
   archived_by?: string | null;
+  order_type?: "dine_in" | "takeaway" | string | null;
+  order_source?: "guest" | "staff" | "owner" | string | null;
+  taken_by_staff_id?: string | null;
+  taken_by_name?: string | null;
+  packing_charge?: number | null;
+  order_note?: string | null;
+  client_token?: string | null;
 };
 
 type StaffRequest = {
@@ -442,6 +451,25 @@ export default function ClientPortalPage() {
     BusinessFeature[]
   >([]);
   const [moduleConfigs, setModuleConfigs] = useState<ModuleConfig[]>([]);
+  const [showOwnerOrderModal, setShowOwnerOrderModal] = useState(false);
+  const [ownerOrderModalTable, setOwnerOrderModalTable] = useState<number | null>(null);
+
+  const ownerPackingCharge = useMemo(() => {
+    const toRow = (moduleConfigs || []).find((m) => {
+      const k = String(m?.module_key || "").trim().toLowerCase();
+      return k === "table_ordering" || k === "tableordering";
+    });
+    return Number((toRow?.config as Record<string, unknown> | null)?.packing_charge || 0);
+  }, [moduleConfigs]);
+
+  const { categories: ownerMenuCategories, items: ownerMenuItems } = useMemo(() => {
+    return parseStaffMenu(moduleConfigs as Array<{ module_key: string; config: unknown }>);
+  }, [moduleConfigs]);
+
+  const handleOpenOwnerOrder = (tableNum?: number) => {
+    setOwnerOrderModalTable(tableNum || null);
+    setShowOwnerOrderModal(true);
+  };
   const [orders, setOrders] = useState<Order[]>([]);
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
 
@@ -930,7 +958,14 @@ export default function ClientPortalPage() {
               paid_at,
               archived_at,
               archived_by,
-              created_at
+              created_at,
+              order_type,
+              order_source,
+              taken_by_staff_id,
+              taken_by_name,
+              packing_charge,
+              order_note,
+              client_token
             `
           )
           .eq("business_id", businessId)
@@ -1219,7 +1254,14 @@ export default function ClientPortalPage() {
             paid_at,
             archived_at,
             archived_by,
-            created_at
+            created_at,
+            order_type,
+            order_source,
+            taken_by_staff_id,
+            taken_by_name,
+            packing_charge,
+            order_note,
+            client_token
           `
         )
         .eq("business_id", business.id)
@@ -2970,6 +3012,7 @@ export default function ClientPortalPage() {
               onBillOrder={(ord) => openReviewForOrder(ord, "overview")}
               onBillTable={(tbl) => openReviewForTable(tbl, "overview")}
               onOpenBill={openBillInBillsView}
+              onNewOrder={handleOpenOwnerOrder}
             />
           )}
 
@@ -3011,6 +3054,7 @@ export default function ClientPortalPage() {
                     ? (tbl) => openReviewForTable(tbl, "tables")
                     : undefined
                 }
+                onNewOrder={handleOpenOwnerOrder}
               />
             </div>
           )}
@@ -3060,6 +3104,7 @@ export default function ClientPortalPage() {
               onBillOrder={(ord) => openReviewForOrder(ord, "orders")}
               onBillTable={(tbl) => openReviewForTable(tbl, "orders")}
               onOpenBill={openBillInBillsView}
+              onNewOrder={handleOpenOwnerOrder}
             />
           )}
 
@@ -3224,6 +3269,61 @@ export default function ClientPortalPage() {
             </>
           )}
         </div>
+
+        {/* OWNER ORDER ENTRY MODAL */}
+        {showOwnerOrderModal && business && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              backgroundColor: "rgba(15, 23, 42, 0.6)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: "16px",
+            }}
+            onClick={() => {
+              setShowOwnerOrderModal(false);
+              setOwnerOrderModalTable(null);
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: "#fffaf3",
+                borderRadius: "20px",
+                maxWidth: "640px",
+                width: "100%",
+                maxHeight: "90vh",
+                overflowY: "auto",
+                padding: "20px 18px",
+                boxShadow: "0 20px 40px rgba(0,0,0,0.2)",
+                border: "1px solid #fed7aa",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <NewOrderScreen
+                businessId={business.id}
+                categories={ownerMenuCategories}
+                items={ownerMenuItems}
+                tableCount={tableCount}
+                packingCharge={ownerPackingCharge}
+                initialTable={ownerOrderModalTable}
+                mode="owner"
+                onCreated={() => {
+                  setShowOwnerOrderModal(false);
+                  setOwnerOrderModalTable(null);
+                  void loadPortal();
+                }}
+                onCancel={() => {
+                  setShowOwnerOrderModal(false);
+                  setOwnerOrderModalTable(null);
+                }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* HARDWARE REQUEST MODAL */}
         {showRequestDeviceModal && (
@@ -4143,6 +4243,7 @@ function Overview({
   onBillOrder,
   onBillTable,
   onOpenBill,
+  onNewOrder,
 }: {
   business: Business;
   todayRevenue: number;
@@ -4176,6 +4277,7 @@ function Overview({
   onBillOrder?: (order: Order) => void;
   onBillTable?: (tableNumber: number) => void;
   onOpenBill?: (billId: string) => void;
+  onNewOrder?: () => void;
 }) {
   const services = [
     hasTableOrdering && {
@@ -4292,6 +4394,7 @@ function Overview({
           onOpenBill={billingOrderMode ? onOpenBill : undefined}
           billingOrderMode={billingOrderMode}
           onBillTable={billingOrderMode ? onBillTable : undefined}
+          onNewOrder={onNewOrder}
         />
       )}
 
@@ -5956,6 +6059,7 @@ function OrdersPage({
   onBillOrder,
   onBillTable,
   onOpenBill,
+  onNewOrder,
 }: {
   orders: Order[];
   archivedOrders?: Order[];
@@ -5996,6 +6100,7 @@ function OrdersPage({
   onBillOrder?: (order: Order) => void;
   onBillTable?: (tableNumber: number) => void;
   onOpenBill?: (billId: string) => void;
+  onNewOrder?: () => void;
 }) {
   const [filter, setFilter] = useState<"active" | "all" | "completed" | "cancelled">("active");
   const [tableFilter, setTableFilter] = useState<string>("all");
@@ -6247,6 +6352,29 @@ function OrdersPage({
                 </button>
               </div>
             </div>
+          )}
+
+          {onNewOrder && (
+            <button
+              type="button"
+              onClick={onNewOrder}
+              style={{
+                padding: "8px 16px",
+                borderRadius: "10px",
+                border: "none",
+                background: "#f97316",
+                color: "#ffffff",
+                fontWeight: 700,
+                fontSize: "13px",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <span>＋</span>
+              <span>New order</span>
+            </button>
           )}
 
           <div className="orders-count">
@@ -6535,8 +6663,17 @@ function OrdersPage({
                 {/* CARD HEADER */}
                 <div className="card-top">
                   <div>
-                    <div className="card-table-pill">
-                      {order.table_number ? `Table ${order.table_number}` : "No Table"}
+                    <div
+                      className="card-table-pill"
+                      style={
+                        order.order_type === "takeaway" || order.table_number === null
+                          ? { background: "#f97316", color: "#ffffff", fontWeight: 800 }
+                          : undefined
+                      }
+                    >
+                      {order.order_type === "takeaway" || order.table_number === null
+                        ? "TAKEAWAY"
+                        : `Table ${order.table_number}`}
                     </div>
                     <div className="card-order-num">
                       {formatOrderLabel(order, { showDayIfNotToday: true })}
@@ -6573,7 +6710,22 @@ function OrdersPage({
                   </div>
 
                   <div className="card-customer">
-                    <span>👤 {order.customer_name || "Customer"}</span>
+                    <span>👤 {order.customer_name || (order.order_type === "takeaway" ? "Takeaway" : "Customer")}</span>
+                    {(order.taken_by_name || order.order_source === "owner" || order.order_source === "staff") && (
+                      <span
+                        style={{
+                          fontSize: "11px",
+                          fontWeight: 600,
+                          color: "#475569",
+                          background: "#f1f5f9",
+                          padding: "1px 6px",
+                          borderRadius: "4px",
+                          marginLeft: "6px",
+                        }}
+                      >
+                        Taken by {order.taken_by_name || (order.order_source === "owner" ? "Owner" : "Staff")}
+                      </span>
+                    )}
                     {whatsappUrl ? (
                       <a
                         href={whatsappUrl}
@@ -6615,6 +6767,21 @@ function OrdersPage({
                     ))
                   )}
                 </div>
+
+                {(order.order_note || (order as any).notes) && (
+                  <div
+                    style={{
+                      fontSize: "12px",
+                      color: "#92400e",
+                      backgroundColor: "#fef3c7",
+                      padding: "6px 10px",
+                      borderRadius: "8px",
+                      margin: "8px 0",
+                    }}
+                  >
+                    <strong>Order Note:</strong> {order.order_note || (order as any).notes}
+                  </div>
+                )}
 
                 {/* TOTAL */}
                 <div className="card-total-row">
@@ -6836,11 +7003,20 @@ function OrdersPage({
               <div>
                 <span>Table</span>
                 <strong>
-                  {selectedOrder.table_number
-                    ? `Table ${selectedOrder.table_number}`
-                    : "—"}
+                  {selectedOrder.order_type === "takeaway" || selectedOrder.table_number === null
+                    ? "TAKEAWAY"
+                    : `Table ${selectedOrder.table_number}`}
                 </strong>
               </div>
+
+              {(selectedOrder.taken_by_name || selectedOrder.order_source === "owner" || selectedOrder.order_source === "staff") && (
+                <div>
+                  <span>Taken by</span>
+                  <strong>
+                    {selectedOrder.taken_by_name || (selectedOrder.order_source === "owner" ? "Owner" : "Staff")}
+                  </strong>
+                </div>
+              )}
 
               <div>
                 <span>Total</span>
@@ -6851,6 +7027,21 @@ function OrdersPage({
                 </strong>
               </div>
             </div>
+
+            {selectedOrder.order_note && (
+              <div
+                style={{
+                  fontSize: "13px",
+                  color: "#92400e",
+                  backgroundColor: "#fef3c7",
+                  padding: "8px 12px",
+                  borderRadius: "8px",
+                  margin: "8px 0 16px",
+                }}
+              >
+                <strong>Order Note:</strong> {selectedOrder.order_note}
+              </div>
+            )}
 
             <div className="items-heading">
               Items

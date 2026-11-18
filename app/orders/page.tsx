@@ -7,7 +7,7 @@ import { formatOrderLabel } from "../lib/orderNumber";
 type Order = {
   id: string;
   business_id: string;
-  table_number: number;
+  table_number: number | null;
   customer_name: string | null;
   customer_phone: string | null;
   source_device_code: string | null;
@@ -21,6 +21,13 @@ type Order = {
   payment_method?: string | null;
   paid_at?: string | null;
   archived_at?: string | null;
+  order_type?: "dine_in" | "takeaway" | string | null;
+  order_source?: "guest" | "staff" | "owner" | string | null;
+  taken_by_staff_id?: string | null;
+  taken_by_name?: string | null;
+  packing_charge?: number | null;
+  order_note?: string | null;
+  client_token?: string | null;
   businesses?: {
     name: string;
   } | null;
@@ -684,12 +691,28 @@ export default function OrdersPage() {
                           styles.meta
                         }
                       >
-                        <span>
-                          Table{" "}
-                          {
-                            order.table_number
-                          }
-                        </span>
+                        {order.order_type === "takeaway" || order.table_number === null ? (
+                          <span
+                            style={{
+                              backgroundColor: "#f97316",
+                              color: "#ffffff",
+                              padding: "2px 8px",
+                              borderRadius: "6px",
+                              fontWeight: 800,
+                              fontSize: "11px",
+                              letterSpacing: "0.04em",
+                            }}
+                          >
+                            TAKEAWAY
+                          </span>
+                        ) : (
+                          <span>
+                            Table{" "}
+                            {
+                              order.table_number
+                            }
+                          </span>
+                        )}
 
                         <span
                           style={
@@ -873,14 +896,9 @@ export default function OrdersPage() {
                       styles.modalTitle
                     }
                   >
-                    {selected
-                      .businesses
-                      ?.name ||
-                      "Business"}{" "}
-                    · Table{" "}
-                    {
-                      selected.table_number
-                    }
+                    {selected.order_type === "takeaway" || selected.table_number === null
+                      ? `${selected.businesses?.name || "Business"} · TAKEAWAY`
+                      : `${selected.businesses?.name || "Business"} · Table ${selected.table_number}`}
                   </h2>
                 </div>
 
@@ -959,12 +977,56 @@ export default function OrdersPage() {
                       styles.customerValue
                     }
                   >
-                    Table{" "}
-                    {
-                      selected.table_number
-                    }
+                    {selected.order_type === "takeaway" || selected.table_number === null
+                      ? "TAKEAWAY"
+                      : `Table ${selected.table_number}`}
                   </span>
                 </div>
+
+                {(selected.taken_by_name || selected.order_source === "owner" || selected.order_source === "staff") && (
+                  <div>
+                    <span
+                      style={
+                        styles.customerLabel
+                      }
+                    >
+                      TAKEN BY
+                    </span>
+
+                    <span
+                      style={
+                        styles.customerValue
+                      }
+                    >
+                      {selected.taken_by_name || (selected.order_source === "owner" ? "Owner" : "Staff")}
+                    </span>
+                  </div>
+                )}
+
+                {selected.order_note && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <span
+                      style={
+                        styles.customerLabel
+                      }
+                    >
+                      ORDER NOTE
+                    </span>
+
+                    <span
+                      style={{
+                        ...styles.customerValue,
+                        color: "#92400e",
+                        backgroundColor: "#fef3c7",
+                        padding: "4px 8px",
+                        borderRadius: "6px",
+                        display: "inline-block",
+                      }}
+                    >
+                      {selected.order_note}
+                    </span>
+                  </div>
+                )}
 
                 {selected.source_device_code && (
                   <div>

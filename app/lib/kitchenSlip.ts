@@ -35,7 +35,6 @@ const MAX_NAME = 120;
 const MAX_NOTE = 200;
 
 function clean(text: string | null | undefined, max: number): string {
-  // eslint-disable-next-line no-control-regex
   const t = String(text ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
@@ -58,6 +57,7 @@ export function formatSlipTime(input: string | Date): string {
 
 export function buildKitchenSlip(params: {
   tableNumber: number | null | undefined;
+  orderType?: string | null;
   addOnText?: string | null;
   orderLabel?: string | null;
   createdAt: string;
@@ -68,6 +68,17 @@ export function buildKitchenSlip(params: {
     typeof params.tableNumber === "number" && Number.isFinite(params.tableNumber)
       ? params.tableNumber
       : null;
+  const rawOrderLabel = clean(params.orderLabel, 40);
+  const isTakeaway = params.orderType === "takeaway" || tbl === null;
+
+  let tableLabel = tbl !== null ? `TABLE ${tbl}` : "NO TABLE";
+  let finalOrderLabel = rawOrderLabel;
+
+  if (isTakeaway && tbl === null) {
+    tableLabel = rawOrderLabel ? `TAKEAWAY · ${rawOrderLabel}` : "TAKEAWAY";
+    finalOrderLabel = ""; // avoid duplicate '#14' in meta line
+  }
+
   const items: KitchenSlipItem[] = [];
   for (const it of params.items || []) {
     const name = clean(it?.item_name, MAX_NAME);
@@ -80,9 +91,9 @@ export function buildKitchenSlip(params: {
     });
   }
   return {
-    tableLabel: tbl !== null ? `TABLE ${tbl}` : "NO TABLE",
+    tableLabel,
     addOnText: clean(params.addOnText, 40),
-    orderLabel: clean(params.orderLabel, 40),
+    orderLabel: finalOrderLabel,
     timeText: formatSlipTime(params.createdAt),
     items,
     orderNote: clean(params.orderNote, MAX_NOTE),

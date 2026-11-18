@@ -495,6 +495,13 @@ export type BillableOrderLike = {
   paid_at?: string | null;
   archived_at?: string | null;
   notes?: string | null;
+  order_type?: "dine_in" | "takeaway" | string | null;
+  order_source?: "guest" | "staff" | "owner" | string | null;
+  taken_by_staff_id?: string | null;
+  taken_by_name?: string | null;
+  packing_charge?: number | null;
+  order_note?: string | null;
+  client_token?: string | null;
 };
 
 export type BillableOrderItemLike = {

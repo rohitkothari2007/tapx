@@ -196,7 +196,48 @@ export default function BillFromOrders({
   const [showSavedPicker, setShowSavedPicker] = useState(false);
 
   // Extra manual lines
-  const [extraLines, setExtraLines] = useState<ExtraLine[]>([]);
+  const [extraLines, setExtraLines] = useState<ExtraLine[]>(() => {
+    // Check if initial orders are takeaway and have packing charge
+    const targetOrders =
+      preselectOrderIds && preselectOrderIds.length > 0
+        ? eligibleOrders.filter((o) => preselectOrderIds.includes(o.id))
+        : eligibleOrders;
+
+    let packingCharge = 0;
+    for (const ord of targetOrders) {
+      const isTakeaway = ord.order_type === "takeaway" || ord.table_number === null;
+      if (isTakeaway && ord.packing_charge && Number(ord.packing_charge) > 0) {
+        packingCharge += Number(ord.packing_charge);
+      }
+    }
+
+    // Also check table_ordering module config if packing_charge on orders wasn't set but order is takeaway
+    if (
+      packingCharge === 0 &&
+      targetOrders.some((o) => o.order_type === "takeaway" || o.table_number === null)
+    ) {
+      const toRow = (moduleConfigs || []).find((m) => {
+        const k = String(m.module_key || "").trim().toLowerCase();
+        return k === "table_ordering" || k === "tableordering";
+      });
+      const cfgCharge = Number((toRow?.config as Record<string, unknown> | null)?.packing_charge || 0);
+      if (cfgCharge > 0) {
+        packingCharge = cfgCharge;
+      }
+    }
+
+    if (packingCharge > 0) {
+      return [
+        {
+          key: `packing-charge-${Date.now()}`,
+          name: "Packing charge",
+          priceInput: String(packingCharge),
+          qtyInput: "1",
+        },
+      ];
+    }
+    return [];
+  });
 
   // Customer info prefilled from selected orders (phone from FIRST non-empty phone among all selected orders)
   const getFirstNonEmptyCustomerPhone = (list: BillableOrderLike[]) => {
@@ -1175,8 +1216,16 @@ export default function BillFromOrders({
   }
 
   // ======================== STEP 1: REVIEW SCREEN ========================
+  const isTakeawayBill =
+    tableNumber === null &&
+    (firstSelectedOrder?.order_type === "takeaway" || eligibleOrders.some((o) => o.order_type === "takeaway"));
+
   const headerTitle =
-    tableNumber !== null ? `Bill — Table ${tableNumber}` : "Bill — Order";
+    tableNumber !== null
+      ? `Bill — Table ${tableNumber}`
+      : isTakeawayBill
+      ? "Bill — Takeaway"
+      : "Bill — Order";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "110px" }}>

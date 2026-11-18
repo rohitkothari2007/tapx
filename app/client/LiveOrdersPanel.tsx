@@ -38,6 +38,13 @@ export type LiveOrder = {
   paid_at?: string | null;
   archived_at?: string | null;
   notes?: string | null;
+  order_type?: "dine_in" | "takeaway" | string | null;
+  order_source?: "guest" | "staff" | "owner" | string | null;
+  taken_by_staff_id?: string | null;
+  taken_by_name?: string | null;
+  packing_charge?: number | null;
+  order_note?: string | null;
+  client_token?: string | null;
 };
 
 export type LiveOrderItem = {
@@ -64,6 +71,7 @@ type Props = {
   onOpenBill?: (billId: string) => void;
   billingOrderMode?: boolean;
   onBillTable?: (tableNumber: number) => void;
+  onNewOrder?: () => void;
 };
 
 const ACTIVE_STATUSES = ["pending", "accepted", "preparing", "ready", "served"];
@@ -183,6 +191,7 @@ export default function LiveOrdersPanel({
   onOpenBill,
   billingOrderMode = false,
   onBillTable,
+  onNewOrder,
 }: Props) {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [newestFirst, setNewestFirst] = useState(true);
@@ -393,6 +402,7 @@ export default function LiveOrdersPanel({
     const slips = printable.map((o) =>
       buildKitchenSlip({
         tableNumber: o.table_number,
+        orderType: o.order_type,
         addOnText: addOnBadgeText(roundInfo.get(o.id)?.round ?? 1),
         orderLabel: formatOrderLabel(o, { showDayIfNotToday: true }),
         createdAt: o.created_at,
@@ -404,7 +414,7 @@ export default function LiveOrdersPanel({
             special_request: i.special_request,
             notes: i.notes,
           })),
-        orderNote: o.notes,
+        orderNote: o.order_note || o.notes,
       })
     );
     const ok = printHtmlInHiddenFrame(renderKitchenSlipsHtml(slips, formatSlipTime(new Date())));
@@ -538,6 +548,32 @@ export default function LiveOrdersPanel({
                 </button>
               </div>
             </div>
+          )}
+
+          {onNewOrder && (
+            <button
+              type="button"
+              onClick={onNewOrder}
+              style={{
+                minHeight: "44px",
+                padding: "8px 16px",
+                borderRadius: "10px",
+                border: "none",
+                background: "#f97316",
+                color: "#ffffff",
+                fontWeight: 700,
+                fontSize: "13.5px",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                boxShadow: "0 2px 4px rgba(249, 115, 22, 0.2)",
+              }}
+              title="Create a new dine-in or takeaway order"
+            >
+              <span>＋</span>
+              <span>New order</span>
+            </button>
           )}
 
           <button
@@ -682,11 +718,23 @@ export default function LiveOrdersPanel({
               {/* CARD HEADER: TABLE & ORDER NUMBER & TIMING */}
               <div style={styles.cardHeader}>
                 <div style={styles.tableBadgeContainer}>
-                  <div style={styles.tableBadge}>
-                    {order.table_number
-                      ? `Table ${order.table_number}`
-                      : "No Table"}
-                  </div>
+                  {order.order_type === "takeaway" || order.table_number === null ? (
+                    <div
+                      style={{
+                        ...styles.tableBadge,
+                        background: "#f97316",
+                        color: "#ffffff",
+                        fontWeight: 800,
+                        letterSpacing: "0.04em",
+                      }}
+                    >
+                      TAKEAWAY
+                    </div>
+                  ) : (
+                    <div style={styles.tableBadge}>
+                      Table {order.table_number}
+                    </div>
+                  )}
                   {info && info.round >= 2 && (
                     <span
                       style={{
@@ -758,11 +806,27 @@ export default function LiveOrdersPanel({
                 </div>
               )}
 
-              {/* CUSTOMER INFO */}
+              {/* CUSTOMER INFO & TAKEN BY */}
               <div style={styles.customerRow}>
                 <span style={styles.customerName}>
-                  👤 {order.customer_name || "Customer"}
+                  👤 {order.customer_name || (order.order_type === "takeaway" ? "Takeaway" : "Customer")}
                 </span>
+
+                {(order.taken_by_name || order.order_source === "owner" || order.order_source === "staff") && (
+                  <span
+                    style={{
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      color: "#475569",
+                      background: "#f1f5f9",
+                      padding: "2px 8px",
+                      borderRadius: "6px",
+                      marginLeft: "6px",
+                    }}
+                  >
+                    Taken by {order.taken_by_name || (order.order_source === "owner" ? "Owner" : "Staff")}
+                  </span>
+                )}
 
                 {whatsappUrl ? (
                   <a
@@ -809,9 +873,9 @@ export default function LiveOrdersPanel({
                   ))
                 )}
 
-                {order.notes && (
+                {(order.order_note || order.notes) && (
                   <div style={styles.orderLevelNote}>
-                    <strong>Order Note:</strong> {order.notes}
+                    <strong>Order Note:</strong> {order.order_note || order.notes}
                   </div>
                 )}
               </div>
@@ -1128,8 +1192,20 @@ export default function LiveOrdersPanel({
                           {/* CARD HEADER */}
                           <div style={styles.servedCardHeader}>
                             <div style={styles.servedHeaderMain}>
-                              <span style={styles.servedTableBadge}>
-                                Order {formatOrderLabel(order, { showDayIfNotToday: true })}
+                              <span
+                                style={{
+                                  ...styles.servedTableBadge,
+                                  background:
+                                    order.order_type === "takeaway" || order.table_number === null
+                                      ? "#f97316"
+                                      : "#334155",
+                                  color: "#ffffff",
+                                  fontWeight: 800,
+                                }}
+                              >
+                                {order.order_type === "takeaway" || order.table_number === null
+                                  ? `TAKEAWAY · ${formatOrderLabel(order, { showDayIfNotToday: true })}`
+                                  : `Order ${formatOrderLabel(order, { showDayIfNotToday: true })}`}
                               </span>
                               <span style={styles.servedHeaderMeta}>
                                 · ₹{(order.total || order.subtotal || 0).toFixed(0)}
@@ -1142,11 +1218,25 @@ export default function LiveOrdersPanel({
                             )}
                           </div>
 
-                          {order.customer_name && !isAutoTableName(order.customer_name) && (
-                            <div style={styles.servedCustomerRow}>
-                              👤 {order.customer_name} {order.customer_phone ? `(${order.customer_phone})` : ""}
-                            </div>
-                          )}
+                          <div style={styles.servedCustomerRow}>
+                            👤 {order.customer_name || (order.order_type === "takeaway" ? "Takeaway" : "Customer")}{" "}
+                            {order.customer_phone ? `(${order.customer_phone})` : ""}
+                            {(order.taken_by_name || order.order_source === "owner" || order.order_source === "staff") && (
+                              <span
+                                style={{
+                                  fontSize: "11px",
+                                  fontWeight: 600,
+                                  color: "#475569",
+                                  background: "#f1f5f9",
+                                  padding: "1px 6px",
+                                  borderRadius: "4px",
+                                  marginLeft: "8px",
+                                }}
+                              >
+                                Taken by {order.taken_by_name || (order.order_source === "owner" ? "Owner" : "Staff")}
+                              </span>
+                            )}
+                          </div>
 
                           {/* ITEMS BREAKDOWN */}
                           {items.length > 0 && (

@@ -42,6 +42,7 @@ export type TablesBoardProps = {
   activeOrderTables?: number[];
   unbilledByTable?: Record<number, TableUnbilledSummary>;
   onBillTable?: (tableNumber: number) => void;
+  onNewOrder?: (tableNumber?: number) => void;
 };
 
 function drawRoundedRect(
@@ -91,6 +92,7 @@ export default function TablesBoard({
   activeOrderTables = [],
   unbilledByTable,
   onBillTable,
+  onNewOrder,
 }: TablesBoardProps) {
   const effectiveOrigin = useMemo(() => {
     return getPublicSiteUrl(origin);
@@ -785,6 +787,22 @@ export default function TablesBoard({
           </div>
 
           <div style={styles.headerActions}>
+            {!isAdmin && onNewOrder && (
+              <button
+                type="button"
+                onClick={() => onNewOrder()}
+                style={{
+                  ...styles.printBtn,
+                  background: "#f97316",
+                  color: "#ffffff",
+                  borderColor: "#ea580c",
+                }}
+                title="Create a new dine-in or takeaway order"
+              >
+                <span>＋</span> New order
+              </button>
+            )}
+
             <button
               type="button"
               onClick={handlePrintAll}
@@ -997,6 +1015,30 @@ export default function TablesBoard({
                     </button>
                   )}
                 </div>
+
+                {!isAdmin && onNewOrder && (
+                  <div style={{ marginTop: "6px" }}>
+                    <button
+                      type="button"
+                      onClick={() => onNewOrder(table.tableNum)}
+                      style={{
+                        width: "100%",
+                        minHeight: "36px",
+                        padding: "6px 10px",
+                        background: "#fff7ed",
+                        color: "#c2410c",
+                        border: "1px solid #fed7aa",
+                        borderRadius: "8px",
+                        fontWeight: 700,
+                        fontSize: "12px",
+                        cursor: "pointer",
+                      }}
+                      title={`Create order for Table ${table.tableNum}`}
+                    >
+                      ＋ Order for Table {table.tableNum}
+                    </button>
+                  </div>
+                )}
 
                 {!isAdmin && onBillTable && unbilledInfo && unbilledInfo.count > 0 && (
                   <div style={styles.unbilledRow}>
