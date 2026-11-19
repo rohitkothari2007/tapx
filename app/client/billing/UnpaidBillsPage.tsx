@@ -16,11 +16,13 @@ import {
   formatDueAge,
   groupUnpaidBills,
 } from "../../lib/unpaidBills";
+import { udhaarBillInfo, type UdhaarBillInfo } from "../../lib/udhaar";
 
 export type UnpaidBillsPageProps = {
   business: BillingBusinessProfile & { id: string };
   onOpenBill: (billId: string) => void;
   onBillsChanged?: () => void | Promise<void>;
+  onOpenUdhaarLedger?: (customerId: string) => void;
 };
 
 function getDueAgeStyle(days: number) {
@@ -37,6 +39,7 @@ export default function UnpaidBillsPage({
   business,
   onOpenBill,
   onBillsChanged,
+  onOpenUdhaarLedger,
 }: UnpaidBillsPageProps) {
   const [rows, setRows] = useState<UnpaidBillRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +53,7 @@ export default function UnpaidBillsPage({
   const [selectedMethod, setSelectedMethod] = useState<"cash" | "upi" | "card" | null>(null);
   const [markingPaidSaving, setMarkingPaidSaving] = useState(false);
   const [markPaidError, setMarkPaidError] = useState<{ billId: string; message: string } | null>(null);
+  const [creditInfoMap, setCreditInfoMap] = useState<Record<string, UdhaarBillInfo>>({});
 
   const reqCountRef = useRef(0);
 
@@ -79,6 +83,29 @@ export default function UnpaidBillsPage({
         const loadedRows = (data as UnpaidBillRow[]) || [];
         setRows(loadedRows);
         setIsTruncated500(loadedRows.length === 500);
+
+        // Fetch credit bill info (soft-fail: if error, show no badges)
+        if (loadedRows.length > 0) {
+          try {
+            const infoList = await udhaarBillInfo(
+              business.id,
+              loadedRows.map((r) => r.id)
+            );
+            if (reqId === reqCountRef.current) {
+              const map: Record<string, UdhaarBillInfo> = {};
+              for (const item of infoList) {
+                map[item.bill_id] = item;
+              }
+              setCreditInfoMap(map);
+            }
+          } catch {
+            if (reqId === reqCountRef.current) {
+              setCreditInfoMap({});
+            }
+          }
+        } else {
+          setCreditInfoMap({});
+        }
       } catch (err: any) {
         if (reqId !== reqCountRef.current) return;
         if (!silent) {
@@ -521,7 +548,9 @@ export default function UnpaidBillsPage({
                   >
                     {/* Bills list */}
                     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                      {group.bills.map((bill) => (
+                      {group.bills.map((bill) => {
+                        const creditInfo = creditInfoMap[bill.id];
+                        return (
                         <div
                           key={bill.id}
                           style={{
@@ -542,8 +571,25 @@ export default function UnpaidBillsPage({
                             }}
                           >
                             <div style={{ minWidth: "120px", flex: "1 1 auto" }}>
-                              <div style={{ fontWeight: 600, fontSize: "14px", color: "#0f172a" }}>
-                                {bill.bill_no_text}
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                <span style={{ fontWeight: 600, fontSize: "14px", color: "#0f172a" }}>
+                                  {bill.bill_no_text}
+                                </span>
+                                {creditInfo && (
+                                  <span
+                                    style={{
+                                      fontSize: "11px",
+                                      fontWeight: 700,
+                                      padding: "2px 8px",
+                                      borderRadius: "12px",
+                                      color: "#92400e",
+                                      background: "#fef3c7",
+                                      border: "1px solid #fde68a",
+                                    }}
+                                  >
+                                    Udhaar · {creditInfo.customer_name}
+                                  </span>
+                                )}
                               </div>
                               <div style={{ fontSize: "12px", color: "#64748b" }}>
                                 {formatBillDateTime(bill.created_at)}
@@ -558,8 +604,21 @@ export default function UnpaidBillsPage({
                                 flexWrap: "wrap",
                               }}
                             >
-                              <div style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a" }}>
-                                {formatMoney(bill.total)}
+                              <div>
+                                {creditInfo && creditInfo.due !== bill.total ? (
+                                  <div style={{ textAlign: "right" }}>
+                                    <div style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a" }}>
+                                      Due: {formatMoney(creditInfo.due)}
+                                    </div>
+                                    <div style={{ fontSize: "11px", color: "#64748b" }}>
+                                      Total: {formatMoney(bill.total)}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div style={{ fontWeight: 700, fontSize: "14px", color: "#0f172a" }}>
+                                    {formatMoney(creditInfo ? creditInfo.due : bill.total)}
+                                  </div>
+                                )}
                               </div>
 
                               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -582,34 +641,55 @@ export default function UnpaidBillsPage({
                                   Open
                                 </button>
 
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (markingPaidBillId === bill.id) {
-                                      setMarkingPaidBillId(null);
-                                      setSelectedMethod(null);
-                                      setMarkPaidError(null);
-                                    } else {
-                                      setMarkingPaidBillId(bill.id);
-                                      setSelectedMethod(null);
-                                      setMarkPaidError(null);
-                                    }
-                                  }}
-                                  style={{
-                                    minHeight: "44px",
-                                    padding: "8px 14px",
-                                    fontSize: "13px",
-                                    fontWeight: 600,
-                                    background: "#2563eb",
-                                    border: "1px solid #2563eb",
-                                    borderRadius: "6px",
-                                    color: "#ffffff",
-                                    cursor: "pointer",
-                                    boxSizing: "border-box",
-                                  }}
-                                >
-                                  Mark paid
-                                </button>
+                                {creditInfo ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onOpenUdhaarLedger?.(creditInfo.customer_id)}
+                                    style={{
+                                      minHeight: "44px",
+                                      padding: "8px 14px",
+                                      fontSize: "13px",
+                                      fontWeight: 600,
+                                      background: "#fef3c7",
+                                      border: "1px solid #fcd34d",
+                                      borderRadius: "6px",
+                                      color: "#92400e",
+                                      cursor: "pointer",
+                                      boxSizing: "border-box",
+                                    }}
+                                  >
+                                    Receive on Udhaar
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (markingPaidBillId === bill.id) {
+                                        setMarkingPaidBillId(null);
+                                        setSelectedMethod(null);
+                                        setMarkPaidError(null);
+                                      } else {
+                                        setMarkingPaidBillId(bill.id);
+                                        setSelectedMethod(null);
+                                        setMarkPaidError(null);
+                                      }
+                                    }}
+                                    style={{
+                                      minHeight: "44px",
+                                      padding: "8px 14px",
+                                      fontSize: "13px",
+                                      fontWeight: 600,
+                                      background: "#2563eb",
+                                      border: "1px solid #2563eb",
+                                      borderRadius: "6px",
+                                      color: "#ffffff",
+                                      cursor: "pointer",
+                                      boxSizing: "border-box",
+                                    }}
+                                  >
+                                    Mark paid
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -736,8 +816,9 @@ export default function UnpaidBillsPage({
                             </div>
                           )}
                         </div>
-                      ))}
-                    </div>
+                      );
+                    })}
+                  </div>
 
                     {/* WhatsApp reminder button / no valid phone text */}
                     <div

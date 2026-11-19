@@ -34,6 +34,8 @@ import {
 import BillDocument, {
   toBillDocumentDataFromDashboard,
 } from "../../components/billing/BillDocument";
+import PutOnCreditPanel from "./PutOnCreditPanel";
+import type { UdhaarBillInfo } from "../../lib/udhaar";
 import {
   downloadPdfBlob,
   generateBillPdfBlob,
@@ -285,6 +287,7 @@ export default function BillFromOrders({
   // Step 2 (Done screen) state
   const [issuedBillId, setIssuedBillId] = useState<string | null>(null);
   const [issuedBill, setIssuedBill] = useState<TapxBill | null>(null);
+  const [issuedCreditInfo, setIssuedCreditInfo] = useState<UdhaarBillInfo | null>(null);
   const [issuedItems, setIssuedItems] = useState<TapxBillItem[]>([]);
   const [loadingDone, setLoadingDone] = useState(false);
   const [doneError, setDoneError] = useState("");
@@ -810,6 +813,9 @@ export default function BillFromOrders({
 
   const handleDoneMarkPaid = async (method: PaymentMethod) => {
     if (!issuedBill) return;
+    if (issuedCreditInfo) {
+      throw new Error("This bill is on udhaar. Receive the payment from the customer's ledger on the Udhaar page.");
+    }
     const { error: rpcErr } = await supabase.rpc("set_tapx_bill_payment", {
       p_bill_id: issuedBill.id,
       p_payment_status: "paid",
@@ -1196,20 +1202,33 @@ export default function BillFromOrders({
             Loading bill document...
           </div>
         ) : issuedBill ? (
-          <BillDocument
-            mode="dashboard"
-            autoOpenUpiCollect={autoOpenUpiCollect}
-            hideWhatsAppButtons={true}
-            data={toBillDocumentDataFromDashboard(
-              issuedBill,
-              issuedItems,
-              business,
-              activeSettings
-            )}
-            onMarkPaid={handleDoneMarkPaid}
-            onMarkUnpaid={handleDoneMarkUnpaid}
-            onVoid={handleDoneVoid}
-          />
+          <>
+            <PutOnCreditPanel
+              business={business}
+              bill={issuedBill}
+              onChanged={async () => {
+                await Promise.all([
+                  loadIssuedBillDetails(issuedBill.id),
+                  onBillMutated ? onBillMutated() : Promise.resolve(),
+                ]);
+              }}
+              onCreditInfo={setIssuedCreditInfo}
+            />
+            <BillDocument
+              mode="dashboard"
+              autoOpenUpiCollect={autoOpenUpiCollect}
+              hideWhatsAppButtons={true}
+              data={toBillDocumentDataFromDashboard(
+                issuedBill,
+                issuedItems,
+                business,
+                activeSettings
+              )}
+              onMarkPaid={handleDoneMarkPaid}
+              onMarkUnpaid={handleDoneMarkUnpaid}
+              onVoid={handleDoneVoid}
+            />
+          </>
         ) : null}
       </div>
     );

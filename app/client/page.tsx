@@ -34,6 +34,7 @@ import BillsPage from "./billing/BillsPage";
 import SalesReport from "./billing/SalesReport";
 import CreditNotesPage from "./billing/CreditNotesPage";
 import UnpaidBillsPage from "./billing/UnpaidBillsPage";
+import UdhaarPage from "./billing/UdhaarPage";
 import StaffPage from "./StaffPage";
 import ProductsPage from "./shop/ProductsPage";
 import BillFromOrders from "./billing/BillFromOrders";
@@ -270,6 +271,7 @@ type PageKey =
   | "sales_report"
   | "credit_notes"
   | "unpaid_bills"
+  | "udhaar"
   | "products"
   | "appointments"
   | "menu"
@@ -666,6 +668,8 @@ export default function ClientPortalPage() {
     returnPage: PageKey;
   } | null>(null);
   const [pendingOpenBillId, setPendingOpenBillId] =
+    useState<string | null>(null);
+  const [pendingUdhaarCustomerId, setPendingUdhaarCustomerId] =
     useState<string | null>(null);
 
   const loadLiveBillLinks = useCallback(
@@ -1705,6 +1709,13 @@ export default function ClientPortalPage() {
     setMobileMenuOpen(false);
   }, []);
 
+  const openUdhaarLedger = useCallback((customerId: string) => {
+    setBillReviewTarget(null);
+    setPendingUdhaarCustomerId(customerId);
+    setActivePage("udhaar");
+    setMobileMenuOpen(false);
+  }, []);
+
   const tableCount = useMemo(() => {
     const raw = (tableOrderingConfigRow?.config as Record<string, any>)?.table_count;
     if (typeof raw === "number") return raw;
@@ -2337,6 +2348,12 @@ export default function ClientPortalPage() {
       label: "Unpaid bills",
       icon: "⏳",
       show: hasBilling,
+    },
+    {
+      key: "udhaar" as PageKey,
+      label: "Udhaar",
+      icon: "📒",
+      show: hasBilling && hasRetailBilling,
     },
     {
       key: "sales_report" as PageKey,
@@ -3141,6 +3158,7 @@ export default function ClientPortalPage() {
               initialBillId={pendingOpenBillId}
               onConsumedInitialBillId={() => setPendingOpenBillId(null)}
               onBillsChanged={loadPortal}
+              onOpenUdhaarLedger={openUdhaarLedger}
             />
           )}
 
@@ -3160,6 +3178,17 @@ export default function ClientPortalPage() {
               business={business}
               onOpenBill={openBillInBillsView}
               onBillsChanged={loadPortal}
+              onOpenUdhaarLedger={openUdhaarLedger}
+            />
+          )}
+
+          {activePage === "udhaar" && hasBilling && hasRetailBilling && business && (
+            <UdhaarPage
+              business={business}
+              onOpenBill={openBillInBillsView}
+              onBillsChanged={loadPortal}
+              initialCustomerId={pendingUdhaarCustomerId}
+              onConsumedInitialCustomerId={() => setPendingUdhaarCustomerId(null)}
             />
           )}
 

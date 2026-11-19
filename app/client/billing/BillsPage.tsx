@@ -31,6 +31,8 @@ import QuickBill from "./QuickBill";
 import ShopCounter from "../shop/ShopCounter";
 import ExchangeFlow from "./ExchangeFlow";
 import CreditNoteSlip from "./CreditNoteSlip";
+import PutOnCreditPanel from "./PutOnCreditPanel";
+import type { UdhaarBillInfo } from "../../lib/udhaar";
 
 export const BILL_SELECT_COLUMNS =
   "id, business_id, financial_year, bill_number, bill_no_text, bill_day, status, source, customer_name, customer_phone, table_number, subtotal, discount_amount, discount_note, service_charge_pct, service_charge, tax_mode, tax_total, round_off, total, credit_applied, payment_status, payment_method, paid_at, void_reason, voided_at, notes, share_token, created_at";
@@ -54,6 +56,7 @@ type Props = {
   initialBillId?: string | null;
   onConsumedInitialBillId?: () => void;
   onBillsChanged?: () => Promise<void> | void;
+  onOpenUdhaarLedger?: (customerId: string) => void;
 };
 
 export default function BillsPage({
@@ -70,6 +73,7 @@ export default function BillsPage({
   initialBillId,
   onConsumedInitialBillId,
   onBillsChanged,
+  onOpenUdhaarLedger,
 }: Props) {
   const billingSettings: BillingSettings = useMemo(() => {
     const row = (moduleConfigs || []).find(
@@ -124,6 +128,7 @@ export default function BillsPage({
 
   const [selectedBill, setSelectedBill] = useState<TapxBill | null>(null);
   const [selectedItems, setSelectedItems] = useState<TapxBillItem[]>([]);
+  const [billCreditInfo, setBillCreditInfo] = useState<UdhaarBillInfo | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [showInProgress, setShowInProgress] = useState(false);
 
@@ -317,6 +322,9 @@ export default function BillsPage({
 
   const handleMarkPaid = async (method: PaymentMethod) => {
     if (!selectedBill) return;
+    if (billCreditInfo) {
+      throw new Error("This bill is on udhaar. Receive the payment from the customer's ledger on the Udhaar page.");
+    }
     const { error: rpcErr } = await supabase.rpc("set_tapx_bill_payment", {
       p_bill_id: selectedBill.id,
       p_payment_status: "paid",
@@ -500,6 +508,22 @@ export default function BillsPage({
           </div>
         )}
 
+        {selectedBill && (
+          <PutOnCreditPanel
+            business={business}
+            bill={selectedBill}
+            onChanged={async () => {
+              await Promise.all([
+                openBillById(selectedBill.id),
+                loadBillsAndSummary(),
+                onBillsChanged ? onBillsChanged() : Promise.resolve(),
+              ]);
+            }}
+            onOpenLedger={onOpenUdhaarLedger}
+            onCreditInfo={setBillCreditInfo}
+          />
+        )}
+
         <BillDocument
           mode="dashboard"
           autoOpenUpiCollect={selectedBill?.id === autoCollectUpiBillId}
@@ -514,6 +538,7 @@ export default function BillsPage({
             setSelectedItems([]);
             setAutoCollectUpiBillId(null);
             setExchangeCreditNoteNotice(null);
+            setBillCreditInfo(null);
             setView("list");
           }}
           onMarkPaid={handleMarkPaid}
